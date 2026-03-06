@@ -1,5 +1,7 @@
 # HA NILM Add-on Repository
 
+ACHTUNG Läuft Aktuell Nicht
+
 Dieses Repository enthält einen Home Assistant Add-on namens **HA NILM Detector**. Der eigentliche Add-on-Code befindet sich im Unterordner `ha-nilm-detector/`.
 
 Wenn du das Add-on in Home Assistant installieren möchtest, verwende einfach die Repository-URL:
