@@ -11,16 +11,14 @@ RUN apk add --no-cache \
 # Set working directory
 WORKDIR /app
 
-# Copy requirements and install Python dependencies
-COPY requirements.txt .
-RUN pip3 install --no-cache-dir -r requirements.txt
+# Copy application sources
+COPY app /app
+COPY requirements.txt /tmp/requirements.txt
+COPY run.sh /run.sh
 
-# Copy application
-COPY app ./app
-COPY run.sh /
-
-# Make run script executable
-RUN chmod a+x /run.sh
+# Install Python dependencies
+RUN pip3 install --no-cache-dir -r /tmp/requirements.txt \
+    && chmod a+x /run.sh
 
 # Health check
 HEALTHCHECK --interval=30s --timeout=10s --start-period=10s --retries=3 \
