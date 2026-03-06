@@ -80,24 +80,16 @@ for phase_name, phase_steps in scenario:
                 phase="L1"
             )
             
-            # Detect state
-            detected_state = detector.detect(reading)
-            
-            # Update state engine
-            if detected_state:
-                device_state = state_engine.update_device_state(
-                    "kitchen_fridge",
-                    detected_state,
-                    power_w,
-                    detector.get_cycle_info()
-                )
-                
+            detection_result = detector.detect(reading)
+
+            if detection_result:
+                device_state = state_engine.update_device_state(detection_result)
                 elapsed = int(time.time() - start_time)
                 state_short = device_state.state.value[:3].upper()
-                
+
                 print(
                     f"  [{elapsed:02d}s] {power_w:6.1f}W  │  "
-                    f"Detector: {detected_state.value:8} │ "
+                    f"Detector: {detection_result.state.value:8} │ "
                     f"State: {state_short} │ "
                     f"Cycles: {device_state.daily_cycles} │ "
                     f"Runtime: {device_state.daily_runtime_seconds:6.1f}s  │  "

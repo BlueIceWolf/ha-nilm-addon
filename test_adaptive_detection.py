@@ -12,7 +12,7 @@ import time
 from datetime import datetime
 from app.utils.logging import setup_logging
 from app.detectors.fridge import FridgeDetector  # Original
-from app.detectors.fridge_adaptive import AdaptiveFridgeDetector  # New
+from app.detectors.adaptive_load import AdaptiveLoadDetector  # New
 from app.models import PowerReading, DeviceConfig
 
 # Setup
@@ -34,7 +34,7 @@ config = DeviceConfig(
 
 # Create both detectors
 rigid_detector = FridgeDetector(config)
-adaptive_detector = AdaptiveFridgeDetector(config, learning_samples=10)
+adaptive_detector = AdaptiveLoadDetector(config, learning_samples=10)
 
 print(f"\nConfiguration: {config.name}")
 print(f"  Fixed power_min_w: {config.power_min_w}W")
@@ -96,8 +96,8 @@ for phase_name, phase_data in scenarios:
             step_count += 1
             
             # Format output
-            r_state = f"{rigid_state.value[:3]}" if rigid_state else "---"
-            a_state = f"{adaptive_state.value[:3]}" if adaptive_state else "---"
+            r_state = f"{rigid_state.state.value[:3]}" if rigid_state else "---"
+            a_state = f"{adaptive_state.state.value[:3]}" if adaptive_state else "---"
             
             # Show diagnostic for adaptive
             diag = adaptive_detector.get_diagnostics()

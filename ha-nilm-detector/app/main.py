@@ -1,54 +1,48 @@
-"""
-Main entry point for NILM detection system.
-"""
-import time
+"""Entry point wiring together the modular NILM detection stack."""
 import signal
 import sys
-from datetime import datetime, timedelta
-from app.utils.logging import setup_logging, get_logger
-from app.config import Config, load_options_from_file
-from app.state_engine import StateEngine
-from app.collector.source import Collector, MockPowerSource
-from app.detectors.fridge import FridgeDetector
-from app.publishers.mqtt import MQTTPublisher
+import time
+from datetime import datetime
+from typing import Dict, List
 
+from app.collector.source import Collector, MockPowerSource
+from app.config import Config, load_options_from_file
+from app.confidence.confidence import ConfidenceEvaluator
+from app.detectors import AdaptiveLoadDetector, FridgeDetector, InverterDeviceDetector
+from app.processing.pipeline import ProcessingPipeline
+from app.publishers.mqtt import MQTTPublisher
+from app.state_engine import StateEngine
+from app.utils.logging import get_logger, setup_logging
 
 logger = get_logger(__name__)
 
 
 class NILMDetectionSystem:
-    """Main NILM detection system."""
-    
+    """Coordinates collectors, detectors, confidence takers and publishers."""
+
     def __init__(self, config_path: str = "/data/options.json"):
-        """
-        Initialize NILM detection system.
-        
-        Args:
-            config_path: Path to configuration file
-        """
-        # Load configuration
         options = load_options_from_file(config_path)
         self.config = Config()
         self.config.load(options)
-        
-        # Setup logging
+
         setup_logging(debug=self.config.debug, name="NILM")
-        logger.info("NILM Detection System starting...")
-        logger.info(f"Debug mode: {self.config.debug}")
-        
-        # State engine
+        logger.info("Starting NILM Detection System...")
+
         self.state_engine = StateEngine()
-        
-        # Collector (using mock for MVP)
-        # TODO: Replace with actual power source (HA REST, MQTT, etc.)
-        mock_source = MockPowerSource()
-        self.collector = Collector(mock_source)
-        
-        # Detectors
-        self.detectors = {}
+        self.collector = Collector(MockPowerSource())
+        self.processing_pipeline = ProcessingPipeline(
+            smoothing_window=self.config.processing_smoothing_window,
+            noise_threshold=self.config.processing_noise_threshold,
+            adaptive_correction=self.config.processing_adaptive_correction,
+        )
+
+        self.confidence_evaluator = ConfidenceEvaluator(
+            min_confidence=self.config.confidence_threshold
+        )
+
+        self.detectors: Dict[str, List] = {}
         self._setup_detectors()
-        
-        # Publisher
+
         self.publisher = MQTTPublisher(
             broker=self.config.mqtt_broker,
             port=self.config.mqtt_port,
@@ -57,133 +51,109 @@ class NILMDetectionSystem:
             topic_prefix=self.config.mqtt_topic_prefix,
             discovery_prefix=self.config.mqtt_discovery_prefix,
             enable_discovery=self.config.enable_mqtt_discovery,
-            entity_id_prefix=self.config.ha_entity_id_prefix
+            entity_id_prefix=self.config.ha_entity_id_prefix,
         )
-        
-        # State tracking
-        self.last_daily_reset = datetime.now()
+
         self.running = False
-    
+        self.last_daily_reset = datetime.now()
+
     def _setup_detectors(self) -> None:
-        """Setup device detectors."""
         for device_name, device_config in self.config.devices.items():
             if not device_config.enabled:
                 logger.info(f"Skipping disabled device: {device_name}")
                 continue
-            
-            logger.info(f"Setting up device: {device_name}")
+
             self.state_engine.register_device(device_name, device_config)
-            
-            # Create appropriate detector based on device type
-            if "fridge" in device_name.lower():
-                self.detectors[device_name] = FridgeDetector(device_config)
+            detector_list = []
+            detector_type = device_config.detector_type.lower()
+
+            if detector_type == "inverter":
+                detector_list.append(InverterDeviceDetector(device_config))
+                detector_list.append(AdaptiveLoadDetector(device_config))
+            elif detector_type == "adaptive":
+                detector_list.append(AdaptiveLoadDetector(device_config))
             else:
-                logger.warning(f"Unknown device type for {device_name}")
-    
+                detector_list.append(FridgeDetector(device_config))
+                detector_list.append(AdaptiveLoadDetector(device_config))
+
+            self.detectors[device_name] = detector_list
+            logger.info(f"Configured detectors for {device_name}: {[type(d).__name__ for d in detector_list]}")
+
     def start(self) -> None:
-        """Start the detection system."""
-        logger.info("Starting detection system...")
-        
-        # Connect collector
         if not self.collector.connect():
-            logger.error("Failed to connect collector")
+            logger.error("Collector failed to connect")
             return
-        
-        # Connect publisher
+
         if not self.publisher.connect():
-            logger.warning("Failed to connect to MQTT (will retry)")
-        
+            logger.warning("MQTT connect failed; continuing without publisher")
+
         self.running = True
-        logger.info("Detection system running")
-        
-        # Setup signal handlers
         signal.signal(signal.SIGTERM, self._signal_handler)
         signal.signal(signal.SIGINT, self._signal_handler)
-        
-        # Main loop
+        logger.info("Detection system started")
         self._main_loop()
-    
+
     def _main_loop(self) -> None:
-        """Main detection loop."""
         iteration = 0
-        
         while self.running:
             iteration += 1
-            
             try:
-                # Check for daily reset
-                now = datetime.now()
-                if (now - self.last_daily_reset).days > 0 or \
-                   (now.date() != self.last_daily_reset.date()):
-                    self._reset_daily_stats()
-                    self.last_daily_reset = now
-                
-                # Read power data
                 reading = self.collector.read()
                 if not reading:
                     time.sleep(0.1)
                     continue
-                
-                # Run detectors
-                for device_name, detector in self.detectors.items():
-                    detected_state = detector.detect(reading)
-                    
-                    if detected_state:
-                        # Update state engine
-                        device_details = detector.get_cycle_info()
-                        device_state = self.state_engine.update_device_state(
-                            device_name,
-                            detected_state,
-                            reading.power_w,
-                            device_details
-                        )
-                        
-                        # Publish state
-                        if device_state and self.publisher.is_connected():
-                            self.publisher.publish_state(device_state)
-                
-                # Log periodically
+
+                processed = self.processing_pipeline.process(reading)
+                for device_name, detector_group in self.detectors.items():
+                    detection_candidates = []
+                    for detector in detector_group:
+                        result = detector.detect(processed)
+                        if result:
+                            detection_candidates.append(result)
+
+                    best = self.confidence_evaluator.evaluate(
+                        detection_candidates,
+                        self.config.devices[device_name],
+                    )
+
+                    if not best:
+                        continue
+
+                    device_state = self.state_engine.update_device_state(best)
+                    if device_state and self.publisher.is_connected():
+                        self.publisher.publish_state(device_state)
+
                 if iteration % 100 == 0:
-                    logger.debug(f"Main loop iteration {iteration} - systems operational")
-                
+                    logger.debug(f"Main loop alive (iteration {iteration})")
+
+                now = datetime.now()
+                if (now - self.last_daily_reset).days > 0 or now.date() != self.last_daily_reset.date():
+                    self.state_engine.reset_all_daily_counters()
+                    self.last_daily_reset = now
+
                 time.sleep(self.config.update_interval_seconds)
-            
             except Exception as e:
-                logger.error(f"Error in main loop: {e}", exc_info=True)
+                logger.error(f"Main loop failure: {e}", exc_info=True)
                 time.sleep(self.config.update_interval_seconds)
-    
-    def _reset_daily_stats(self) -> None:
-        """Reset daily statistics."""
-        logger.info("Resetting daily statistics")
-        self.state_engine.reset_all_daily_counters()
-    
-    def _signal_handler(self, sig, frame):
-        """Handle shutdown signals."""
-        logger.info(f"Received signal {sig}, shutting down...")
+
+    def _signal_handler(self, sig, frame) -> None:
+        logger.info(f"Signal {sig} received, shutting down")
         self.stop()
-    
+
     def stop(self) -> None:
-        """Stop the detection system."""
-        logger.info("Stopping detection system...")
         self.running = False
-        
-        try:
-            self.collector.disconnect()
-            self.publisher.disconnect()
-            logger.info("Detection system stopped")
-            sys.exit(0)
-        except Exception as e:
-            logger.error(f"Error stopping system: {e}")
-            sys.exit(1)
+        self.collector.disconnect()
+        self.publisher.disconnect()
+        logger.info("Detection system stopped")
+        sys.exit(0)
 
 
-def main():
-    """Entry point."""
+def main() -> None:
     try:
         system = NILMDetectionSystem()
         system.start()
-    except Exception as e:
-        logger.error(f"Fatal error: {e}", exc_info=True)
+    except Exception as exc:
+        logger.error(f"Fatal error: {exc}", exc_info=True)
         sys.exit(1)
 
 

@@ -47,8 +47,8 @@ test_power_values = [
 logger.info("\nSimulating power readings:")
 for power_w, desc in test_power_values:
     reading = PowerReading(datetime.now(), power_w, "L1")
-    state = detector.detect(reading)
-    state_str = state.value if state else "None"
+    detection = detector.detect(reading)
+    state_str = detection.state.value if detection else "None"
     logger.info(f"  {desc:20} {power_w:6.1f}W → State: {state_str}")
 
 logger.info("\n" + "=" * 60)

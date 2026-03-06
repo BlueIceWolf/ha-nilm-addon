@@ -33,6 +33,10 @@ class Config:
         self.devices: Dict[str, DeviceConfig] = {}
         self.ha_entity_id_prefix = "nilm"
         self.storage_path = "/data"
+        self.processing_smoothing_window = 5
+        self.processing_noise_threshold = 2.0
+        self.processing_adaptive_correction = True
+        self.confidence_threshold = 0.6
         
         if config_path:
             self.load(config_path)
@@ -83,6 +87,16 @@ class Config:
         for device_name, device_settings in devices_config.items():
             self.devices[device_name] = self._create_device_config(device_name, device_settings)
     
+        # Processing controls
+        processing_options = config_dict.get('processing', {})
+        self.processing_smoothing_window = processing_options.get('smoothing_window', self.processing_smoothing_window)
+        self.processing_noise_threshold = processing_options.get('noise_threshold', self.processing_noise_threshold)
+        self.processing_adaptive_correction = processing_options.get('adaptive_correction', self.processing_adaptive_correction)
+
+        # Confidence tuning
+        confidence_options = config_dict.get('confidence', {})
+        self.confidence_threshold = confidence_options.get('min_confidence', self.confidence_threshold)
+
     def _create_device_config(self, name: str, settings: Dict[str, Any]) -> DeviceConfig:
         """Create a DeviceConfig from settings dictionary."""
         return DeviceConfig(
@@ -95,7 +109,9 @@ class Config:
             startup_spike_w=float(settings.get('startup_spike_w', 0.0)),
             startup_duration_seconds=int(settings.get('startup_duration_seconds', 5)),
             duty_cycle_threshold=float(settings.get('duty_cycle_threshold', 0.3)),
-            metadata=settings.get('metadata', {})
+            metadata=settings.get('metadata', {}),
+            detector_type=settings.get('detector_type', 'fridge'),
+            confidence_threshold=float(settings.get('confidence_threshold', self.confidence_threshold)),
         )
     
     def get_device_config(self, device_name: str) -> Optional[DeviceConfig]:

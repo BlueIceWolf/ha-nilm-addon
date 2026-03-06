@@ -14,7 +14,7 @@ from app.utils.logging import setup_logging, get_logger
 from app.config import Config
 from app.state_engine import StateEngine
 from app.detectors.fridge import FridgeDetector
-from app.models import PowerReading, DeviceConfig, DeviceState
+from app.models import PowerReading, DeviceConfig
 from app.collector.source import MockPowerSource, Collector
 
 
@@ -83,21 +83,14 @@ def simulate_fridge_cycle():
                 phase="L1"
             )
             
-            # Detect
-            detected_state = detector.detect(reading)
-            
-            # Update state engine
-            if detected_state:
-                device_state = state_engine.update_device_state(
-                    "kitchen_fridge",
-                    detected_state,
-                    power_w,
-                    detector.get_cycle_info()
-                )
-                
+            detection_result = detector.detect(reading)
+
+            if detection_result:
+                device_state = state_engine.update_device_state(detection_result)
+
                 logger.info(
                     f"  [{i+1}s] Power={power_w:.1f}W | "
-                    f"Detector={detected_state.value} | "
+                    f"Detector={detection_result.state.value} | "
                     f"State={device_state.state.value} | "
                     f"Cycles={device_state.daily_cycles} | "
                     f"Runtime={device_state.daily_runtime_seconds:.1f}s"

@@ -70,7 +70,7 @@ for power_w, duration, desc in fridge_scenario:
     for _ in range(duration):
         reading = PowerReading(datetime.now(), power_w, "L1")
         state = fridge_detector.detect(reading)
-        state_str = f"{state.value[:3]}" if state else "---"
+        state_str = f"{state.state.value[:3]}" if state else "---"
         
         step += 1
         print(f"  {step}. {power_w:6.1f}W → {state_str}  │  {desc}")
@@ -104,7 +104,7 @@ for power_w, duration, desc in inverter_scenario:
     for _ in range(duration):
         reading = PowerReading(datetime.now(), power_w, "L1")
         state = inverter_detector.detect(reading)
-        state_str = f"{state.value[:3]}" if state else "---"
+        state_str = f"{state.state.value[:3]}" if state else "---"
         
         # Get diagnostic
         diag = inverter_detector.get_diagnostics()

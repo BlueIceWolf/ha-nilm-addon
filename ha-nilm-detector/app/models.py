@@ -37,6 +37,8 @@ class DeviceConfig:
     startup_duration_seconds: int = 5
     duty_cycle_threshold: float = 0.3
     metadata: Dict[str, Any] = field(default_factory=dict)
+    detector_type: str = "fridge"
+    confidence_threshold: float = 0.6
 
 
 @dataclass
@@ -62,3 +64,4 @@ class DeviceState_:
     daily_runtime_seconds: float = 0.0
     last_update: Optional[datetime] = None
     metadata: Dict[str, Any] = field(default_factory=dict)
+    confidence: float = 0.0
