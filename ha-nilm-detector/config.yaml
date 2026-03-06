@@ -1,7 +1,7 @@
 name: "HA NILM Detector"
 description: "Detect appliances from power consumption patterns"
 version: "0.1.0"
-slug: "ha_nilm_detector"
+slug: "ha-nilm-detector"
 startup: application
 boot: auto
 arch:
@@ -13,5 +13,6 @@ options:
   log_level: info
 schema:
   log_level: list(trace|debug|info|notice|warning|error|fatal)
+  home_assistant:
     entity_id_prefix: str
-  devices: "map"
+  devices: map
