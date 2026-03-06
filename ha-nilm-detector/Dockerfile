@@ -21,8 +21,4 @@ COPY run.sh /run.sh
 RUN pip3 install --no-cache-dir -r /tmp/requirements.txt \
     && chmod a+x /run.sh
 
-# Health check
-HEALTHCHECK --interval=30s --timeout=10s --start-period=10s --retries=3 \
-    CMD [ "wget", "--quiet", "--tries=1", "--spider", "http://localhost:8080/health" ] || exit 1
-
 CMD [ "/run.sh" ]

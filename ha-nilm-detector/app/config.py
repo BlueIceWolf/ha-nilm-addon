@@ -22,6 +22,7 @@ class Config:
             config_path: Path to configuration file (JSON or dict)
         """
         self.debug = False
+        self.log_level = "info"
         self.update_interval_seconds = 5
         self.mqtt_broker = "localhost"
         self.mqtt_port = 1883
@@ -65,6 +66,7 @@ class Config:
         """Apply configuration dictionary."""
         # Global settings
         self.debug = config_dict.get('debug', False)
+        self.log_level = str(config_dict.get('log_level', self.log_level)).lower()
         self.update_interval_seconds = config_dict.get('update_interval_seconds', 5)
         self.storage_path = config_dict.get('storage_path', '/data')
         

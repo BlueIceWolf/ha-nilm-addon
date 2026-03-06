@@ -1,9 +1,10 @@
-# Release 0.1.5
+# Release 0.1.6
 
 ## Highlights
-- Ensure `/app/main.py` exists by copying the `app/` tree into `/app` during Docker builds.
-- Install dependencies from `/tmp/requirements.txt` before startup so `python3 -u /app/main.py` can run.
-- Copy the contents of `app/` directly into `/app` so the package namespace resolves at runtime.
+- Added richer logging and configurable `log_level` handling for easier troubleshooting.
+- Improved runtime error context in startup, detector, and MQTT publish flows.
+- Docker health check was removed because no HTTP server is exposed by the add-on.
 
 ## Notes
+- Current status: startup in Home Assistant is still considered unstable/not fully working.
 - Update via Supervisor by refreshing the repository and reinstalling the add-on to trigger a rebuild.

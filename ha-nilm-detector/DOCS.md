@@ -49,6 +49,16 @@ Once installed and configured, the add-on will:
 
 ## Troubleshooting
 
+### Detailed logs for debugging
+
+Set `log_level` in the add-on options to get more detail in Home Assistant logs:
+
+- `trace` or `debug`: maximum detail for startup/runtime troubleshooting
+- `info`: normal operational logs (default)
+- `warning`, `error`, `fatal`: reduced output
+
+When debugging startup issues, use `debug` first.
+
 ### No devices detected
 - Ensure the learning phase has completed (24 hours)
 - Check power sensor data is being received

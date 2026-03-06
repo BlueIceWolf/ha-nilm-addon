@@ -21,12 +21,21 @@ class NILMDetectionSystem:
     """Coordinates collectors, detectors, confidence takers and publishers."""
 
     def __init__(self, config_path: str = "/data/options.json"):
+        # Bootstrap logging so configuration-load failures are visible in addon logs.
+        setup_logging(debug=False, name="NILM", log_level="info")
         options = load_options_from_file(config_path)
         self.config = Config()
         self.config.load(options)
 
-        setup_logging(debug=self.config.debug, name="NILM")
+        setup_logging(debug=self.config.debug, name="NILM", log_level=self.config.log_level)
         logger.info("Starting NILM Detection System...")
+        logger.info(
+            "Runtime configuration loaded: "
+            f"log_level={self.config.log_level}, "
+            f"update_interval_seconds={self.config.update_interval_seconds}, "
+            f"devices={len(self.config.devices)}, "
+            f"mqtt={self.config.mqtt_broker}:{self.config.mqtt_port}"
+        )
 
         self.state_engine = StateEngine()
         self.collector = Collector(MockPowerSource())
@@ -83,9 +92,15 @@ class NILMDetectionSystem:
         if not self.collector.connect():
             logger.error("Collector failed to connect")
             return
+        logger.info("Collector connected successfully")
 
         if not self.publisher.connect():
-            logger.warning("MQTT connect failed; continuing without publisher")
+            logger.warning(
+                "MQTT connect failed; continuing without publisher "
+                f"(mqtt={self.config.mqtt_broker}:{self.config.mqtt_port})"
+            )
+        else:
+            logger.info("MQTT publisher connected")
 
         self.running = True
         signal.signal(signal.SIGTERM, self._signal_handler)
@@ -100,6 +115,8 @@ class NILMDetectionSystem:
             try:
                 reading = self.collector.read()
                 if not reading:
+                    if iteration % 50 == 0:
+                        logger.warning("No power reading received from collector")
                     time.sleep(0.1)
                     continue
 
@@ -107,7 +124,15 @@ class NILMDetectionSystem:
                 for device_name, detector_group in self.detectors.items():
                     detection_candidates = []
                     for detector in detector_group:
-                        result = detector.detect(processed)
+                        try:
+                            result = detector.detect(processed)
+                        except Exception as detector_error:
+                            logger.error(
+                                f"Detector failure for {device_name} ({type(detector).__name__}): {detector_error}",
+                                exc_info=True,
+                            )
+                            continue
+
                         if result:
                             detection_candidates.append(result)
 
@@ -117,11 +142,18 @@ class NILMDetectionSystem:
                     )
 
                     if not best:
+                        logger.debug(f"No confident detection for {device_name}")
                         continue
 
                     device_state = self.state_engine.update_device_state(best)
                     if device_state and self.publisher.is_connected():
-                        self.publisher.publish_state(device_state)
+                        try:
+                            self.publisher.publish_state(device_state)
+                        except Exception as publish_error:
+                            logger.error(
+                                f"Failed to publish MQTT state for {device_name}: {publish_error}",
+                                exc_info=True,
+                            )
 
                 if iteration % 100 == 0:
                     logger.debug(f"Main loop alive (iteration {iteration})")
@@ -150,6 +182,7 @@ class NILMDetectionSystem:
 
 def main() -> None:
     try:
+        setup_logging(debug=False, name="NILM", log_level="info")
         system = NILMDetectionSystem()
         system.start()
     except Exception as exc:

@@ -4,13 +4,15 @@ ACHTUNG Läuft Aktuell Nicht
 
 Dieses Repository enthält einen Home Assistant Add-on namens **HA NILM Detector**. Der eigentliche Add-on-Code befindet sich im Unterordner `ha-nilm-detector/`.
 
+> Wichtiger Hinweis: Der Add-on-Start in Home Assistant ist aktuell noch nicht stabil/funktionsfähig. Bitte derzeit nur zu Testzwecken verwenden.
+
 Wenn du das Add-on in Home Assistant installieren möchtest, verwende einfach die Repository-URL:
 
 ```
 https://github.com/BlueIceWolf/ha-nilm-addon
 ```
 
-Mehr Informationen findest du im `ha-nilm-detector/README.md`.
+Mehr Informationen findest du im `ha-nilm-detector/DOCS.md`.
 
 ## 📦 Was ist hier drin?
 

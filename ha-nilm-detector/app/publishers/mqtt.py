@@ -45,7 +45,11 @@ class MQTTPublisher:
         self.enable_discovery = enable_discovery
         self.entity_id_prefix = entity_id_prefix
         
-        self.client = mqtt.Client(mqtt.CallbackAPIVersion.VERSION1)
+        # paho-mqtt 2.x supports CallbackAPIVersion, while 1.x does not.
+        try:
+            self.client = mqtt.Client(mqtt.CallbackAPIVersion.VERSION1)
+        except AttributeError:
+            self.client = mqtt.Client()
         self.client.username_pw_set(username, password) if username else None
         self.client.on_connect = self._on_connect
         self.client.on_message = self._on_message
