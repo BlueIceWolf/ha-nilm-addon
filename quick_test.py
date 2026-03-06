@@ -2,9 +2,9 @@
 """Quick test of the Fridge Detector."""
 
 from datetime import datetime
-from app.utils.logging import setup_logging
-from app.detectors.fridge import FridgeDetector
-from app.models import PowerReading, DeviceConfig
+from ha-nilm-detector.app.utils.logging import setup_logging
+from ha-nilm-detector.app.detectors.fridge import FridgeDetector
+from ha-nilm-detector.app.models import PowerReading, DeviceConfig
 
 # Setup logging
 logger = setup_logging(debug=True, name="NILM-Test")

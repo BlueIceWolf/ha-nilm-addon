@@ -6,10 +6,10 @@ Compares old rigid detector with new adaptive detector
 
 import time
 from datetime import datetime
-from app.utils.logging import setup_logging
-from app.detectors.fridge import FridgeDetector  # Original
-from app.detectors.fridge_adaptive import AdaptiveFridgeDetector  # New
-from app.models import PowerReading, DeviceConfig
+from ha-nilm-detector.app.utils.logging import setup_logging
+from ha-nilm-detector.app.detectors.fridge import FridgeDetector  # Original
+from ha-nilm-detector.app.detectors.fridge_adaptive import AdaptiveFridgeDetector  # New
+from ha-nilm-detector.app.models import PowerReading, DeviceConfig
 
 # Setup
 setup_logging(debug=False, name="NILM-Test")

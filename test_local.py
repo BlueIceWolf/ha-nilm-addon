@@ -6,12 +6,12 @@ Simulates power readings and detector logic without MQTT.
 
 import time
 from datetime import datetime, timedelta
-from app.utils.logging import setup_logging, get_logger
-from app.config import Config
-from app.state_engine import StateEngine
-from app.detectors.fridge import FridgeDetector
-from app.models import PowerReading, DeviceConfig, DeviceState
-from app.collector.source import MockPowerSource, Collector
+from ha-nilm-detector.app.utils.logging import setup_logging, get_logger
+from ha-nilm-detector.app.config import Config
+from ha-nilm-detector.app.state_engine import StateEngine
+from ha-nilm-detector.app.detectors.fridge import FridgeDetector
+from ha-nilm-detector.app.models import PowerReading, DeviceConfig, DeviceState
+from ha-nilm-detector.app.collector.source import MockPowerSource, Collector
 
 
 logger = get_logger(__name__)

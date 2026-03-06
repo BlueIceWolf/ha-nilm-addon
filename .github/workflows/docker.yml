@@ -23,8 +23,8 @@ jobs:
       - name: Docker Container bauen
         uses: docker/build-push-action@v5
         with:
-          context: .
-          file: ./Dockerfile
+          context: ./ha-nilm-detector
+          file: ./ha-nilm-detector/Dockerfile
           load: true
           tags: ha-nilm-addon:test
           cache-from: type=gha

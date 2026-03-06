@@ -6,10 +6,10 @@ Compare detection of traditional on/off vs gradual ramping devices
 
 import time
 from datetime import datetime
-from app.utils.logging import setup_logging
-from app.detectors.fridge import FridgeDetector  # Sharp spikes
-from app.detectors.inverter import InverterDeviceDetector  # Gradual ramps
-from app.models import PowerReading, DeviceConfig
+from ha-nilm-detector.app.utils.logging import setup_logging
+from ha-nilm-detector.app.detectors.fridge import FridgeDetector  # Sharp spikes
+from ha-nilm-detector.app.detectors.inverter import InverterDeviceDetector  # Gradual ramps
+from ha-nilm-detector.app.models import PowerReading, DeviceConfig
 
 setup_logging(debug=False, name="NILM-Test")
 

@@ -5,10 +5,10 @@ Realistic test with time delays simulating real power measurements.
 
 import time
 from datetime import datetime
-from app.utils.logging import setup_logging
-from app.state_engine import StateEngine
-from app.detectors.fridge import FridgeDetector
-from app.models import PowerReading, DeviceConfig
+from ha-nilm-detector.app.utils.logging import setup_logging
+from ha-nilm-detector.app.state_engine import StateEngine
+from ha-nilm-detector.app.detectors.fridge import FridgeDetector
+from ha-nilm-detector.app.models import PowerReading, DeviceConfig
 
 # Setup
 logger = setup_logging(debug=False, name="NILM-Test")
