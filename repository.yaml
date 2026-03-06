@@ -1,3 +1,10 @@
 name: BlueIceWolf Add-ons
 url: https://github.com/BlueIceWolf/ha-nilm-addon
 maintainer: BlueIceWolf
+
+addons:
+  ha_nilm_detector:
+    name: HA NILM Detector
+    description: Detect appliances from power consumption patterns
+    url: https://github.com/BlueIceWolf/ha-nilm-addon/tree/main/ha-nilm-detector
+    version: "0.1.0"

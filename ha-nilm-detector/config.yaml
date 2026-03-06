@@ -1,7 +1,7 @@
 name: "HA NILM Detector"
 description: "Detect appliances from power consumption patterns"
 version: "0.1.0"
-slug: "ha-nilm-detector"
+slug: "ha_nilm_detector"
 startup: application
 boot: auto
 arch:
