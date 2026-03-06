@@ -1,7 +1,7 @@
 build_from:
-  amd64: python:3.11-alpine
-  aarch64: python:3.11-alpine
-  armv7: python:3.11-alpine
+  amd64: docker.io/library/python:3.11-alpine
+  aarch64: docker.io/library/python:3.11-alpine
+  armv7: docker.io/library/python:3.11-alpine
 
 args:
-  BUILD_FROM: python:3.11-alpine
+  BUILD_FROM: docker.io/library/python:3.11-alpine
