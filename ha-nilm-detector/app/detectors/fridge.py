@@ -37,7 +37,7 @@ class FridgeDetector:
 
         elif self.current_state == DeviceState.STARTING:
             if power_w > self.config.power_min_w:
-                if reading.timestamp >= self.startup_phase_end:
+                if self.startup_phase_end and reading.timestamp >= self.startup_phase_end:
                     self.current_state = DeviceState.ON
                     logger.debug(f"{self.name}: Running phase entered")
                     return self._build_result(DeviceState.ON, reading, confidence=0.82)

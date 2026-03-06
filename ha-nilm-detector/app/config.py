@@ -3,7 +3,7 @@ Configuration management for NILM detection system.
 """
 import json
 import os
-from typing import Dict, Any, Optional
+from typing import Dict, Any, Optional, Union
 from app.models import DeviceConfig
 from app.utils.logging import get_logger
 
@@ -41,7 +41,7 @@ class Config:
         if config_path:
             self.load(config_path)
     
-    def load(self, config_path: str) -> None:
+    def load(self, config_path: Union[str, Dict[str, Any]]) -> None:
         """
         Load configuration from file.
         

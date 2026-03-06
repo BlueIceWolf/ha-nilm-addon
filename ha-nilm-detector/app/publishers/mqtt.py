@@ -4,7 +4,7 @@ MQTT publisher for Home Assistant integration with MQTT Discovery.
 import json
 from typing import Optional, Dict, Any
 import paho.mqtt.client as mqtt
-from app.models import DeviceState
+from app.models import DeviceState, DeviceState_
 from app.utils.logging import get_logger
 
 
@@ -74,7 +74,7 @@ class MQTTPublisher:
         except Exception as e:
             logger.error(f"Error disconnecting from MQTT broker: {e}")
     
-    def publish_state(self, device_state: DeviceState) -> None:
+    def publish_state(self, device_state: DeviceState_) -> None:
         """
         Publish device state and related metrics.
         

@@ -48,7 +48,7 @@ class AdaptiveLoadDetector:
 
         elif self.current_state == DeviceState.STARTING:
             self.cycle_power.append(power_w)
-            if now >= self.startup_phase_end and stable and power_w >= off_threshold:
+            if self.startup_phase_end and now >= self.startup_phase_end and stable and power_w >= off_threshold:
                 self.current_state = DeviceState.ON
                 return self._build_result(DeviceState.ON, reading, confidence=0.75)
             if power_w < off_threshold:
