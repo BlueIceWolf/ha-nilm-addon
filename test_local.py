@@ -101,7 +101,8 @@ def simulate_fridge_cycle():
             else:
                 logger.debug(f"  [{i+1}s] Power={power_w:.1f}W - uncertain")
             
-            time.sleep(0.5)  # Simulate delay
+            # Reduced sleep for faster testing
+            time.sleep(0.05)
     
     # Final summary
     logger.info("\n" + "=" * 60)
