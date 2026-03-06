@@ -4,6 +4,7 @@ FROM ${BUILD_FROM}
 # Install system packages needed for numpy compilation
 RUN apk add --no-cache \
     gcc \
+    g++ \
     musl-dev \
     python3-dev
 
