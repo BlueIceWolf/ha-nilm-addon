@@ -4,7 +4,7 @@ MQTT publisher for Home Assistant integration with MQTT Discovery.
 import json
 from typing import Optional, Dict, Any
 import paho.mqtt.client as mqtt
-from app.models import DeviceState_
+from app.models import DeviceState
 from app.utils.logging import get_logger
 
 
