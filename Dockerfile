@@ -1,11 +1,11 @@
 ARG BUILD_FROM
 FROM ${BUILD_FROM}
 
-# Install Python and required system packages
+# Install system packages needed for numpy compilation
 RUN apk add --no-cache \
-    python3 \
-    py3-pip \
-    py3-numpy
+    gcc \
+    musl-dev \
+    python3-dev
 
 # Set working directory
 WORKDIR /app
