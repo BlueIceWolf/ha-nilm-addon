@@ -1,0 +1,40 @@
+name: Docker Build
+
+on:
+  push:
+    branches: ["main"]
+  pull_request:
+    branches: ["main"]
+
+permissions:
+  contents: read
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Repository auschecken
+        uses: actions/checkout@v4
+
+      - name: Docker Buildx einrichten
+        uses: docker/setup-buildx-action@v3
+
+      - name: Docker Container bauen
+        uses: docker/build-push-action@v5
+        with:
+          context: .
+          file: ./Dockerfile
+          push: false
+          tags: ha-nilm-addon:test
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
+
+      - name: Container testen
+        run: |
+          # Starte Container kurz zum Testen
+          docker run --rm -d --name test-container ha-nilm-addon:test sleep 10
+          # Prüfe ob Container läuft
+          docker ps | grep test-container
+          # Stoppe Container
+          docker stop test-container
