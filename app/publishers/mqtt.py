@@ -74,7 +74,7 @@ class MQTTPublisher:
         except Exception as e:
             logger.error(f"Error disconnecting from MQTT broker: {e}")
     
-    def publish_state(self, device_state: DeviceState_) -> None:
+    def publish_state(self, device_state: DeviceState) -> None:
         """
         Publish device state and related metrics.
         
@@ -123,7 +123,7 @@ class MQTTPublisher:
         
         logger.debug(f"Published state for {device_name}: {state_payload}")
     
-    def _publish_discovery(self, device_name: str, device_state: DeviceState_) -> None:
+    def _publish_discovery(self, device_name: str, device_state: DeviceState) -> None:
         """
         Publish MQTT Discovery configuration for Home Assistant.
         
