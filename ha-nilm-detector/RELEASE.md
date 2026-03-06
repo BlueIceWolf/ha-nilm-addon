@@ -1,11 +1,8 @@
-# Release 0.1.1
+# Release 0.1.2
 
 ## Highlights
-- Reworked the detection stack into a modular processing → detector → confidence workflow.
-- Added processing pipeline & confidence evaluator to keep output consistent.
-- Ensured Home Assistant add-on metadata, icons, and build arguments validate in the Supervisor.
-- Added basic README/test scripts to exercise the new stack and keep QA fast.
+- Simplified `run.sh` so the Alpine container can start cleanly with `/bin/sh` and `python3 -u /app/main.py`.
+- Bumped to version 0.1.2 so HA Supervisor sees the new build during repository updates.
 
-## Next steps
-- Keep iterating on detector coverage (inverter, adaptive, edge cases).
-- Expand options schema if additional tuning controls are needed.
+## Notes
+- Update via Supervisor by refreshing the repository and reinstalling the add-on to trigger a rebuild.
