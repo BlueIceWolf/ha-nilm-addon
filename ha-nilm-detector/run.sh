@@ -1,4 +1,4 @@
-#!/bin/bash
+#!/bin/sh
 # Startup script for HA NILM Detector add-on
 
 set -e
