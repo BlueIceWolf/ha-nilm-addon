@@ -3,79 +3,94 @@
 [![GitHub Actions](https://github.com/BlueIceWolf/ha-nilm-addon/workflows/Python%20application/badge.svg)](https://github.com/BlueIceWolf/ha-nilm-addon/actions)
 [![Docker Build](https://github.com/BlueIceWolf/ha-nilm-addon/workflows/Docker%20Build/badge.svg)](https://github.com/BlueIceWolf/ha-nilm-addon/actions)
 
-**Willkommen zu deinem intelligenten Energiemonitor!** 🎯
+**Hey!** 👋 Schön, dass du hier bist. Dieses smarte Add-on für Home Assistant erkennt automatisch deine Haushaltsgeräte anhand ihres Stromverbrauchs. Kein manuelles Konfigurieren mehr - einfach anschließen und los geht's!
 
-Dieses Home Assistant Add-on verwendet **Non-Intrusive Load Monitoring (NILM)**, um automatisch Haushaltsgeräte anhand ihrer Stromverbrauchsmuster zu erkennen und zu überwachen. Stell dir vor: Du schließt einfach einen Stromsensor an und das System lernt selbständig, welches Gerät wann läuft!
+## 🚀 Loslegen (3 Minuten)
 
-## 🚀 Schnellstart (3 Minuten)
+1. **Repository hinzufügen**: `https://github.com/BlueIceWolf/ha-nilm-addon` in HA Add-on Store
+2. **Installieren**: "HA NILM Detector" suchen und installieren
+3. **Konfigurieren**: MQTT-Broker angeben
+4. **Fertig**: Das System lernt automatisch deine Geräte kennen
 
-1. **Repository hinzufügen**: Füge `https://github.com/BlueIceWolf/ha-nilm-addon` zu deinem Home Assistant Add-on Store hinzu
-2. **Add-on installieren**: Suche nach "HA NILM Detector" und installiere es
-3. **Konfigurieren**: Gib deine MQTT-Broker Details ein
-4. **Starten**: Das Add-on beginnt automatisch, Gerätemuster zu erlernen
+## ✨ Warum ist das cool?
 
-## ✨ Was macht dieses Add-on besonders?
+### 🤖 **Intelligente Erkennung**
+Das Add-on analysiert Strommuster und erkennt Geräte wie:
+- 🧊 Kühlschränke (erkennt Kompressor-Zyklen)
+- 🧺 Waschmaschinen (verschiedene Programme)
+- 🍽️ Geschirrspüler (verschiedene Modi)
+- 🔥 Backöfen (kurze Hochlast-Phasen)
 
-### 🔍 **Intelligente Geräteerkennung**
-- **Automatisches Lernen**: Analysiert Stromverbrauchsmuster und erkennt Geräte selbständig
-- **Keine manuelle Konfiguration**: Einfach anschließen und loslegen
-- **Anpassungsfähig**: Lernt aus realen Nutzungsdaten
+**Und es wird besser!** Mit jedem Tag lernt das System dazu.
 
-### 📊 **Echtzeit-Überwachung**
-- **Live-Monitoring**: Kontinuierliche Stromverbrauchsanalyse
-- **Sofortige Benachrichtigungen**: Wird ein Gerät erkannt, weißt du sofort Bescheid
-- **Historische Daten**: Verfolge Nutzungszeiten und -zyklen
+### 📊 **Was du bekommst**
+- **Live-Status**: Siehst sofort, welches Gerät läuft
+- **Statistiken**: Laufzeiten, Zyklen, Energieverbrauch pro Tag
+- **Home Assistant Integration**: Native Sensoren und Automatisierungen
+- **Energie sparen**: Erkenne ineffiziente Geräte
 
-### 🏠 **Nahtlose Home Assistant Integration**
-- **MQTT Discovery**: Automatische Entdeckung in Home Assistant
-- **Sensoren & Schalter**: Native HA-Entitäten für jedes erkannte Gerät
-- **Dashboard-Integration**: Perfekt für Energy Dashboards
+### 🔧 **Technische Vorteile**
+- **MQTT-basiert**: Funktioniert mit Shelly, Tasmota, etc.
+- **Modular**: Neue Geräte einfach hinzufügen
+- **Skalierbar**: Mehrere Stromkreise möglich
 
-### 🔧 **Erweiterbar & Flexibel**
-- **Neue Geräte**: Einfach neue Detektoren hinzufügen
-- **Verschiedene Sensoren**: Unterstützt MQTT-basierte Stromsensoren
-- **Modular**: Leicht anpassbar für spezielle Anforderungen
+## 🗺️ **Roadmap & Entwicklung**
 
-## 🔌 Unterstützte Geräte
+### ✅ **Jetzt verfügbar (v0.1.0)**
+- Grundlegende NILM-Algorithmen
+- Kühlschrank-Erkennung
+- MQTT-Integration
+- Home Assistant Add-on
 
-Das System erkennt automatisch:
-- 🧊 **Kühlschränke** (100-300W) - Typische Kompressormuster
-- 🧺 **Waschmaschinen** (500-2000W) - Variable Lastprofile
-- 🍽️ **Geschirrspüler** (1000-3000W) - Hochlast-Geräte
-- 🔥 **Backöfen** (1500-4000W) - Kurze Hochlast-Phasen
+### 🚧 **Nächste Schritte (v0.2.0 - April 2026)**
+- **Verbesserte Algorithmen**: Bessere Erkennung für variable Geräte
+- **Mehr Geräte**: Waschmaschine, Trockner, Mikrowelle
+- **Web-Interface**: Einfache Konfiguration im Browser
+- **Energy Dashboard**: Vorgefertigte HA-Dashboards
 
-**Und viele mehr!** Das System lernt kontinuierlich dazu.
+### 🎯 **Vision (v1.0.0 - Sommer 2026)**
+- **Multi-Circuit Support**: Mehrere Stromkreise gleichzeitig
+- **Cloud-Sync**: Geräteprofile teilen und verbessern
+- **Predictive Analytics**: Vorhersagen für Wartung und Effizienz
+- **Mobile App**: Direkte Kontrolle über Smartphone
 
-## 🏗️ Wie funktioniert's?
+### 🔮 **Zukunft (2027+)**
+- **KI-gestützte Optimierung**: Maschinelles Lernen für perfekte Erkennung
+- **Smart Home Integration**: Automatische Steuerung basierend auf Erkennungen
+- **Energy Reports**: Monatliche Berichte und Tipps zum Stromsparen
 
-```
-📡 Stromsensor → 🔍 NILM-Analyse → 🤖 Auto-Erkennung → 📤 MQTT → 🏠 Home Assistant
-```
+## 🛠️ **Für Entwickler**
 
-1. **Daten sammeln**: Stromverbrauch wird kontinuierlich gemessen
-2. **Muster erkennen**: Algorithmen identifizieren charakteristische Signaturen
-3. **Geräte klassifizieren**: Anhand von Leistung, Dauer und Mustern
-4. **Benachrichtigen**: Home Assistant erhält Updates via MQTT
-
-## 🛠️ Entwicklung & Tests
-
-### Lokale Tests
-
+### Tests ausführen
 ```bash
 # Abhängigkeiten installieren
 pip install -r ../../requirements.txt
 
-# Basis-Test
+# Schnelltest
+python ../../quick_test.py
+
+# Umfassende Tests
 python ../../test_local.py
-
-# Realistische Simulation
-python ../../test_realistic.py
-
-# Adaptive Detektion testen
-python ../../test_adaptive_detection.py
 ```
 
-### Projekt-Struktur
+### Neue Geräte hinzufügen
+Schau dir `app/detectors/` an - dort kannst du einfach neue Detektoren hinzufügen!
+
+## 📞 **Support & Community**
+
+- **Issues**: Bug-Reports und Feature-Requests willkommen
+- **Discussions**: Teile deine Erfahrungen und Ideen
+- **Contributing**: Jeder Pull Request ist wertvoll!
+
+## ⚖️ **Lizenz**
+
+MIT License - frei verwendbar, modifizierbar und teilbar.
+
+---
+
+**Erstellt mit ❤️ für die Home Assistant Community**
+
+*Dieses Add-on nutzt fortschrittliche Algorithmen, um deinen Energieverbrauch transparent zu machen. Spare Strom, schone die Umwelt und hab mehr Kontrolle über dein Zuhause!* 🌱⚡
 
 ```
 ha-nilm-detector/
