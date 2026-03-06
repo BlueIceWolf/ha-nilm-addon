@@ -1,0 +1,52 @@
+name: "HA NILM Detector"
+description: "Non-Intrusive Load Monitoring (NILM) for Home Assistant - Detects appliances from power consumption patterns"
+version: "0.1.0"
+slug: "ha-nilm-detector"
+image: "ghcr.io/janicklas/ha-nilm-detector/{arch}"
+arch:
+  - amd64
+  - armhf
+  - armv7
+  - arm64
+
+startup: application
+boot: auto
+map:
+  - /data
+
+options:
+  debug: false
+  update_interval_seconds: 5
+  mqtt:
+    broker: "homeassistant.local"
+    port: 1883
+    username: null
+    password: null
+    topic_prefix: "ha-nilm/"
+    discovery_prefix: "homeassistant"
+    discovery_enabled: true
+  home_assistant:
+    entity_id_prefix: "nilm"
+  devices:
+    kitchen_fridge:
+      enabled: true
+      power_min_w: 10
+      power_max_w: 500
+      min_runtime_seconds: 30
+      min_pause_seconds: 60
+      startup_duration_seconds: 5
+
+schema:
+  debug: bool
+  update_interval_seconds: int(4|600)
+  mqtt:
+    broker: str
+    port: int(1|65535)
+    username: str?
+    password: str?
+    topic_prefix: str
+    discovery_prefix: str
+    discovery_enabled: bool
+  home_assistant:
+    entity_id_prefix: str
+  devices: "map"

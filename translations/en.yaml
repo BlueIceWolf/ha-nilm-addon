@@ -1,0 +1,14 @@
+---
+configuration:
+  debug:
+    name: "Debug mode"
+    description: "Enable debug logging"
+  update_interval_seconds:
+    name: "Update interval"
+    description: "Interval between reading power values (seconds)"
+  mqtt:
+    name: "MQTT Settings"
+    description: "MQTT broker connection settings"
+  devices:
+    name: "Devices"
+    description: "Device detector configurations"
