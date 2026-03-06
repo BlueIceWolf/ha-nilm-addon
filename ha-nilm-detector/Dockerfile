@@ -13,6 +13,7 @@ WORKDIR /app
 
 # Copy application sources
 COPY app /app
+COPY main.py /app/main.py
 COPY requirements.txt /tmp/requirements.txt
 COPY run.sh /run.sh
 
