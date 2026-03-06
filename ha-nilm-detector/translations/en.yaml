@@ -1,0 +1,6 @@
+configuration:
+  log_level:
+    name: Log level
+    description: >-
+      Controls the level of log output from the add-on. "trace" is the most
+      verbose, "fatal" is the least verbose.
