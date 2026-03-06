@@ -1,10 +1,14 @@
 #!/usr/bin/env python3
 """Quick test of the Fridge Detector."""
 
+import sys
+import os
+sys.path.append(os.path.join(os.path.dirname(__file__), 'ha-nilm-detector'))
+
 from datetime import datetime
-from ha-nilm-detector.app.utils.logging import setup_logging
-from ha-nilm-detector.app.detectors.fridge import FridgeDetector
-from ha-nilm-detector.app.models import PowerReading, DeviceConfig
+from app.utils.logging import setup_logging
+from app.detectors.fridge import FridgeDetector
+from app.models import PowerReading, DeviceConfig
 
 # Setup logging
 logger = setup_logging(debug=True, name="NILM-Test")

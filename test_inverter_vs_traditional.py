@@ -4,12 +4,16 @@ Test: Inverter vs Non-Inverter Device Detection
 Compare detection of traditional on/off vs gradual ramping devices
 """
 
+import sys
+import os
+sys.path.append(os.path.join(os.path.dirname(__file__), 'ha-nilm-detector'))
+
 import time
 from datetime import datetime
-from ha-nilm-detector.app.utils.logging import setup_logging
-from ha-nilm-detector.app.detectors.fridge import FridgeDetector  # Sharp spikes
-from ha-nilm-detector.app.detectors.inverter import InverterDeviceDetector  # Gradual ramps
-from ha-nilm-detector.app.models import PowerReading, DeviceConfig
+from app.utils.logging import setup_logging
+from app.detectors.fridge import FridgeDetector  # Sharp spikes
+from app.detectors.inverter import InverterDeviceDetector  # Gradual ramps
+from app.models import PowerReading, DeviceConfig
 
 setup_logging(debug=False, name="NILM-Test")
 

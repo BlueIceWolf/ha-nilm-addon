@@ -4,12 +4,16 @@ Test: Adaptive Fridge Detector with Variable Spikes
 Compares old rigid detector with new adaptive detector
 """
 
+import sys
+import os
+sys.path.append(os.path.join(os.path.dirname(__file__), 'ha-nilm-detector'))
+
 import time
 from datetime import datetime
-from ha-nilm-detector.app.utils.logging import setup_logging
-from ha-nilm-detector.app.detectors.fridge import FridgeDetector  # Original
-from ha-nilm-detector.app.detectors.fridge_adaptive import AdaptiveFridgeDetector  # New
-from ha-nilm-detector.app.models import PowerReading, DeviceConfig
+from app.utils.logging import setup_logging
+from app.detectors.fridge import FridgeDetector  # Original
+from app.detectors.fridge_adaptive import AdaptiveFridgeDetector  # New
+from app.models import PowerReading, DeviceConfig
 
 # Setup
 setup_logging(debug=False, name="NILM-Test")
