@@ -15,4 +15,3 @@ schema:
   log_level: list(trace|debug|info|notice|warning|error|fatal)
   home_assistant:
     entity_id_prefix: str
-  devices: map
