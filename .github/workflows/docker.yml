@@ -29,6 +29,8 @@ jobs:
           tags: ha-nilm-addon:test
           cache-from: type=gha
           cache-to: type=gha,mode=max
+          build-args: |
+            BUILD_FROM=python:3.11-alpine
 
       - name: Container testen
         run: |
