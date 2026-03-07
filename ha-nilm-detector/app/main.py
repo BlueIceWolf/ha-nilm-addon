@@ -208,9 +208,26 @@ class NILMDetectionSystem:
                 "last_update": state.last_update.isoformat() if state.last_update else None,
             }
 
+        # Extract phase information from latest reading
+        phase_powers = {}
+        phase_entities = {}
+        if latest and isinstance(latest.metadata, dict):
+            phase_powers = latest.metadata.get("phase_powers_w", {})
+            phase_entities = latest.metadata.get("phase_entities", {})
+        
+        phases_info = []
+        for phase_name in ["L1", "L2", "L3"]:
+            if phase_name in phase_powers:
+                phases_info.append({
+                    "name": phase_name,
+                    "power_w": float(phase_powers[phase_name]),
+                    "entity_id": phase_entities.get(phase_name, ""),
+                })
+
         return {
             "current_power_w": float(latest.power_w) if latest else None,
             "timestamp": latest.timestamp.isoformat() if latest else None,
+            "phases": phases_info,
             "devices": device_payload,
         }
 

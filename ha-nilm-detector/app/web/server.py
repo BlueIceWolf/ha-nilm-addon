@@ -115,7 +115,13 @@ def _html_page() -> str:
     </div>
 
     <div class=\"grid\">
-      <div class=\"card\"><div class=\"label\">Current Power</div><div id=\"current_power\" class=\"value\">-</div></div>
+      <div class=\"card\"><div class=\"label\">Total Power</div><div id=\"current_power\" class=\"value\">-</div></div>
+      <div class=\"card\" id=\"phaseL1\" style=\"display:none;\"><div class=\"label\">Phase L1</div><div id=\"power_l1\" class=\"value\">-</div></div>
+      <div class=\"card\" id=\"phaseL2\" style=\"display:none;\"><div class=\"label\">Phase L2</div><div id=\"power_l2\" class=\"value\">-</div></div>
+      <div class=\"card\" id=\"phaseL3\" style=\"display:none;\"><div class=\"label\">Phase L3</div><div id=\"power_l3\" class=\"value\">-</div></div>
+    </div>
+
+    <div class=\"grid\">
       <div class=\"card\"><div class=\"label\">Avg (24h)</div><div id=\"avg_power\" class=\"value\">-</div></div>
       <div class=\"card\"><div class=\"label\">Peak (24h)</div><div id=\"peak_power\" class=\"value\">-</div></div>
       <div class=\"card\"><div class=\"label\">Readings (24h)</div><div id=\"reading_count\" class=\"value\">-</div></div>
@@ -125,17 +131,18 @@ def _html_page() -> str:
       <canvas id=\"powerChart\" width=\"1000\" height=\"280\"></canvas>
     </div>
 
+    <h2 style=\"margin:14px 0 8px; font-size:1.1rem;\">Erkannte Geraete</h2>
     <table>
       <thead>
-        <tr><th>Device</th><th>State</th><th>Power est. / Phase (W)</th><th>Confidence</th><th>Daily Cycles</th><th>Daily Runtime (s)</th></tr>
+        <tr><th>Device</th><th>State</th><th>Power (W)</th><th>Confidence</th><th>Cycles</th><th>Runtime (s)</th></tr>
       </thead>
       <tbody id=\"deviceRows\"></tbody>
     </table>
 
-    <h2 style=\"margin:14px 0 8px; font-size:1.1rem;\">Gelernte Muster und Vorschlaege</h2>
+    <h2 style=\"margin:14px 0 8px; font-size:1.1rem;\">Gelernte Muster</h2>
     <table>
       <thead>
-        <tr><th>ID</th><th>Erkennung</th><th>Label</th><th>Phasen</th><th>Mittelwert (W)</th><th>Peak (W)</th><th>Dauer (s)</th><th>Treffer</th><th>Aktion</th></tr>
+        <tr><th>ID</th><th>Type</th><th>Label</th><th>Phasen</th><th>Ø (W)</th><th>Peak (W)</th><th>Dauer (s)</th><th>Count</th><th>Aktion</th></tr>
       </thead>
       <tbody id=\"patternRows\"></tbody>
     </table>
@@ -243,13 +250,8 @@ function renderDevices(devices) {
   }
   names.forEach(name => {
     const d = devices[name];
-    const estimated = d.estimated_power_w ?? d.power_w;
-    const phase = d.phase_total_w;
-    const powerText = phase !== null && phase !== undefined
-      ? `${fmt(estimated)} / ${fmt(phase)}`
-      : `${fmt(estimated)}`;
     const tr = document.createElement('tr');
-    tr.innerHTML = `<td>${name}</td><td>${d.state || '-'}</td><td>${powerText}</td><td>${fmt(d.confidence)}</td><td>${d.daily_cycles ?? '-'}</td><td>${fmt(d.daily_runtime_seconds)}</td>`;
+    tr.innerHTML = `<td>${name}</td><td>${d.state || '-'}</td><td>${fmt(d.estimated_power_w)}</td><td>${fmt(d.confidence)}</td><td>${d.daily_cycles ?? '-'}</td><td>${fmt(d.daily_runtime_seconds)}</td>`;
     tbody.appendChild(tr);
   });
 }
@@ -268,10 +270,10 @@ function renderPatterns(patterns) {
     const tr = document.createElement('tr');
     const label = p.user_label || '-';
     const candidate = p.candidate_name || p.suggestion_type || 'unbekannt';
-    const guessText = p.is_confirmed ? `bestaetigt: ${candidate}` : `evtl. ${candidate}`;
+    const typeText = p.is_confirmed ? candidate : `evtl. ${candidate}`;
     const phaseModeRaw = String(p.phase_mode || 'unknown');
-    const phaseMode = phaseModeRaw === 'single_phase' ? '1-phasig' : (phaseModeRaw === 'multi_phase' ? 'mehrphasig' : phaseModeRaw);
-    tr.innerHTML = `<td>${p.id}</td><td>${guessText}</td><td>${label}</td><td>${phaseMode}</td><td>${fmt(p.avg_power_w)}</td><td>${fmt(p.peak_power_w)}</td><td>${fmt(p.duration_s)}</td><td>${p.seen_count ?? 0}</td><td><button data-id="${p.id}">Korrigieren</button></td>`;
+    const phaseMode = phaseModeRaw === 'single_phase' ? '1-ph' : (phaseModeRaw === 'multi_phase' ? '3-ph' : '?');
+    tr.innerHTML = `<td>${p.id}</td><td>${typeText}</td><td>${label}</td><td>${phaseMode}</td><td>${fmt(p.avg_power_w)}</td><td>${fmt(p.peak_power_w)}</td><td>${fmt(p.duration_s)}</td><td>${p.seen_count ?? 0}</td><td><button data-id="${p.id}">Label</button></td>`;
     tbody.appendChild(tr);
   });
 
@@ -314,6 +316,21 @@ async function refresh() {
     document.getElementById('avg_power').textContent = fmt(summary.avg_power_w, ' W');
     document.getElementById('peak_power').textContent = fmt(summary.max_power_w, ' W');
     document.getElementById('reading_count').textContent = String(summary.reading_count ?? 0);
+    
+    // Display phase information
+    const phases = live.phases || [];
+    ['L1', 'L2', 'L3'].forEach(phaseName => {
+      const phaseData = phases.find(p => p.name === phaseName);
+      const cardEl = document.getElementById(`phase${phaseName}`);
+      const valueEl = document.getElementById(`power_${phaseName.toLowerCase()}`);
+      if (phaseData) {
+        cardEl.style.display = 'block';
+        valueEl.textContent = fmt(phaseData.power_w, ' W');
+      } else {
+        cardEl.style.display = 'none';
+      }
+    });
+
     setStatus(buildLiveStatusMessage(live));
 
     setStatus('Zeichne Verlauf und aktualisiere Tabellen...');

@@ -15,28 +15,9 @@ arch:
   - armv7
 init: false
 options:
-  debug: false
   log_level: info
-  web:
-    enabled: true
-    port: 8099
-    history_minutes: 180
-  learning:
-    enabled: true
-    on_threshold_w: 50.0
-    off_threshold_w: 25.0
-    min_cycle_seconds: 20
   power_source: home_assistant_rest
   update_interval_seconds: 5
-  mqtt:
-    enabled: false
-    broker: homeassistant.local
-    port: 1883
-    username: ""
-    password: ""
-    topic_prefix: ha-nilm/
-    discovery_prefix: homeassistant
-    discovery_enabled: true
   home_assistant:
     url: http://supervisor/core/api
     phase_entities:
@@ -44,42 +25,16 @@ options:
       l2: ""
       l3: ""
     token: ""
-    entity_id_prefix: nilm
-  storage:
-    enabled: true
-    db_path: /data/nilm.sqlite3
-    retention_days: 30
-    learning_warmup_minutes: 120
-  processing:
-    smoothing_window: 5
-    noise_threshold: 2.0
-    adaptive_correction: true
-  confidence:
-    min_confidence: 0.6
-  devices_json: ""
-schema:
-  debug: bool
-  log_level: list(trace|debug|info|notice|warning|error|fatal)
-  web:
-    enabled: bool
-    port: int(1024,65535)
-    history_minutes: int(15,10080)
   learning:
-    enabled: bool
-    on_threshold_w: float(1,10000)
-    off_threshold_w: float(0,10000)
-    min_cycle_seconds: int(5,86400)
+    enabled: true
+    on_threshold_w: 50.0
+    off_threshold_w: 25.0
+  storage:
+    retention_days: 30
+schema:
+  log_level: list(debug|info|warning|error)
   power_source: list(mock|home_assistant_rest)
-  update_interval_seconds: int(1,300)
-  mqtt:
-    enabled: bool
-    broker: str
-    port: int(1,65535)
-    username: str?
-    password: password?
-    topic_prefix: str
-    discovery_prefix: str
-    discovery_enabled: bool
+  update_interval_seconds: int(1,60)
   home_assistant:
     url: str
     phase_entities:
@@ -87,16 +42,9 @@ schema:
       l2: str?
       l3: str?
     token: password?
-    entity_id_prefix: str
-  storage:
+  learning:
     enabled: bool
-    db_path: str
-    retention_days: int(1,3650)
-    learning_warmup_minutes: int(1,10080)
-  processing:
-    smoothing_window: int(1,120)
-    noise_threshold: float(0,1000)
-    adaptive_correction: bool
-  confidence:
-    min_confidence: float(0,1)
-  devices_json: str
+    on_threshold_w: float(10,1000)
+    off_threshold_w: float(5,500)
+  storage:
+    retention_days: int(1,365)
