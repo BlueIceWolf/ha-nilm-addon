@@ -887,10 +887,10 @@ class SQLiteStore:
             # Hole Messwerte im Zeitbereich
             rows = self._conn.execute(
                 """
-                SELECT timestamp, power_w, phase
+                SELECT ts, power_w, phase
                 FROM power_readings
-                WHERE timestamp >= ? AND timestamp <= ?
-                ORDER BY timestamp ASC
+                WHERE ts >= ? AND ts <= ?
+                ORDER BY ts ASC
                 """,
                 (start_time, end_time)
             ).fetchall()
