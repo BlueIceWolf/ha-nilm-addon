@@ -50,6 +50,13 @@ Oben rechts zeigt die UI jetzt live, was gerade passiert:
 - `Aktiv: <Wert> W (aktualisiert: ...)`
 - `Warte auf API: ...` bei Fehlern
 
+## Muster Lernen und Korrigieren
+
+- Das Add-on lernt beim Lauf automatisch Lastzyklen aus dem Summensensor.
+- In der Pattern-Tabelle siehst du Erkennungen als `evtl. <geraet>`.
+- Mit `Korrigieren` kannst du den echten Namen setzen (z. B. `kuehlschrank`).
+- Nach der Korrektur werden wiederkehrende Muster als `bestaetigt: <geraet>` angezeigt.
+
 ## Troubleshooting
 
 - `HTTP 401` beim Start:

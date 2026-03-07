@@ -127,7 +127,7 @@ def _html_page() -> str:
 
     <table>
       <thead>
-        <tr><th>Device</th><th>State</th><th>Power (W)</th><th>Confidence</th><th>Daily Cycles</th><th>Daily Runtime (s)</th></tr>
+        <tr><th>Device</th><th>State</th><th>Power est. / Phase (W)</th><th>Confidence</th><th>Daily Cycles</th><th>Daily Runtime (s)</th></tr>
       </thead>
       <tbody id=\"deviceRows\"></tbody>
     </table>
@@ -135,7 +135,7 @@ def _html_page() -> str:
     <h2 style=\"margin:14px 0 8px; font-size:1.1rem;\">Gelernte Muster und Vorschlaege</h2>
     <table>
       <thead>
-        <tr><th>ID</th><th>Vorschlag</th><th>Label</th><th>Mittelwert (W)</th><th>Peak (W)</th><th>Dauer (s)</th><th>Treffer</th><th>Aktion</th></tr>
+        <tr><th>ID</th><th>Erkennung</th><th>Label</th><th>Mittelwert (W)</th><th>Peak (W)</th><th>Dauer (s)</th><th>Treffer</th><th>Aktion</th></tr>
       </thead>
       <tbody id=\"patternRows\"></tbody>
     </table>
@@ -243,8 +243,13 @@ function renderDevices(devices) {
   }
   names.forEach(name => {
     const d = devices[name];
+    const estimated = d.estimated_power_w ?? d.power_w;
+    const phase = d.phase_total_w;
+    const powerText = phase !== null && phase !== undefined
+      ? `${fmt(estimated)} / ${fmt(phase)}`
+      : `${fmt(estimated)}`;
     const tr = document.createElement('tr');
-    tr.innerHTML = `<td>${name}</td><td>${d.state || '-'}</td><td>${fmt(d.power_w)}</td><td>${fmt(d.confidence)}</td><td>${d.daily_cycles ?? '-'}</td><td>${fmt(d.daily_runtime_seconds)}</td>`;
+    tr.innerHTML = `<td>${name}</td><td>${d.state || '-'}</td><td>${powerText}</td><td>${fmt(d.confidence)}</td><td>${d.daily_cycles ?? '-'}</td><td>${fmt(d.daily_runtime_seconds)}</td>`;
     tbody.appendChild(tr);
   });
 }
@@ -262,7 +267,9 @@ function renderPatterns(patterns) {
   patterns.forEach(p => {
     const tr = document.createElement('tr');
     const label = p.user_label || '-';
-    tr.innerHTML = `<td>${p.id}</td><td>${p.suggestion_type || '-'}</td><td>${label}</td><td>${fmt(p.avg_power_w)}</td><td>${fmt(p.peak_power_w)}</td><td>${fmt(p.duration_s)}</td><td>${p.seen_count ?? 0}</td><td><button data-id="${p.id}">Korrigieren</button></td>`;
+    const candidate = p.candidate_name || p.suggestion_type || 'unbekannt';
+    const guessText = p.is_confirmed ? `bestaetigt: ${candidate}` : `evtl. ${candidate}`;
+    tr.innerHTML = `<td>${p.id}</td><td>${guessText}</td><td>${label}</td><td>${fmt(p.avg_power_w)}</td><td>${fmt(p.peak_power_w)}</td><td>${fmt(p.duration_s)}</td><td>${p.seen_count ?? 0}</td><td><button data-id="${p.id}">Korrigieren</button></td>`;
     tbody.appendChild(tr);
   });
 

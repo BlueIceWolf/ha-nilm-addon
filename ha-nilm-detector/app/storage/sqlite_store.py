@@ -306,6 +306,15 @@ class SQLiteStore:
         energy_dist = rel(float(existing["energy_wh"]), float(candidate["energy_wh"]))
         return (avg_dist * 0.35) + (peak_dist * 0.35) + (duration_dist * 0.2) + (energy_dist * 0.1)
 
+    @staticmethod
+    def _normalize_pattern_name(name: str) -> str:
+        text = str(name or "").strip().lower()
+        if not text:
+            return "unbekannt"
+        if text.endswith("_like"):
+            text = text[:-5]
+        return text.replace("_", " ")
+
     def list_patterns(self, limit: int = 100) -> List[Dict]:
         if not self._conn:
             return []
@@ -339,6 +348,8 @@ class SQLiteStore:
                         "suggestion_type": row[10],
                         "user_label": row[11],
                         "status": row[12],
+                        "candidate_name": self._normalize_pattern_name(row[11] or row[10]),
+                        "is_confirmed": bool(str(row[11] or "").strip()),
                     }
                 )
             return out

@@ -89,14 +89,31 @@ class AdaptiveLoadDetector:
         return recent[-1][1] > recent[0][1]
 
     def _build_result(self, state: DeviceState, reading: PowerReading, confidence: float) -> DetectionResult:
+        estimated_power_w = self._estimate_device_power(reading)
+        phase_total_w = float(reading.power_w)
+
+        details = self.get_diagnostics()
+        details.update(
+            {
+                "phase_total_w": phase_total_w,
+                "estimated_power_w": estimated_power_w,
+            }
+        )
+
         return DetectionResult(
             device_name=self.name,
             timestamp=reading.timestamp,
             state=state,
-            power_w=reading.power_w,
+            power_w=estimated_power_w,
             confidence=confidence,
-            details=self.get_diagnostics(),
+            details=details,
         )
+
+    def _estimate_device_power(self, reading: PowerReading) -> float:
+        """Estimate device-only load by subtracting adaptive baseline from phase total."""
+        phase_total = float(reading.power_w)
+        estimated = max(0.0, phase_total - self.baseline_power)
+        return float(min(estimated, self.config.power_max_w))
 
     def prime_with_history(self, power_values: List[float]) -> None:
         """Warm-start adaptive baseline using persisted readings from storage."""

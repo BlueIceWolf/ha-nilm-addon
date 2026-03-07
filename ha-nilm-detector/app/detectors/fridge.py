@@ -61,14 +61,36 @@ class FridgeDetector:
         return None
 
     def _build_result(self, state: DeviceState, reading: PowerReading, confidence: float) -> DetectionResult:
+        estimated_power_w = self._estimate_device_power(reading)
+        phase_total_w = float(reading.power_w)
+
+        details = self.get_cycle_info()
+        details.update(
+            {
+                "phase_total_w": phase_total_w,
+                "estimated_power_w": estimated_power_w,
+            }
+        )
+
         return DetectionResult(
             device_name=self.name,
             timestamp=reading.timestamp,
             state=state,
-            power_w=reading.power_w,
+            power_w=estimated_power_w,
             confidence=confidence,
-            details=self.get_cycle_info(),
+            details=details,
         )
+
+    def _estimate_device_power(self, reading: PowerReading) -> float:
+        """Estimate device-only power from phase total using a local baseline."""
+        phase_total = float(reading.power_w)
+
+        # Use a short history window to approximate idle baseline for this phase.
+        recent = [r.power_w for r in self.power_history[-60:]]
+        baseline = min(recent) if recent else 0.0
+
+        estimated = max(0.0, phase_total - baseline)
+        return float(min(estimated, self.config.power_max_w))
 
     def get_cycle_info(self, window_seconds: int = 60) -> dict:
         cutoff = datetime.now() - timedelta(seconds=window_seconds)

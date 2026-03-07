@@ -195,9 +195,12 @@ class NILMDetectionSystem:
         states = self.state_engine.get_all_states()
         device_payload = {}
         for name, state in states.items():
+            phase_total_w = state.metadata.get("phase_total_w") if isinstance(state.metadata, dict) else None
             device_payload[name] = {
                 "state": state.state.value,
                 "power_w": float(state.power_w),
+                "estimated_power_w": float(state.power_w),
+                "phase_total_w": float(phase_total_w) if phase_total_w is not None else None,
                 "confidence": float(state.confidence),
                 "daily_cycles": int(state.daily_cycles),
                 "daily_runtime_seconds": float(state.daily_runtime_seconds),
@@ -296,10 +299,14 @@ class NILMDetectionSystem:
                         )
                         pattern = learn_result.get("pattern") if isinstance(learn_result, dict) else None
                         if pattern:
+                            candidate_name = pattern.get("candidate_name") or pattern.get("user_label") or pattern.get("suggestion_type")
+                            is_confirmed = bool(pattern.get("is_confirmed") or pattern.get("user_label"))
+                            guess_prefix = "bestaetigt" if is_confirmed else "evtl."
                             logger.info(
                                 "Pattern learned/updated: "
                                 f"id={pattern.get('id')} suggestion={pattern.get('suggestion_type')} "
-                                f"label={pattern.get('user_label') or '-'} seen={pattern.get('seen_count')}"
+                                f"label={pattern.get('user_label') or '-'} seen={pattern.get('seen_count')} "
+                                f"-> {guess_prefix} {candidate_name}"
                             )
 
                 for device_name, detector_group in self.detectors.items():
