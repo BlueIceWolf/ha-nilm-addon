@@ -16,7 +16,6 @@ arch:
 init: false
 options:
   log_level: info
-  power_source: home_assistant_rest
   update_interval_seconds: 5
   home_assistant:
     url: http://supervisor/core/api
@@ -33,7 +32,6 @@ options:
     retention_days: 30
 schema:
   log_level: list(debug|info|warning|error)
-  power_source: list(mock|home_assistant_rest)
   update_interval_seconds: int(1,60)
   home_assistant:
     url: str

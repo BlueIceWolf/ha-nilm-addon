@@ -31,7 +31,7 @@ class Config:
         self.learning_on_threshold_w = 50.0
         self.learning_off_threshold_w = 25.0
         self.learning_min_cycle_seconds = 20
-        self.power_source = "mock"
+        self.power_source = "home_assistant_rest"
         self.mqtt_enabled = False
         self.mqtt_broker = "localhost"
         self.mqtt_port = 1883
@@ -102,7 +102,7 @@ class Config:
             learning_config.get('min_cycle_seconds', self.learning_min_cycle_seconds)
         )
 
-        self.power_source = str(config_dict.get('power_source', self.power_source)).lower()
+        self.power_source = "home_assistant_rest"
         self.storage_path = config_dict.get('storage_path', '/data')
         
         # MQTT settings
@@ -167,9 +167,9 @@ class Config:
 
     def _validate_config(self) -> None:
         """Validate configuration consistency and required fields."""
-        if self.power_source == 'home_assistant_rest' and not self.get_selected_phase_entities():
+        if not self.get_selected_phase_entities():
             raise ValueError(
-                "home_assistant_rest requires at least one configured phase entity "
+                "At least one phase entity must be configured "
                 "(home_assistant.phase_entities.l1/l2/l3 or sensor_entity_id)."
             )
 

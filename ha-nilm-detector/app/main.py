@@ -6,7 +6,7 @@ import time
 from datetime import datetime
 from typing import Dict, List
 
-from app.collector.source import Collector, HARestPowerSource, MockPowerSource
+from app.collector.source import Collector, HARestPowerSource
 from app.config import Config, load_options_from_file
 from app.confidence.confidence import ConfidenceEvaluator
 from app.detectors import AdaptiveLoadDetector, FridgeDetector, InverterDeviceDetector
@@ -120,32 +120,28 @@ class NILMDetectionSystem:
             )
 
     def _build_power_source(self):
-        if self.config.power_source == "home_assistant_rest":
-            token = str(self.config.ha_token or "").strip()
-            if not token:
-                token = str(os.getenv("SUPERVISOR_TOKEN", "")).strip()
-            if not token:
-                # Legacy fallback used in some HA addon environments.
-                token = str(os.getenv("HASSIO_TOKEN", "")).strip()
+        token = str(self.config.ha_token or "").strip()
+        if not token:
+            token = str(os.getenv("SUPERVISOR_TOKEN", "")).strip()
+        if not token:
+            # Legacy fallback used in some HA addon environments.
+            token = str(os.getenv("HASSIO_TOKEN", "")).strip()
 
-            if token.lower().startswith("bearer "):
-                token = token.split(" ", 1)[1].strip()
+        if token.lower().startswith("bearer "):
+            token = token.split(" ", 1)[1].strip()
 
-            phase_entities = self.config.get_selected_phase_entities()
-            logger.info(
-                "Using HA REST power source: "
-                f"phases={phase_entities}, url={self.config.ha_url}, "
-                f"token_present={bool(token)}"
-            )
-            return HARestPowerSource(
-                ha_url=self.config.ha_url,
-                entity_id="",
-                token=token,
-                phase_entity_ids=phase_entities,
-            )
-
-        logger.warning("Using mock power source. Set power_source=home_assistant_rest for real sensor input.")
-        return MockPowerSource(phase='L1')
+        phase_entities = self.config.get_selected_phase_entities()
+        logger.info(
+            "Using HA REST power source: "
+            f"phases={phase_entities}, url={self.config.ha_url}, "
+            f"token_present={bool(token)}"
+        )
+        return HARestPowerSource(
+            ha_url=self.config.ha_url,
+            entity_id="",
+            token=token,
+            phase_entity_ids=phase_entities,
+        )
 
     def _warm_start_detectors(self) -> None:
         if not self.storage:
