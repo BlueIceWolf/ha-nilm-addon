@@ -12,7 +12,8 @@ RUN apk add --no-cache \
 WORKDIR /app
 
 # Copy application sources
-COPY app/ /app
+# Keep the Python package structure so `/app/main.py` can import `app.*`.
+COPY app/ /app/app
 COPY main.py /app/main.py
 COPY requirements.txt /tmp/requirements.txt
 COPY run.sh /run.sh
