@@ -106,6 +106,7 @@ class NILMDetectionSystem:
 
         self.running = False
         self.last_daily_reset = datetime.now()
+        self.last_nightly_learning_date = None
         self.web_server: StatsWebServer | None = None
 
         if self.config.web_enabled:
@@ -258,6 +259,28 @@ class NILMDetectionSystem:
             return {"ok": False, "error": "storage not enabled"}
         return self.storage.flush_debug_data(reset_patterns=reset_patterns)
 
+    def _maybe_run_nightly_learning(self, now: datetime) -> None:
+        """Run lightweight learning maintenance once per night (off-peak window)."""
+        if not self.storage or not self.config.learning_enabled:
+            return
+
+        # Run once per calendar day in an off-peak window.
+        if now.hour < 2 or now.hour > 5:
+            return
+        if self.last_nightly_learning_date == now.date():
+            return
+
+        result = self.storage.run_nightly_learning_pass(
+            merge_tolerance=0.20,
+            max_patterns=800,
+        )
+        self.last_nightly_learning_date = now.date()
+        logger.info(
+            "Nightly learning pass completed: "
+            f"ok={result.get('ok')} merged={result.get('merged', 0)} "
+            f"patterns={result.get('patterns_considered', 0)}"
+        )
+
     def start(self) -> None:
         if not self.collector.connect():
             logger.error("Collector failed to connect")
@@ -382,6 +405,9 @@ class NILMDetectionSystem:
                 if (now - self.last_daily_reset).days > 0 or now.date() != self.last_daily_reset.date():
                     self.state_engine.reset_all_daily_counters()
                     self.last_daily_reset = now
+
+                if iteration % 120 == 0:
+                    self._maybe_run_nightly_learning(now)
 
                 time.sleep(self.config.update_interval_seconds)
             except Exception as e:

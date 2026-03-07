@@ -5,7 +5,7 @@ import math
 import os
 import sqlite3
 from datetime import datetime, timedelta
-from typing import Dict, List
+from typing import Dict, List, Tuple
 
 from app.models import DetectionResult, PowerReading
 from app.utils.logging import get_logger
@@ -419,6 +419,131 @@ class SQLiteStore:
             return {"label": fallback, "confidence": confidence, "source": "fallback_low_confidence"}
 
         return {"label": best_label, "confidence": confidence, "source": "prototype_similarity"}
+
+    def run_nightly_learning_pass(self, merge_tolerance: float = 0.20, max_patterns: int = 800) -> Dict:
+        """Run a lightweight nightly pattern consolidation pass.
+
+        Keeps runtime cheap by running once nightly and merging very similar active
+        patterns so the model becomes more stable over time.
+        """
+        if not self._conn:
+            return {"ok": False, "error": "storage not connected"}
+
+        patterns = self.list_patterns(limit=max_patterns)
+        active = [p for p in patterns if p.get("status") == "active"]
+        if len(active) < 2:
+            return {"ok": True, "merged": 0, "patterns_considered": len(active)}
+
+        # Build best non-overlapping merge pairs first, then apply in one transaction.
+        pairs: List[Tuple[Dict, Dict, float]] = []
+        for idx in range(len(active)):
+            a = active[idx]
+            for jdx in range(idx + 1, len(active)):
+                b = active[jdx]
+                if (a.get("phase_mode") or "unknown") != (b.get("phase_mode") or "unknown"):
+                    continue
+                dist = self._pattern_distance(a, b)
+                if dist <= merge_tolerance:
+                    pairs.append((a, b, dist))
+
+        if not pairs:
+            return {"ok": True, "merged": 0, "patterns_considered": len(active)}
+
+        pairs.sort(key=lambda item: item[2])
+        used_ids = set()
+        selected: List[Tuple[Dict, Dict, float]] = []
+        for a, b, dist in pairs:
+            a_id = int(a["id"])
+            b_id = int(b["id"])
+            if a_id in used_ids or b_id in used_ids:
+                continue
+            selected.append((a, b, dist))
+            used_ids.add(a_id)
+            used_ids.add(b_id)
+
+        if not selected:
+            return {"ok": True, "merged": 0, "patterns_considered": len(active)}
+
+        def _weighted_value(a_val: float, a_n: int, b_val: float, b_n: int) -> float:
+            total = max(a_n + b_n, 1)
+            return ((a_val * a_n) + (b_val * b_n)) / float(total)
+
+        merged = 0
+        now = datetime.now().isoformat()
+        try:
+            with self._conn:
+                for a, b, _dist in selected:
+                    a_id = int(a["id"])
+                    b_id = int(b["id"])
+                    a_seen = int(a.get("seen_count", 1))
+                    b_seen = int(b.get("seen_count", 1))
+                    total_seen = a_seen + b_seen
+
+                    avg_power = _weighted_value(float(a["avg_power_w"]), a_seen, float(b["avg_power_w"]), b_seen)
+                    peak_power = _weighted_value(float(a["peak_power_w"]), a_seen, float(b["peak_power_w"]), b_seen)
+                    duration = _weighted_value(float(a["duration_s"]), a_seen, float(b["duration_s"]), b_seen)
+                    energy = _weighted_value(float(a["energy_wh"]), a_seen, float(b["energy_wh"]), b_seen)
+                    avg_phases = _weighted_value(
+                        float(a.get("avg_active_phases", 1.0)),
+                        a_seen,
+                        float(b.get("avg_active_phases", 1.0)),
+                        b_seen,
+                    )
+
+                    # Prefer confirmed label, then non-unknown suggestion.
+                    chosen_label = str(a.get("user_label") or b.get("user_label") or "").strip() or None
+                    candidates = [
+                        str(a.get("suggestion_type") or "").strip(),
+                        str(b.get("suggestion_type") or "").strip(),
+                    ]
+                    chosen_suggestion = next((c for c in candidates if c and c != "unknown"), "unknown")
+
+                    first_seen = min(str(a.get("first_seen") or now), str(b.get("first_seen") or now))
+                    last_seen = max(str(a.get("last_seen") or now), str(b.get("last_seen") or now))
+
+                    self._conn.execute(
+                        """
+                        UPDATE learned_patterns
+                        SET updated_at = ?,
+                            first_seen = ?,
+                            last_seen = ?,
+                            seen_count = ?,
+                            avg_power_w = ?,
+                            peak_power_w = ?,
+                            duration_s = ?,
+                            energy_wh = ?,
+                            avg_active_phases = ?,
+                            suggestion_type = ?,
+                            user_label = ?
+                        WHERE id = ?
+                        """,
+                        (
+                            now,
+                            first_seen,
+                            last_seen,
+                            total_seen,
+                            avg_power,
+                            peak_power,
+                            duration,
+                            energy,
+                            avg_phases,
+                            chosen_suggestion,
+                            chosen_label,
+                            a_id,
+                        ),
+                    )
+                    self._conn.execute("DELETE FROM learned_patterns WHERE id = ?", (b_id,))
+                    merged += 1
+
+            return {
+                "ok": True,
+                "merged": merged,
+                "pairs_considered": len(pairs),
+                "patterns_considered": len(active),
+            }
+        except Exception as e:
+            logger.error(f"Nightly learning pass failed: {e}", exc_info=True)
+            return {"ok": False, "error": str(e)}
 
     @staticmethod
     def _normalize_pattern_name(name: str) -> str:
