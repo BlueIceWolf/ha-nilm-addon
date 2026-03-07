@@ -30,6 +30,8 @@ Non-Intrusive Load Monitoring (NILM) Add-on for Home Assistant. Automatically de
 The add-on now exposes core options directly in the Home Assistant add-on UI:
 
 - `debug`, `log_level`, `update_interval_seconds`
+- `web.*` for embedded statistics UI
+- `learning.*` for automatic pattern learning from one power sensor
 - `power_source` and `power_phase`
 - `mqtt.*` (broker, port, credentials, topic/discovery prefixes)
 - `home_assistant.*` (`url`, `power_entity_id`, `token`, `entity_id_prefix`)
@@ -37,16 +39,65 @@ The add-on now exposes core options directly in the Home Assistant add-on UI:
 - `processing.*` and `confidence.min_confidence`
 - `devices_json` for device definitions
 
+### Add-on Web UI (Statistics)
+
+The add-on includes an embedded web server that is exposed via Home Assistant add-on ingress.
+
+- `ingress` is enabled in the add-on manifest.
+- Open the add-on and click **Open Web UI**.
+- UI shows:
+   - current power
+   - 24h summary (average/peak/readings)
+   - power trend chart from SQLite history
+   - live device states and confidence
+
+Relevant options:
+
+- `web.enabled`: enable or disable web UI server
+- `web.port`: server port inside container (must match ingress port; default `8099`)
+- `web.history_minutes`: reserved for trend window tuning
+
+### Automatic device suggestion and correction loop
+
+You can now give the add-on a single power sensor and it will learn recurring ON/OFF patterns.
+
+Flow:
+
+1. Add-on watches your total power sensor.
+2. It detects repeated cycles (duration, avg/peak power, energy).
+3. It creates suggested appliance classes (for example `fridge_like`).
+4. In Web UI, open **Gelernte Muster und Vorschlaege** and click **Korrigieren**.
+5. Enter your label (for example `kuehlschrank`).
+6. Future matching cycles are assigned to the same learned pattern and counter increases.
+
+Learning options:
+
+- `learning.enabled`: turns pattern learning on/off
+- `learning.on_threshold_w`: cycle start threshold
+- `learning.off_threshold_w`: cycle end threshold
+- `learning.min_cycle_seconds`: ignore very short spikes
+
+API for advanced usage:
+
+- `GET /api/patterns` returns learned patterns and suggestions
+- `POST /api/patterns/<id>/label` with JSON `{"label":"..."}` stores user correction
+
 ### How to pass your power sensor to the add-on
 
 Set the following in add-on options:
 
 - `power_source: home_assistant_rest`
-- `home_assistant.power_entity_id: sensor.<your_power_sensor>`
+- `home_assistant.power_entity_id: sensor.<your_power_sensor>` (or leave empty for auto-discovery)
 - `home_assistant.url: http://supervisor/core/api` (default for HA add-ons)
 - `home_assistant.token`: can stay empty in most add-on setups because `SUPERVISOR_TOKEN` is used automatically
 
 If your sensor state is numeric (for example `432.5`), the add-on reads it directly.
+
+Automatic connection behavior:
+
+- Add-on uses Home Assistant API access (`homeassistant_api: true`).
+- If `home_assistant.token` is empty, the runtime token from `SUPERVISOR_TOKEN` is used.
+- If `home_assistant.power_entity_id` is empty, the add-on auto-discovers a suitable `sensor.*` power entity and logs which one it selected.
 
 ### Built-in database and learning
 

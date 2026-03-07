@@ -10,11 +10,13 @@ from app.collector.source import Collector, HARestPowerSource, MockPowerSource
 from app.config import Config, load_options_from_file
 from app.confidence.confidence import ConfidenceEvaluator
 from app.detectors import AdaptiveLoadDetector, FridgeDetector, InverterDeviceDetector
+from app.learning import PatternLearner
 from app.processing.pipeline import ProcessingPipeline
 from app.publishers.mqtt import MQTTPublisher
 from app.state_engine import StateEngine
 from app.storage import SQLiteStore
 from app.utils.logging import get_logger, setup_logging
+from app.web import StatsWebServer
 
 logger = get_logger(__name__)
 
@@ -64,6 +66,14 @@ class NILMDetectionSystem:
             adaptive_correction=self.config.processing_adaptive_correction,
         )
 
+        self.pattern_learner: PatternLearner | None = None
+        if self.config.learning_enabled and self.storage:
+            self.pattern_learner = PatternLearner(
+                on_threshold_w=self.config.learning_on_threshold_w,
+                off_threshold_w=self.config.learning_off_threshold_w,
+                min_cycle_seconds=self.config.learning_min_cycle_seconds,
+            )
+
         self.confidence_evaluator = ConfidenceEvaluator(
             min_confidence=self.config.confidence_threshold
         )
@@ -85,17 +95,22 @@ class NILMDetectionSystem:
 
         self.running = False
         self.last_daily_reset = datetime.now()
+        self.web_server: StatsWebServer | None = None
+
+        if self.config.web_enabled:
+            self.web_server = StatsWebServer(
+                host="0.0.0.0",
+                port=self.config.web_port,
+                get_live_data=self._build_live_payload,
+                get_summary_data=self._build_summary_payload,
+                get_series_data=self._build_series_payload,
+                get_patterns_data=self._build_patterns_payload,
+                set_pattern_label=self._set_pattern_label,
+            )
 
     def _build_power_source(self):
         if self.config.power_source == "home_assistant_rest":
             token = self.config.ha_token or os.getenv("SUPERVISOR_TOKEN", "")
-            if not self.config.ha_power_entity_id:
-                logger.warning(
-                    "power_source=home_assistant_rest is set, but home_assistant.power_entity_id is empty. "
-                    "Falling back to mock source."
-                )
-                return MockPowerSource(phase=self.config.power_phase)
-
             logger.info(
                 "Using HA REST power source: "
                 f"entity_id={self.config.ha_power_entity_id}, url={self.config.ha_url}"
@@ -154,6 +169,51 @@ class NILMDetectionSystem:
             self.detectors[device_name] = detector_list
             logger.info(f"Configured detectors for {device_name}: {[type(d).__name__ for d in detector_list]}")
 
+    def _build_live_payload(self) -> Dict:
+        latest = self.collector.get_latest()
+        states = self.state_engine.get_all_states()
+        device_payload = {}
+        for name, state in states.items():
+            device_payload[name] = {
+                "state": state.state.value,
+                "power_w": float(state.power_w),
+                "confidence": float(state.confidence),
+                "daily_cycles": int(state.daily_cycles),
+                "daily_runtime_seconds": float(state.daily_runtime_seconds),
+                "last_update": state.last_update.isoformat() if state.last_update else None,
+            }
+
+        return {
+            "current_power_w": float(latest.power_w) if latest else None,
+            "timestamp": latest.timestamp.isoformat() if latest else None,
+            "devices": device_payload,
+        }
+
+    def _build_summary_payload(self) -> Dict:
+        if not self.storage:
+            return {
+                "reading_count": 0,
+                "avg_power_w": 0.0,
+                "min_power_w": 0.0,
+                "max_power_w": 0.0,
+            }
+        return self.storage.get_summary(hours=24)
+
+    def _build_series_payload(self, limit: int) -> List[Dict]:
+        if not self.storage:
+            return []
+        return self.storage.get_power_series(limit=limit)
+
+    def _build_patterns_payload(self) -> List[Dict]:
+        if not self.storage:
+            return []
+        return self.storage.list_patterns(limit=100)
+
+    def _set_pattern_label(self, pattern_id: int, label: str) -> bool:
+        if not self.storage:
+            return False
+        return self.storage.label_pattern(pattern_id=pattern_id, user_label=label)
+
     def start(self) -> None:
         if not self.collector.connect():
             logger.error("Collector failed to connect")
@@ -167,6 +227,10 @@ class NILMDetectionSystem:
             )
         else:
             logger.info("MQTT publisher connected")
+
+        if self.web_server:
+            if not self.web_server.start():
+                logger.warning("Web UI server failed to start")
 
         self.running = True
         signal.signal(signal.SIGTERM, self._signal_handler)
@@ -189,6 +253,30 @@ class NILMDetectionSystem:
                 processed = self.processing_pipeline.process(reading)
                 if self.storage:
                     self.storage.store_reading(reading)
+
+                if self.pattern_learner and self.storage:
+                    cycle = self.pattern_learner.ingest(processed)
+                    if cycle:
+                        cycle_payload = {
+                            "start_ts": cycle.start_ts.isoformat(),
+                            "end_ts": cycle.end_ts.isoformat(),
+                            "duration_s": cycle.duration_s,
+                            "avg_power_w": cycle.avg_power_w,
+                            "peak_power_w": cycle.peak_power_w,
+                            "energy_wh": cycle.energy_wh,
+                        }
+                        suggestion = self.pattern_learner.suggest_device_type(cycle)
+                        learn_result = self.storage.learn_cycle_pattern(
+                            cycle=cycle_payload,
+                            suggestion_type=suggestion,
+                        )
+                        pattern = learn_result.get("pattern") if isinstance(learn_result, dict) else None
+                        if pattern:
+                            logger.info(
+                                "Pattern learned/updated: "
+                                f"id={pattern.get('id')} suggestion={pattern.get('suggestion_type')} "
+                                f"label={pattern.get('user_label') or '-'} seen={pattern.get('seen_count')}"
+                            )
 
                 for device_name, detector_group in self.detectors.items():
                     detection_candidates = []
@@ -248,6 +336,8 @@ class NILMDetectionSystem:
         self.running = False
         self.collector.disconnect()
         self.publisher.disconnect()
+        if self.web_server:
+            self.web_server.stop()
         if self.storage:
             self.storage.close()
         logger.info("Detection system stopped")

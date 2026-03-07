@@ -24,6 +24,13 @@ class Config:
         self.debug = False
         self.log_level = "info"
         self.update_interval_seconds = 5
+        self.web_enabled = True
+        self.web_port = 8099
+        self.web_history_minutes = 180
+        self.learning_enabled = True
+        self.learning_on_threshold_w = 50.0
+        self.learning_off_threshold_w = 25.0
+        self.learning_min_cycle_seconds = 20
         self.power_source = "mock"
         self.power_phase = "L1"
         self.mqtt_broker = "localhost"
@@ -77,6 +84,24 @@ class Config:
         self.debug = config_dict.get('debug', False)
         self.log_level = str(config_dict.get('log_level', self.log_level)).lower()
         self.update_interval_seconds = config_dict.get('update_interval_seconds', 5)
+
+        web_config = config_dict.get('web', {})
+        self.web_enabled = bool(web_config.get('enabled', self.web_enabled))
+        self.web_port = int(web_config.get('port', self.web_port))
+        self.web_history_minutes = int(web_config.get('history_minutes', self.web_history_minutes))
+
+        learning_config = config_dict.get('learning', {})
+        self.learning_enabled = bool(learning_config.get('enabled', self.learning_enabled))
+        self.learning_on_threshold_w = float(
+            learning_config.get('on_threshold_w', self.learning_on_threshold_w)
+        )
+        self.learning_off_threshold_w = float(
+            learning_config.get('off_threshold_w', self.learning_off_threshold_w)
+        )
+        self.learning_min_cycle_seconds = int(
+            learning_config.get('min_cycle_seconds', self.learning_min_cycle_seconds)
+        )
+
         self.power_source = str(config_dict.get('power_source', self.power_source)).lower()
         self.power_phase = str(config_dict.get('power_phase', self.power_phase))
         self.storage_path = config_dict.get('storage_path', '/data')

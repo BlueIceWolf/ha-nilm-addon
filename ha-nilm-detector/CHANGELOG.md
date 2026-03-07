@@ -1,5 +1,13 @@
 # Changelog
 
+## 0.2.0
+
+- Added autonomous pattern learning from one power sensor using cycle detection.
+- Persisted learned signatures in SQLite and update recurring matches over time.
+- Added suggestion list and correction API/workflow (`/api/patterns`, label endpoint).
+- Added `learning.*` options to tune start/stop thresholds and minimum cycle duration.
+- Kept web UI and HA auto-connect improvements from the previous release work.
+
 ## 0.1.8
 
 - Added direct Home Assistant power sensor ingestion via REST (`power_source: home_assistant_rest`).

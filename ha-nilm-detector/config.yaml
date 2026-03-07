@@ -1,9 +1,14 @@
 name: "HA NILM Detector"
 description: "Detect appliances from power consumption patterns"
-version: "0.1.8"
+version: "0.2.0"
 slug: "ha_nilm_detector"
 startup: application
 boot: auto
+homeassistant_api: true
+ingress: true
+ingress_port: 8099
+panel_title: HA NILM
+panel_icon: mdi:chart-line
 arch:
   - amd64
   - aarch64
@@ -12,6 +17,15 @@ init: false
 options:
   debug: false
   log_level: info
+  web:
+    enabled: true
+    port: 8099
+    history_minutes: 180
+  learning:
+    enabled: true
+    on_threshold_w: 50.0
+    off_threshold_w: 25.0
+    min_cycle_seconds: 20
   power_source: home_assistant_rest
   power_phase: L1
   update_interval_seconds: 5
@@ -25,7 +39,7 @@ options:
     discovery_enabled: true
   home_assistant:
     url: http://supervisor/core/api
-    power_entity_id: sensor.total_power
+    power_entity_id: ""
     token: ""
     entity_id_prefix: nilm
   storage:
@@ -43,6 +57,15 @@ options:
 schema:
   debug: bool
   log_level: list(trace|debug|info|notice|warning|error|fatal)
+  web:
+    enabled: bool
+    port: int(1024,65535)
+    history_minutes: int(15,10080)
+  learning:
+    enabled: bool
+    on_threshold_w: float(1,10000)
+    off_threshold_w: float(0,10000)
+    min_cycle_seconds: int(5,86400)
   power_source: list(mock|home_assistant_rest)
   power_phase: str
   update_interval_seconds: int(1,300)

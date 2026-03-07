@@ -99,6 +99,12 @@ class HARestPowerSource(PowerSource):
             headers["Authorization"] = f"Bearer {self.token}"
         return headers
 
+    def _build_state_url(self, entity_id: str) -> str:
+        return f"{self.ha_url.rstrip('/')}/states/{entity_id}"
+
+    def _build_states_url(self) -> str:
+        return f"{self.ha_url.rstrip('/')}/states"
+
     @staticmethod
     def _parse_power_value(value) -> Optional[float]:
         if value is None:
@@ -115,11 +121,96 @@ class HARestPowerSource(PowerSource):
             return float(cleaned)
         except ValueError:
             return None
+
+    @staticmethod
+    def _to_watts(power_value: float, unit: str) -> float:
+        normalized = str(unit or "W").strip().lower()
+        if normalized == "kw":
+            return power_value * 1000.0
+        return power_value
+
+    def _extract_power_value_from_payload(self, payload: dict) -> Optional[float]:
+        attrs = payload.get("attributes", {}) if isinstance(payload, dict) else {}
+        unit = attrs.get("unit_of_measurement", "W")
+
+        state_value = self._parse_power_value(payload.get("state"))
+        if state_value is not None:
+            return self._to_watts(state_value, unit)
+
+        for key in ["power", "power_w", "value"]:
+            parsed = self._parse_power_value(attrs.get(key))
+            if parsed is not None:
+                return self._to_watts(parsed, unit)
+        return None
+
+    def _discover_power_entity(self) -> Optional[str]:
+        """Try to find a usable power sensor entity automatically."""
+        try:
+            response = requests.get(
+                self._build_states_url(),
+                headers=self._build_headers(),
+                timeout=self._timeout_seconds,
+            )
+            if response.status_code != 200:
+                logger.warning(f"HA REST auto-discovery failed: HTTP {response.status_code}")
+                return None
+
+            states = response.json()
+            if not isinstance(states, list):
+                return None
+
+            candidates: List[str] = []
+            scored: List[tuple[int, str]] = []
+
+            for item in states:
+                if not isinstance(item, dict):
+                    continue
+                entity_id = str(item.get("entity_id", ""))
+                if not entity_id.startswith("sensor."):
+                    continue
+
+                attrs = item.get("attributes", {}) if isinstance(item.get("attributes"), dict) else {}
+                unit = str(attrs.get("unit_of_measurement", "")).lower()
+                device_class = str(attrs.get("device_class", "")).lower()
+
+                power_value = self._extract_power_value_from_payload(item)
+                if power_value is None:
+                    continue
+
+                # Prefer explicit power-class sensors and common "total power" names.
+                score = 0
+                if device_class == "power" or unit in {"w", "kw"}:
+                    score += 2
+                if any(tag in entity_id for tag in ["total", "house", "home", "main", "grid", "power"]):
+                    score += 1
+
+                candidates.append(entity_id)
+                scored.append((score, entity_id))
+
+            if not scored:
+                return None
+
+            scored.sort(key=lambda entry: entry[0], reverse=True)
+            selected = scored[0][1]
+            logger.info(
+                f"Auto-discovered power entity '{selected}' from {len(candidates)} candidate(s)"
+            )
+            return selected
+        except Exception as e:
+            logger.error(f"HA REST power entity auto-discovery failed: {e}", exc_info=True)
+            return None
     
     def connect(self) -> bool:
         """Connect to Home Assistant."""
         try:
-            url = f"{self.ha_url.rstrip('/')}/states/{self.entity_id}"
+            if not self.entity_id:
+                self.entity_id = self._discover_power_entity() or ""
+
+            if not self.entity_id:
+                logger.error("HA REST connect failed: no power entity configured or auto-discovered")
+                return False
+
+            url = self._build_state_url(self.entity_id)
             response = requests.get(
                 url,
                 headers=self._build_headers(),
@@ -162,14 +253,7 @@ class HARestPowerSource(PowerSource):
                 return None
 
             payload = response.json()
-            state_value = self._parse_power_value(payload.get("state"))
-
-            if state_value is None:
-                attrs = payload.get("attributes", {})
-                for key in ["power", "power_w", "value"]:
-                    state_value = self._parse_power_value(attrs.get(key))
-                    if state_value is not None:
-                        break
+            state_value = self._extract_power_value_from_payload(payload)
 
             if state_value is None:
                 logger.debug(f"Entity {self.entity_id} has no numeric power value")

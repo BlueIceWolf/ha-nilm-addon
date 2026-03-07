@@ -7,4 +7,4 @@ addons:
     name: HA NILM Detector
     description: Detect appliances from power consumption patterns
     url: https://github.com/BlueIceWolf/ha-nilm-addon/tree/main/ha-nilm-detector
-    version: "0.1.8"
+    version: "0.2.0"
