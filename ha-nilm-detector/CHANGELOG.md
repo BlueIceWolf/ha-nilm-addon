@@ -1,5 +1,12 @@
 # Changelog
 
+## 0.2.4
+
+- Removed deprecated configuration fields: `power_phase`, `sensor_name`, `sensor_entity_id`, `power_entity_id`.
+- Simplified Home Assistant configuration to only use `phase_entities` (L1/L2/L3 support).
+- Removed legacy fallback code and default `devices_json` example (configure in Web UI instead).
+- Cleaner multi-phase architecture preparation with at least one phase required.
+
 ## 0.2.3
 
 - Fixed Web UI loading state handling and added clearer live status messages.
