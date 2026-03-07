@@ -1,4 +1,4 @@
-# Release 0.2.2
+# Release 0.2.3
 
 ## Store Kurztext
 - Neuer Home Assistant API Client fuer Supervisor-Proxy Zugriff.

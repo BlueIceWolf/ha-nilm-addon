@@ -1,5 +1,11 @@
 # Changelog
 
+## 0.2.3
+
+- Fixed Web UI loading state handling and added clearer live status messages.
+- Added top-right status details about current activity, waiting reason, and live power value.
+- Improved root README presentation with logo and updated onboarding/troubleshooting sections.
+
 ## 0.2.2
 
 - Added dedicated Home Assistant supervisor API client module (`app/ha_client.py`) using `requests`.

@@ -6,7 +6,7 @@
 
 Repository fuer den Home Assistant Add-on **HA NILM Detector**.
 
-`v0.2.2` ist aktuell ein Beta-Stand: stabil genug fuer Tests, mit aktiver Weiterentwicklung.
+`v0.2.3` ist aktuell ein Beta-Stand: stabil genug fuer Tests, mit aktiver Weiterentwicklung.
 
 ## Features
 
