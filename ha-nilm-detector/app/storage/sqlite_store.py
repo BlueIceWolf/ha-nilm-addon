@@ -249,16 +249,43 @@ class SQLiteStore:
             return []
 
         try:
+            # Hole Gesamtleistungen
             cur = self._conn.execute(
                 """
-                SELECT ts, power_w FROM power_readings
+                SELECT ts, power_w, phase FROM power_readings
                 ORDER BY ts DESC
                 LIMIT ?
                 """,
-                (int(limit),),
+                (int(limit) * 4,),  # Mehr holen um Phasen zu aggregieren
             )
             rows = cur.fetchall()
-            return [{"ts": row[0], "power_w": float(row[1])} for row in reversed(rows)]
+            
+            # Gruppiere nach Zeitstempeln und aggregiere Phasen
+            points_by_ts = {}
+            for row in rows:
+                ts = row[0]
+                power_w = float(row[1])
+                phase = row[2] if len(row) > 2 else None
+                
+                if ts not in points_by_ts:
+                    points_by_ts[ts] = {
+                        "timestamp": ts,
+                        "power_w": 0.0,
+                        "phases": {}
+                    }
+                
+                # Wenn es eine einzelne Phase ist, speichere sie
+                if phase and phase in ("L1", "L2", "L3"):
+                    points_by_ts[ts]["phases"][phase] = power_w
+                    # Addiere zur Gesamtleistung
+                    points_by_ts[ts]["power_w"] += power_w
+                else:
+                    # Ohne Phasen-Info, nutze direkt den Wert
+                    points_by_ts[ts]["power_w"] = power_w
+            
+            # Sortiere und limitiere
+            sorted_points = sorted(points_by_ts.values(), key=lambda p: p["timestamp"])
+            return sorted_points[-limit:]
         except Exception as e:
             logger.error(f"Failed to load power series: {e}", exc_info=True)
             return []
@@ -738,3 +765,77 @@ class SQLiteStore:
         except Exception as e:
             logger.error(f"Failed to label pattern {pattern_id}: {e}", exc_info=True)
             return False
+
+    def create_pattern_from_range(self, start_time: str, end_time: str, user_label: str) -> Dict:
+        """Create a learned pattern from a manually selected time range in the UI."""
+        if not self._conn:
+            return {"ok": False, "error": "database not connected"}
+        
+        try:
+            # Hole Messwerte im Zeitbereich
+            rows = self._conn.execute(
+                """
+                SELECT timestamp, power_w, phase
+                FROM power_readings
+                WHERE timestamp >= ? AND timestamp <= ?
+                ORDER BY timestamp ASC
+                """,
+                (start_time, end_time)
+            ).fetchall()
+            
+            if not rows or len(rows) < 3:
+                return {"ok": False, "error": "not enough data points in selected range"}
+            
+            # Berechne Statistiken
+            powers = [float(r[0]) for r in rows]
+            avg_power = sum(powers) / len(powers)
+            peak_power = max(powers)
+            
+            # Berechne Dauer in Sekunden
+            try:
+                start_dt = datetime.fromisoformat(rows[0][0])
+                end_dt = datetime.fromisoformat(rows[-1][0])
+                duration_s = (end_dt - start_dt).total_seconds()
+            except Exception:
+                duration_s = len(rows) * 5  # Fallback: 5s pro Messung
+            
+            # Erkennung Phasen-Modus (vereinfacht)
+            phases = set(r[2] for r in rows if r[2])
+            phase_mode = "multi_phase" if len(phases) > 1 else "single_phase"
+            
+            # Erstelle neues Muster
+            now = datetime.now().isoformat()
+            cursor = self._conn.execute(
+                """
+                INSERT INTO learned_patterns (
+                    avg_power_w, peak_power_w, duration_s, phase_mode,
+                    user_label, is_confirmed, seen_count, 
+                    first_seen, last_seen, created_at, updated_at
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                """,
+                (
+                    avg_power, peak_power, duration_s, phase_mode,
+                    user_label.strip(), True, 1,
+                    start_time, end_time, now, now
+                )
+            )
+            self._conn.commit()
+            
+            pattern_id = cursor.lastrowid
+            logger.info(
+                f"Created pattern {pattern_id} from range: {len(rows)} points, "
+                f"avg={avg_power:.1f}W, peak={peak_power:.1f}W, duration={duration_s:.1f}s, "
+                f"label={user_label}"
+            )
+            
+            return {
+                "ok": True,
+                "pattern_id": pattern_id,
+                "data_points": len(rows),
+                "avg_power_w": avg_power,
+                "peak_power_w": peak_power,
+                "duration_s": duration_s
+            }
+        except Exception as e:
+            logger.error(f"Failed to create pattern from range: {e}", exc_info=True)
+            return {"ok": False, "error": str(e)}

@@ -120,6 +120,7 @@ class NILMDetectionSystem:
                 set_pattern_label=self._set_pattern_label,
                 flush_debug_data=self._flush_debug_db,
                 run_learning_now=self._run_learning_now,
+                create_pattern_from_range=self._create_pattern_from_range,
             )
 
     def _build_power_source(self):
@@ -254,6 +255,17 @@ class NILMDetectionSystem:
         if not self.storage:
             return False
         return self.storage.label_pattern(pattern_id=pattern_id, user_label=label)
+
+    def _create_pattern_from_range(self, start_time: str, end_time: str, label: str) -> Dict:
+        """Create a new learned pattern from a manually selected time range."""
+        if not self.storage:
+            return {"ok": False, "error": "storage not enabled"}
+        
+        return self.storage.create_pattern_from_range(
+            start_time=start_time,
+            end_time=end_time,
+            user_label=label
+        )
 
     def _flush_debug_db(self, reset_patterns: bool = True) -> Dict:
         if not self.storage:

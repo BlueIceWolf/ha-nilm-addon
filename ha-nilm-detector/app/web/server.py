@@ -100,6 +100,27 @@ def _html_page() -> str:
       border-radius: 8px;
       padding: 4px 8px;
       cursor: pointer;
+      font-size: 0.9rem;
+    }
+    button:hover { background: var(--accent-soft); }
+    button.active { background: var(--accent); color: #fff; }
+    .chart-controls {
+      display: flex;
+      gap: 8px;
+      margin-bottom: 8px;
+      flex-wrap: wrap;
+      align-items: center;
+    }
+    .chart-controls .btn-group {
+      display: flex;
+      gap: 4px;
+    }
+    .chart-selection-overlay {
+      position: absolute;
+      background: rgba(0, 109, 119, 0.2);
+      border: 2px solid var(--accent);
+      pointer-events: none;
+      display: none;
     }
     @media (max-width: 700px) {
       .head { flex-direction: column; align-items: flex-start; }
@@ -132,7 +153,21 @@ def _html_page() -> str:
     </div>
 
     <div class=\"chart-wrap\">
-      <canvas id=\"powerChart\" width=\"1000\" height=\"280\"></canvas>
+      <div class=\"chart-controls\">
+        <span class=\"muted\" style=\"font-size: 0.85rem;\">Anzeigen:</span>
+        <div class=\"btn-group\">
+          <button class=\"phase-toggle active\" data-phase=\"total\">Gesamt</button>
+          <button class=\"phase-toggle\" data-phase=\"L1\" style=\"display:none;\">L1</button>
+          <button class=\"phase-toggle\" data-phase=\"L2\" style=\"display:none;\">L2</button>
+          <button class=\"phase-toggle\" data-phase=\"L3\" style=\"display:none;\">L3</button>
+        </div>
+        <span class=\"muted\" style=\"font-size: 0.85rem; margin-left: 12px;\">|</span>
+        <button id=\"selectRangeBtn\" title=\"Bereich im Graphen markieren und als Muster speichern\">📍 Bereich markieren</button>
+      </div>
+      <div style=\"position: relative;\">
+        <canvas id=\"powerChart\" width=\"1000\" height=\"280\"></canvas>
+        <div id=\"selectionOverlay\" class=\"chart-selection-overlay\"></div>
+      </div>
     </div>
 
     <h2 style=\"margin:14px 0 8px; font-size:1.1rem;\">Erkannte Geräte</h2>
@@ -156,6 +191,14 @@ def _html_page() -> str:
 const canvas = document.getElementById('powerChart');
 const ctx = canvas.getContext('2d');
 const statusEl = document.getElementById('ts');
+const selectionOverlay = document.getElementById('selectionOverlay');
+
+// State für sichtbare Phasen und Daten
+let visiblePhases = { total: true, L1: false, L2: false, L3: false };
+let currentSeriesData = null;
+let availablePhases = [];
+let isSelectingRange = false;
+let selectionStart = null;
 
 function apiPath(path) {
   const clean = String(path || '').replace(/^\\/+/, '');
@@ -247,6 +290,7 @@ function buildLiveStatusMessage(live) {
 }
 
 function drawChart(series) {
+  currentSeriesData = series;
   const w = canvas.width, h = canvas.height;
   ctx.clearRect(0, 0, w, h);
   ctx.fillStyle = '#ffffff';
@@ -259,11 +303,29 @@ function drawChart(series) {
     return;
   }
 
-  const values = series.map(p => Number(p.power_w));
-  const min = Math.min(...values);
-  const max = Math.max(...values);
+  // Sammle alle Werte für Min/Max-Berechnung
+  let allValues = [];
+  if (visiblePhases.total) {
+    allValues = allValues.concat(series.map(p => Number(p.power_w || 0)));
+  }
+  ['L1', 'L2', 'L3'].forEach(phase => {
+    if (visiblePhases[phase] && availablePhases.includes(phase)) {
+      allValues = allValues.concat(series.map(p => Number((p.phases && p.phases[phase]) || 0)));
+    }
+  });
+
+  if (allValues.length === 0) {
+    ctx.fillStyle = '#667085';
+    ctx.font = '14px Segoe UI';
+    ctx.fillText('Keine Phase ausgewählt.', 20, 36);
+    return;
+  }
+
+  const min = Math.min(...allValues);
+  const max = Math.max(...allValues);
   const span = Math.max(max - min, 1);
 
+  // Gitterlinien
   ctx.strokeStyle = '#d0d5dd';
   ctx.lineWidth = 1;
   for (let i = 0; i < 5; i++) {
@@ -271,16 +333,43 @@ function drawChart(series) {
     ctx.beginPath(); ctx.moveTo(10, y); ctx.lineTo(w - 10, y); ctx.stroke();
   }
 
-  ctx.strokeStyle = '#006d77';
-  ctx.lineWidth = 2;
-  ctx.beginPath();
-  series.forEach((point, i) => {
-    const x = 10 + (i * (w - 20) / (series.length - 1));
-    const y = h - 20 - ((point.power_w - min) / span) * (h - 40);
-    if (i === 0) ctx.moveTo(x, y); else ctx.lineTo(x, y);
-  });
-  ctx.stroke();
+  const colors = {
+    total: '#006d77',
+    L1: '#e63946',
+    L2: '#2a9d8f',
+    L3: '#f77f00'
+  };
 
+  // Zeichne Gesamt
+  if (visiblePhases.total) {
+    ctx.strokeStyle = colors.total;
+    ctx.lineWidth = 2;
+    ctx.beginPath();
+    series.forEach((point, i) => {
+      const x = 10 + (i * (w - 20) / (series.length - 1));
+      const y = h - 20 - ((point.power_w - min) / span) * (h - 40);
+      if (i === 0) ctx.moveTo(x, y); else ctx.lineTo(x, y);
+    });
+    ctx.stroke();
+  }
+
+  // Zeichne einzelne Phasen
+  ['L1', 'L2', 'L3'].forEach(phase => {
+    if (visiblePhases[phase] && availablePhases.includes(phase)) {
+      ctx.strokeStyle = colors[phase];
+      ctx.lineWidth = 2;
+      ctx.beginPath();
+      series.forEach((point, i) => {
+        const value = (point.phases && point.phases[phase]) || 0;
+        const x = 10 + (i * (w - 20) / (series.length - 1));
+        const y = h - 20 - ((value - min) / span) * (h - 40);
+        if (i === 0) ctx.moveTo(x, y); else ctx.lineTo(x, y);
+      });
+      ctx.stroke();
+    }
+  });
+
+  // Legende
   ctx.fillStyle = '#667085';
   ctx.font = '12px Segoe UI';
   ctx.fillText(`min ${min.toFixed(1)}W`, 12, h - 6);
@@ -366,17 +455,23 @@ async function refresh() {
     document.getElementById('peak_power').textContent = fmt(summary.max_power_w, ' W');
     document.getElementById('reading_count').textContent = String(summary.reading_count ?? 0);
     
-    // Zeige Phaseninformationen
+    // Zeige Phaseninformationen und aktualisiere verfügbare Phasen
     const phases = live.phases || [];
+    availablePhases = [];
     ['L1', 'L2', 'L3'].forEach(phaseName => {
       const phaseData = phases.find(p => p.name === phaseName);
       const cardEl = document.getElementById(`phase${phaseName}`);
       const valueEl = document.getElementById(`power_${phaseName.toLowerCase()}`);
+      const toggleBtn = document.querySelector(`.phase-toggle[data-phase="${phaseName}"]`);
+      
       if (phaseData) {
+        availablePhases.push(phaseName);
         cardEl.style.display = 'block';
         valueEl.textContent = fmt(phaseData.power_w, ' W');
+        if (toggleBtn) toggleBtn.style.display = 'inline-block';
       } else {
         cardEl.style.display = 'none';
+        if (toggleBtn) toggleBtn.style.display = 'none';
       }
     });
 
@@ -389,6 +484,119 @@ async function refresh() {
     setStatus(buildLiveStatusMessage(live));
   } catch (err) {
     setStatus(`Warte auf API: ${err}`);
+  }
+}
+
+// Phase-Toggle Event-Handler
+document.querySelectorAll('.phase-toggle').forEach(btn => {
+  btn.addEventListener('click', () => {
+    const phase = btn.getAttribute('data-phase');
+    visiblePhases[phase] = !visiblePhases[phase];
+    btn.classList.toggle('active', visiblePhases[phase]);
+    if (currentSeriesData) {
+      drawChart(currentSeriesData);
+    }
+  });
+});
+
+// Bereichsauswahl-Funktionalität
+let rangeSelection = { active: false, startX: null, startIdx: null };
+
+document.getElementById('selectRangeBtn').addEventListener('click', () => {
+  rangeSelection.active = !rangeSelection.active;
+  const btn = document.getElementById('selectRangeBtn');
+  btn.classList.toggle('active', rangeSelection.active);
+  btn.textContent = rangeSelection.active ? '✓ Wähle Bereich aus' : '📍 Bereich markieren';
+  selectionOverlay.style.display = 'none';
+  canvas.style.cursor = rangeSelection.active ? 'crosshair' : 'default';
+});
+
+canvas.addEventListener('mousedown', (e) => {
+  if (!rangeSelection.active || !currentSeriesData) return;
+  const rect = canvas.getBoundingClientRect();
+  rangeSelection.startX = e.clientX - rect.left;
+  rangeSelection.startIdx = getDataIndexFromX(rangeSelection.startX);
+});
+
+canvas.addEventListener('mousemove', (e) => {
+  if (!rangeSelection.active || rangeSelection.startX === null || !currentSeriesData) return;
+  const rect = canvas.getBoundingClientRect();
+  const currentX = e.clientX - rect.left;
+  
+  const left = Math.min(rangeSelection.startX, currentX);
+  const width = Math.abs(currentX - rangeSelection.startX);
+  
+  selectionOverlay.style.left = `${left}px`;
+  selectionOverlay.style.top = '0';
+  selectionOverlay.style.width = `${width}px`;
+  selectionOverlay.style.height = `${canvas.height}px`;
+  selectionOverlay.style.display = 'block';
+});
+
+canvas.addEventListener('mouseup', async (e) => {
+  if (!rangeSelection.active || rangeSelection.startX === null || !currentSeriesData) return;
+  
+  const rect = canvas.getBoundingClientRect();
+  const endX = e.clientX - rect.left;
+  const endIdx = getDataIndexFromX(endX);
+  
+  const startIdx = Math.min(rangeSelection.startIdx, endIdx);
+  const endIdxFinal = Math.max(rangeSelection.startIdx, endIdx);
+  
+  if (endIdxFinal - startIdx > 2 && currentSeriesData.length > 0) {
+    await createPatternFromRange(startIdx, endIdxFinal);
+  }
+  
+  rangeSelection.startX = null;
+  rangeSelection.startIdx = null;
+  selectionOverlay.style.display = 'none';
+});
+
+function getDataIndexFromX(x) {
+  if (!currentSeriesData || currentSeriesData.length === 0) return 0;
+  const w = canvas.width;
+  const normalized = Math.max(0, Math.min((x - 10) / (w - 20), 1));
+  return Math.round(normalized * (currentSeriesData.length - 1));
+}
+
+async function createPatternFromRange(startIdx, endIdx) {
+  const label = prompt('Welches Gerät ist das? (z.B. Waschmaschine, Kühlschrank)');
+  if (!label) return;
+  
+  const startPoint = currentSeriesData[startIdx];
+  const endPoint = currentSeriesData[endIdx];
+  
+  if (!startPoint || !endPoint || !startPoint.timestamp || !endPoint.timestamp) {
+    alert('Ungültiger Zeitbereich ausgewählt.');
+    return;
+  }
+  
+  try {
+    setStatus('Erstelle Muster aus Bereich...');
+    const response = await fetch(apiPath('api/patterns/create-from-range'), {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        start_time: startPoint.timestamp,
+        end_time: endPoint.timestamp,
+        label: label
+      })
+    });
+    
+    const result = await response.json();
+    if (!response.ok || !result.ok) {
+      throw new Error(result.error || `HTTP ${response.status}`);
+    }
+    
+    alert(`Muster erfolgreich erstellt! ID: ${result.pattern_id || '?'}`);
+    rangeSelection.active = false;
+    document.getElementById('selectRangeBtn').classList.remove('active');
+    document.getElementById('selectRangeBtn').textContent = '📍 Bereich markieren';
+    canvas.style.cursor = 'default';
+    await refresh();
+  } catch (err) {
+    alert(`Muster-Erstellung fehlgeschlagen: ${err}`);
+    setStatus(`Muster-Erstellung fehlgeschlagen: ${err}`);
   }
 }
 
@@ -416,6 +624,7 @@ class StatsWebServer:
         set_pattern_label: Optional[Callable[[int, str], bool]] = None,
         flush_debug_data: Optional[Callable[[bool], Dict]] = None,
         run_learning_now: Optional[Callable[[], Dict]] = None,
+        create_pattern_from_range: Optional[Callable[[str, str, str], Dict]] = None,
     ):
         self.host = host
         self.port = int(port)
@@ -426,6 +635,7 @@ class StatsWebServer:
         self.set_pattern_label = set_pattern_label
         self.flush_debug_data = flush_debug_data
         self.run_learning_now = run_learning_now
+        self.create_pattern_from_range = create_pattern_from_range
         self._server: Optional[ThreadingHTTPServer] = None
         self._thread: Optional[threading.Thread] = None
 
@@ -582,6 +792,35 @@ class StatsWebServer:
                         return
 
                     self._send_json({"ok": True})
+                    return
+
+                if parsed.path == "/api/patterns/create-from-range":
+                    if not parent.create_pattern_from_range:
+                        self._send_json({"error": "pattern creation from range not enabled"}, status=400)
+                        return
+
+                    length = int(self.headers.get("Content-Length", "0") or 0)
+                    raw = self.rfile.read(length) if length > 0 else b"{}"
+                    try:
+                        payload = json.loads(raw.decode("utf-8")) if raw else {}
+                    except json.JSONDecodeError:
+                        self._send_json({"error": "invalid json"}, status=400)
+                        return
+
+                    start_time = str(payload.get("start_time", "")).strip()
+                    end_time = str(payload.get("end_time", "")).strip()
+                    label = str(payload.get("label", "")).strip()
+
+                    if not start_time or not end_time or not label:
+                        self._send_json({"error": "start_time, end_time, and label are required"}, status=400)
+                        return
+
+                    result = parent.create_pattern_from_range(start_time, end_time, label)
+                    if not result.get("ok"):
+                        self._send_json(result, status=500)
+                        return
+
+                    self._send_json(result)
                     return
 
                 self._send_json({"error": "not found"}, status=404)
