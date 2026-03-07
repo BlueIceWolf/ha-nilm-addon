@@ -1,5 +1,11 @@
 # Release 0.2.0
 
+## Store Kurztext
+- Selbstlernende Geraete-Erkennung aus einem einzelnen Leistungssensor.
+- Neue Web-UI mit Live-Statistiken und Muster-Vorschlaegen.
+- Korrektur-Workflow: Vorschlaege direkt labeln, damit kuenftige Erkennung genauer wird.
+- Robuste SQLite-Persistenz fuer Lernhistorie und Neustarts.
+
 ## Highlights
 - Added autonomous pattern learning from a single power sensor (cycle extraction + signature storage).
 - Added learned pattern persistence in SQLite with recurring-match updates over time.
