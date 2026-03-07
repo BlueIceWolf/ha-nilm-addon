@@ -1,4 +1,11 @@
 # Changelog
+## 0.2.7
+
+- Added manual "Jetzt ausführen" (Run Now) button in Web UI for immediate learning pass testing.
+- Added "DB leeren (Debug)" button for database flush during development/testing.
+- Improved test-phase workflow with on-demand learning execution.
+- Enhanced Web UI with actionable controls for pattern development.
+
 ## 0.2.6
 
 - Removed `power_source` from add-on options and schema (HA REST is now fixed runtime source).

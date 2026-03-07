@@ -1,18 +1,18 @@
-# Release 0.2.6
+# Release 0.2.7
 
 ## Store Kurztext
-- `power_source` entfernt: Add-on nutzt jetzt immer Home Assistant REST.
-- Kein Mock-Fallback mehr im Runtime-Pfad.
-- Sichtbare Web-UI-Texte mit deutschen Umlauten verbessert.
+- Manuelle "Jetzt ausführen" Schaltfläche für sofortige Lernläufe in der Testphase.
+- Debug-Button zum Leeren der Datenbank während Entwicklung/Tests.
+- Verbesserte Test-Workflow-Steuerung direkt in der Web-UI.
 
 ## Highlights
-- Removed `power_source` from add-on options/schema and fixed source to HA REST.
-- Removed runtime fallback to `MockPowerSource`.
-- Kept MQTT functionality in backend (not shown in visible add-on config).
-- Polished visible Web UI labels with umlauts for better readability.
+- Added "Lernen jetzt ausführen" button for on-demand learning pass execution.
+- Added "DB leeren (Debug)" button for database flush during testing.
+- Enhanced Web UI controls for immediate pattern learning and debugging.
+- Improved test-phase workflow with manual learning triggers.
 
 ## Notes
-- Configuration is now minimal: log_level, phase_entities, learning, storage.
-- All advanced options use sensible defaults (no manual configuration needed).
-- Configure L1/L2/L3 phase entities to see individual phase power in UI.
+- Use the "Lernen jetzt ausführen" button to manually trigger learning passes during testing.
+- The "DB leeren" button resets all stored patterns and measurements (use with care).
+- Nightly automatic learning still runs between 02:00-05:00 as scheduled.
 - Update via Supervisor by refreshing the repository and reinstalling the add-on.
