@@ -10,6 +10,7 @@ from app.collector.source import Collector, HARestPowerSource, MockPowerSource
 from app.config import Config, load_options_from_file
 from app.confidence.confidence import ConfidenceEvaluator
 from app.detectors import AdaptiveLoadDetector, FridgeDetector, InverterDeviceDetector
+from app.ha_client import HomeAssistantAPIClient
 from app.learning import PatternLearner
 from app.processing.pipeline import ProcessingPipeline
 from app.publishers.mqtt import MQTTPublisher
@@ -19,6 +20,13 @@ from app.utils.logging import get_logger, setup_logging
 from app.web import StatsWebServer
 
 logger = get_logger(__name__)
+
+
+DEFAULT_ENTITIES = [
+    "sensor.sph_10k_tl3_battery_soc",
+    "sensor.spa_ac_power_to_grid_total",
+    "sensor.miner_d2cf16_miner_consumption",
+]
 
 
 class NILMDetectionSystem:
@@ -112,10 +120,20 @@ class NILMDetectionSystem:
 
     def _build_power_source(self):
         if self.config.power_source == "home_assistant_rest":
-            token = self.config.ha_token or os.getenv("SUPERVISOR_TOKEN", "")
+            token = str(self.config.ha_token or "").strip()
+            if not token:
+                token = str(os.getenv("SUPERVISOR_TOKEN", "")).strip()
+            if not token:
+                # Legacy fallback used in some HA addon environments.
+                token = str(os.getenv("HASSIO_TOKEN", "")).strip()
+
+            if token.lower().startswith("bearer "):
+                token = token.split(" ", 1)[1].strip()
+
             logger.info(
                 "Using HA REST power source: "
-                f"entity_id={self.config.ha_power_entity_id}, url={self.config.ha_url}"
+                f"entity_id={self.config.ha_power_entity_id}, url={self.config.ha_url}, "
+                f"token_present={bool(token)}"
             )
             return HARestPowerSource(
                 ha_url=self.config.ha_url,
@@ -354,11 +372,71 @@ class NILMDetectionSystem:
 def main() -> None:
     try:
         setup_logging(debug=False, name="NILM", log_level="info")
+
+        # Optional lightweight polling mode for direct HA entity reads.
+        if _env_bool("HA_ENTITY_READER_MODE", default=False):
+            run_entity_reader_loop()
+            return
+
         system = NILMDetectionSystem()
         system.start()
     except Exception as exc:
         logger.error(f"Fatal error: {exc}", exc_info=True)
         sys.exit(1)
+
+
+def _env_bool(name: str, default: bool = False) -> bool:
+    """Parse a boolean environment variable."""
+    raw = os.getenv(name)
+    if raw is None:
+        return default
+    return raw.strip().lower() in {"1", "true", "yes", "on"}
+
+
+def _load_entity_list_from_env() -> List[str]:
+    """Load comma-separated entity IDs from HA_ENTITY_LIST."""
+    raw = os.getenv("HA_ENTITY_LIST", "")
+    if not raw.strip():
+        return list(DEFAULT_ENTITIES)
+
+    entities = [item.strip() for item in raw.split(",") if item.strip()]
+    return entities or list(DEFAULT_ENTITIES)
+
+
+def run_entity_reader_loop() -> None:
+    """Continuously poll configured Home Assistant entities every 5 seconds."""
+    poll_interval_seconds = int(os.getenv("HA_POLL_INTERVAL_SECONDS", "5"))
+    entities = _load_entity_list_from_env()
+
+    client = HomeAssistantAPIClient(
+        base_url=os.getenv("HA_SUPERVISOR_API_URL", "http://supervisor/core/api/"),
+        token=os.getenv("SUPERVISOR_TOKEN", ""),
+        timeout_seconds=int(os.getenv("HA_API_TIMEOUT_SECONDS", "10")),
+    )
+
+    logger.info(
+        "Starting HA entity reader mode: interval=%ss, entities=%s",
+        poll_interval_seconds,
+        entities,
+    )
+
+    try:
+        while True:
+            entity_data = client.get_multiple_entities(entities)
+            for entity_id, item in entity_data.items():
+                logger.info(
+                    "Entity %s => state=%s attributes=%s",
+                    entity_id,
+                    item.get("state", ""),
+                    item.get("attributes", {}),
+                )
+            time.sleep(poll_interval_seconds)
+    except KeyboardInterrupt:
+        logger.info("HA entity reader mode interrupted")
+    except Exception as loop_error:
+        logger.error("HA entity reader mode failed: %s", loop_error, exc_info=True)
+    finally:
+        client.close()
 
 
 if __name__ == "__main__":
