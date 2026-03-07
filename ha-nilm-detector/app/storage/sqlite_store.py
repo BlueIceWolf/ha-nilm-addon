@@ -262,7 +262,7 @@ class SQLiteStore:
             # Hole Gesamtleistungen
             cur = self._conn.execute(
                 """
-                SELECT ts, power_w, phase FROM power_readings
+                SELECT ts, power_w, phase, metadata FROM power_readings
                 ORDER BY ts DESC
                 LIMIT ?
                 """,
@@ -276,6 +276,7 @@ class SQLiteStore:
                 ts = row[0]
                 power_w = float(row[1])
                 phase = row[2] if len(row) > 2 else None
+                raw_metadata = row[3] if len(row) > 3 else None
                 
                 if ts not in points_by_ts:
                     points_by_ts[ts] = {
@@ -283,6 +284,27 @@ class SQLiteStore:
                         "power_w": 0.0,
                         "phases": {}
                     }
+
+                # Prefer detailed phase data from reading metadata when available.
+                metadata = {}
+                if isinstance(raw_metadata, str) and raw_metadata.strip():
+                    try:
+                        metadata = json.loads(raw_metadata)
+                    except Exception:
+                        metadata = {}
+
+                phase_powers = metadata.get("phase_powers_w", {}) if isinstance(metadata, dict) else {}
+                if isinstance(phase_powers, dict):
+                    for phase_name in ("L1", "L2", "L3"):
+                        if phase_name in phase_powers:
+                            try:
+                                points_by_ts[ts]["phases"][phase_name] = float(phase_powers[phase_name])
+                            except (TypeError, ValueError):
+                                continue
+
+                    if points_by_ts[ts]["phases"]:
+                        points_by_ts[ts]["power_w"] = float(sum(points_by_ts[ts]["phases"].values()))
+                        continue
                 
                 # Wenn es eine einzelne Phase ist, speichere sie
                 if phase and phase in ("L1", "L2", "L3"):
