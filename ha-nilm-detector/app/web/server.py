@@ -144,6 +144,7 @@ def _html_page() -> str:
 <script>
 const canvas = document.getElementById('powerChart');
 const ctx = canvas.getContext('2d');
+const statusEl = document.getElementById('ts');
 
 function apiPath(path) {
   const clean = String(path || '').replace(/^\\/+/, '');
@@ -168,6 +169,25 @@ async function fetchJson(path) {
 function fmt(v, suffix='') {
   if (v === null || v === undefined) return '-';
   return `${Number(v).toFixed(1)}${suffix}`;
+}
+
+function setStatus(message) {
+  statusEl.textContent = message;
+}
+
+function buildLiveStatusMessage(live) {
+  const now = new Date().toLocaleString();
+  const power = live && live.current_power_w;
+  const sensorTs = live && live.timestamp;
+
+  if (power === null || power === undefined) {
+    if (sensorTs) {
+      return `Warte auf verwertbare Messwerte (letzter Sensor-Zeitstempel: ${sensorTs})`;
+    }
+    return `Warte auf erste Messwerte vom Sensor (Stand: ${now})`;
+  }
+
+  return `Aktiv: ${fmt(power, ' W')} (aktualisiert: ${now})`;
 }
 
 function drawChart(series) {
@@ -252,7 +272,6 @@ function renderPatterns(patterns) {
       const label = prompt('Welches Geraet ist das? (z.B. kuehlschrank)');
       if (!label) return;
       try {
-        const res = await fetch(`/api/patterns/${id}/label`, {
         const res = await fetch(apiPath(`api/patterns/${id}/label`), {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
@@ -269,6 +288,7 @@ function renderPatterns(patterns) {
 
 async function refresh() {
   try {
+    setStatus('Lade Live-Daten...');
     const [summaryRes, seriesRes, liveRes, patternsRes] = await Promise.all([
       fetchJson('api/summary'),
       fetchJson('api/series?limit=360'),
@@ -285,13 +305,15 @@ async function refresh() {
     document.getElementById('avg_power').textContent = fmt(summary.avg_power_w, ' W');
     document.getElementById('peak_power').textContent = fmt(summary.max_power_w, ' W');
     document.getElementById('reading_count').textContent = String(summary.reading_count ?? 0);
-    document.getElementById('ts').textContent = `Updated: ${new Date().toLocaleString()}`;
+    setStatus(buildLiveStatusMessage(live));
 
+    setStatus('Zeichne Verlauf und aktualisiere Tabellen...');
     drawChart(series.points || []);
     renderDevices(live.devices || {});
     renderPatterns(Array.isArray(patterns) ? patterns : []);
+    setStatus(buildLiveStatusMessage(live));
   } catch (err) {
-    document.getElementById('ts').textContent = `Fehler beim Laden: ${err}`;
+    setStatus(`Warte auf API: ${err}`);
   }
 }
 
