@@ -28,8 +28,13 @@ Repository fuer den Home Assistant Add-on **HA NILM Detector**.
 ```yaml
 power_source: home_assistant_rest
 home_assistant:
-   sensor_entity_id: sensor.dein_leistungssensor
+   phase_entities:
+      l1: sensor.dein_l1_sensor
+      l2: sensor.dein_l2_sensor
+      l3: ""
 ```
+
+Hinweis: Es muss mindestens eine Phase (`l1`, `l2` oder `l3`) gesetzt sein.
 
 5. Token in der Regel leer lassen:
     der Add-on nutzt automatisch `SUPERVISOR_TOKEN`.
@@ -52,17 +57,18 @@ Oben rechts zeigt die UI jetzt live, was gerade passiert:
 
 ## Muster Lernen und Korrigieren
 
-- Das Add-on lernt beim Lauf automatisch Lastzyklen aus dem Summensensor.
+- Das Add-on lernt beim Lauf automatisch Lastzyklen aus den konfigurierten Phasen (`l1/l2/l3`).
 - In der Pattern-Tabelle siehst du Erkennungen als `evtl. <geraet>`.
 - Mit `Korrigieren` kannst du den echten Namen setzen (z. B. `kuehlschrank`).
 - Nach der Korrektur werden wiederkehrende Muster als `bestaetigt: <geraet>` angezeigt.
+- Zusaetzlich lernt das Add-on pro Muster, ob es eher `1-phasig` oder `mehrphasig` ist.
 
 ## Troubleshooting
 
 - `HTTP 401` beim Start:
    `homeassistant_api: true` im Add-on pruefen und sicherstellen, dass `SUPERVISOR_TOKEN` verfuegbar ist.
 - Web-UI zeigt keine Werte:
-   `home_assistant.sensor_entity_id` pruefen und kontrollieren, ob der Sensor numerische Leistung liefert.
+   `home_assistant.phase_entities.l1/l2/l3` pruefen und kontrollieren, ob mindestens eine Phase gesetzt ist und numerische Leistung liefert.
 - Nach Updates wirken Aenderungen nicht:
    Add-on neu bauen/reinstallieren, damit das Image aktualisiert wird.
 

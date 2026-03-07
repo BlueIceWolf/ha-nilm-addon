@@ -3,7 +3,7 @@ Power data collector - reads from various sources.
 """
 from abc import ABC, abstractmethod
 from datetime import datetime
-from typing import Optional, List
+from typing import Optional, List, Dict, Tuple
 
 import requests
 from app.models import PowerReading
@@ -84,6 +84,7 @@ class HARestPowerSource(PowerSource):
         token: str = "",
         phase: str = "L1",
         preferred_name: str = "",
+        phase_entity_ids: Optional[Dict[str, str]] = None,
     ):
         """
         Initialize Home Assistant REST power source.
@@ -98,8 +99,16 @@ class HARestPowerSource(PowerSource):
         self.token = token
         self.phase = phase
         self.preferred_name = preferred_name.strip().lower()
+        self.phase_entity_ids: Dict[str, str] = {
+            str(k).upper(): str(v).strip()
+            for k, v in (phase_entity_ids or {}).items()
+            if str(v).strip()
+        }
+        if not self.phase_entity_ids and entity_id:
+            self.phase_entity_ids = {str(phase or 'L1').upper(): str(entity_id).strip()}
         self.connected = False
         self._timeout_seconds = 10
+        self._active_phase_threshold_w = 20.0
 
     def _build_headers(self) -> dict:
         headers = {"Content-Type": "application/json"}
@@ -221,32 +230,47 @@ class HARestPowerSource(PowerSource):
     def connect(self) -> bool:
         """Connect to Home Assistant."""
         try:
-            if not self.entity_id:
+            if not self.phase_entity_ids and not self.entity_id:
                 self.entity_id = self._discover_power_entity() or ""
+                if self.entity_id:
+                    self.phase_entity_ids = {str(self.phase or 'L1').upper(): self.entity_id}
 
-            if not self.entity_id:
+            if not self.phase_entity_ids:
                 logger.error("HA REST connect failed: no power entity configured or auto-discovered")
                 return False
 
-            url = self._build_state_url(self.entity_id)
-            response = requests.get(
-                url,
-                headers=self._build_headers(),
-                timeout=self._timeout_seconds,
-            )
-            if response.status_code != 200:
+            reachable = 0
+            for phase_name, phase_entity in self.phase_entity_ids.items():
+                url = self._build_state_url(phase_entity)
+                response = requests.get(
+                    url,
+                    headers=self._build_headers(),
+                    timeout=self._timeout_seconds,
+                )
+                if response.status_code == 200:
+                    reachable += 1
+                    continue
+
                 if response.status_code == 401:
                     logger.error(
                         "HA REST auth failed (401). Check homeassistant_api permission, "
                         "SUPERVISOR_TOKEN availability, or set home_assistant.token manually."
                     )
-                logger.error(
-                    f"HA REST connect check failed for {self.entity_id}: HTTP {response.status_code}"
+                    return False
+
+                logger.warning(
+                    f"HA REST connect check failed for {phase_name}:{phase_entity}: HTTP {response.status_code}"
                 )
+
+            if reachable <= 0:
+                logger.error("HA REST connect failed: none of the configured phase entities are reachable")
                 return False
 
             self.connected = True
-            logger.info(f"HA REST source connected to {self.entity_id}")
+            logger.info(
+                "HA REST source connected with phase entities: "
+                f"{', '.join(f'{k}={v}' for k, v in self.phase_entity_ids.items())}"
+            )
             return True
         except Exception as e:
             logger.error(f"HA REST connect check failed: {e}", exc_info=True)
@@ -263,37 +287,66 @@ class HARestPowerSource(PowerSource):
             return None
 
         try:
-            url = f"{self.ha_url.rstrip('/')}/states/{self.entity_id}"
-            response = requests.get(
-                url,
-                headers=self._build_headers(),
-                timeout=self._timeout_seconds,
-            )
-            if response.status_code != 200:
-                logger.warning(
-                    f"Failed to read {self.entity_id} from HA REST: HTTP {response.status_code}"
-                )
+            phase_powers_w: Dict[str, float] = {}
+            phase_entities: Dict[str, str] = {}
+
+            for phase_name, phase_entity in self.phase_entity_ids.items():
+                state_value, payload = self._read_entity_power(phase_entity)
+                if state_value is None:
+                    continue
+                phase_powers_w[phase_name] = float(state_value)
+                phase_entities[phase_name] = phase_entity
+
+            if not phase_powers_w:
+                logger.debug("No numeric power value available for configured phase entities")
                 return None
 
-            payload = response.json()
-            state_value = self._extract_power_value_from_payload(payload)
-
-            if state_value is None:
-                logger.debug(f"Entity {self.entity_id} has no numeric power value")
-                return None
+            total_power_w = float(sum(phase_powers_w.values()))
+            active_phases = [name for name, value in phase_powers_w.items() if value >= self._active_phase_threshold_w]
+            phase_active_count = len(active_phases)
+            if phase_active_count <= 0:
+                phase_mode = "idle"
+            elif phase_active_count == 1:
+                phase_mode = "single_phase"
+            else:
+                phase_mode = "multi_phase"
 
             return PowerReading(
                 timestamp=datetime.now(),
-                power_w=state_value,
-                phase=self.phase,
+                power_w=total_power_w,
+                phase="+".join(phase_powers_w.keys()),
                 metadata={
                     "entity_id": self.entity_id,
-                    "unit": payload.get("attributes", {}).get("unit_of_measurement", "W"),
+                    "phase_entities": phase_entities,
+                    "phase_powers_w": phase_powers_w,
+                    "phase_active_count": phase_active_count,
+                    "phase_mode": phase_mode,
+                    "active_phases": active_phases,
+                    "unit": "W",
                 },
             )
         except Exception as e:
-            logger.error(f"Error reading power from HA REST ({self.entity_id}): {e}", exc_info=True)
+            logger.error("Error reading power from HA REST phase entities: %s", e, exc_info=True)
             return None
+
+    def _read_entity_power(self, entity_id: str) -> Tuple[Optional[float], Optional[dict]]:
+        """Read one entity and return watts + payload."""
+        url = self._build_state_url(entity_id)
+        response = requests.get(
+            url,
+            headers=self._build_headers(),
+            timeout=self._timeout_seconds,
+        )
+        if response.status_code != 200:
+            logger.warning(f"Failed to read {entity_id} from HA REST: HTTP {response.status_code}")
+            return None, None
+
+        payload = response.json()
+        state_value = self._extract_power_value_from_payload(payload)
+        if state_value is None:
+            logger.debug(f"Entity {entity_id} has no numeric power value")
+            return None, payload
+        return state_value, payload
 
 
 class Collector:

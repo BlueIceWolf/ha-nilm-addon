@@ -46,6 +46,7 @@ class Config:
         self.ha_url = "http://supervisor/core/api"
         self.ha_sensor_name = ""
         self.ha_power_entity_id = ""
+        self.ha_phase_entities: Dict[str, str] = {}
         self.ha_token = ""
         self.storage_path = "/data"
         self.storage_enabled = True
@@ -128,6 +129,21 @@ class Config:
         sensor_entity_id = str(ha_config.get('sensor_entity_id', '')).strip()
         legacy_power_entity_id = str(ha_config.get('power_entity_id', self.ha_power_entity_id)).strip()
         self.ha_power_entity_id = sensor_entity_id or legacy_power_entity_id
+
+        phase_entities_cfg = ha_config.get('phase_entities', {})
+        self.ha_phase_entities = {}
+        if isinstance(phase_entities_cfg, dict):
+            for phase in ('L1', 'L2', 'L3'):
+                value = str(phase_entities_cfg.get(phase.lower(), phase_entities_cfg.get(phase, ''))).strip()
+                if value:
+                    self.ha_phase_entities[phase] = value
+
+        if self.ha_power_entity_id and not self.ha_phase_entities:
+            fallback_phase = str(self.power_phase or 'L1').upper()
+            if fallback_phase not in {'L1', 'L2', 'L3'}:
+                fallback_phase = 'L1'
+            self.ha_phase_entities[fallback_phase] = self.ha_power_entity_id
+
         self.ha_token = ha_config.get('token', self.ha_token)
 
         storage_config = config_dict.get('storage', {})
@@ -161,6 +177,25 @@ class Config:
         # Confidence tuning
         confidence_options = config_dict.get('confidence', {})
         self.confidence_threshold = confidence_options.get('min_confidence', self.confidence_threshold)
+
+        self._validate_config()
+
+    def _validate_config(self) -> None:
+        """Validate configuration consistency and required fields."""
+        if self.power_source == 'home_assistant_rest' and not self.get_selected_phase_entities():
+            raise ValueError(
+                "home_assistant_rest requires at least one configured phase entity "
+                "(home_assistant.phase_entities.l1/l2/l3 or sensor_entity_id)."
+            )
+
+    def get_selected_phase_entities(self) -> Dict[str, str]:
+        """Return configured phase entity mapping in stable L1/L2/L3 order."""
+        return {
+            phase: entity
+            for phase in ('L1', 'L2', 'L3')
+            for entity in [self.ha_phase_entities.get(phase, '').strip()]
+            if entity
+        }
 
     def _create_device_config(self, name: str, settings: Dict[str, Any]) -> DeviceConfig:
         """Create a DeviceConfig from settings dictionary."""

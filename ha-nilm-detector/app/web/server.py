@@ -135,7 +135,7 @@ def _html_page() -> str:
     <h2 style=\"margin:14px 0 8px; font-size:1.1rem;\">Gelernte Muster und Vorschlaege</h2>
     <table>
       <thead>
-        <tr><th>ID</th><th>Erkennung</th><th>Label</th><th>Mittelwert (W)</th><th>Peak (W)</th><th>Dauer (s)</th><th>Treffer</th><th>Aktion</th></tr>
+        <tr><th>ID</th><th>Erkennung</th><th>Label</th><th>Phasen</th><th>Mittelwert (W)</th><th>Peak (W)</th><th>Dauer (s)</th><th>Treffer</th><th>Aktion</th></tr>
       </thead>
       <tbody id=\"patternRows\"></tbody>
     </table>
@@ -259,7 +259,7 @@ function renderPatterns(patterns) {
   tbody.innerHTML = '';
   if (!patterns || !patterns.length) {
     const tr = document.createElement('tr');
-    tr.innerHTML = '<td colspan="8">Noch keine Muster erkannt.</td>';
+    tr.innerHTML = '<td colspan="9">Noch keine Muster erkannt.</td>';
     tbody.appendChild(tr);
     return;
   }
@@ -269,7 +269,9 @@ function renderPatterns(patterns) {
     const label = p.user_label || '-';
     const candidate = p.candidate_name || p.suggestion_type || 'unbekannt';
     const guessText = p.is_confirmed ? `bestaetigt: ${candidate}` : `evtl. ${candidate}`;
-    tr.innerHTML = `<td>${p.id}</td><td>${guessText}</td><td>${label}</td><td>${fmt(p.avg_power_w)}</td><td>${fmt(p.peak_power_w)}</td><td>${fmt(p.duration_s)}</td><td>${p.seen_count ?? 0}</td><td><button data-id="${p.id}">Korrigieren</button></td>`;
+    const phaseModeRaw = String(p.phase_mode || 'unknown');
+    const phaseMode = phaseModeRaw === 'single_phase' ? '1-phasig' : (phaseModeRaw === 'multi_phase' ? 'mehrphasig' : phaseModeRaw);
+    tr.innerHTML = `<td>${p.id}</td><td>${guessText}</td><td>${label}</td><td>${phaseMode}</td><td>${fmt(p.avg_power_w)}</td><td>${fmt(p.peak_power_w)}</td><td>${fmt(p.duration_s)}</td><td>${p.seen_count ?? 0}</td><td><button data-id="${p.id}">Korrigieren</button></td>`;
     tbody.appendChild(tr);
   });
 

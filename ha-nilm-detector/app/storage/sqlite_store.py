@@ -159,6 +159,22 @@ class SQLiteStore:
                 "CREATE INDEX IF NOT EXISTS idx_learned_patterns_seen ON learned_patterns(last_seen)"
             )
 
+            self._ensure_column("learned_patterns", "avg_active_phases", "REAL DEFAULT 1.0")
+            self._ensure_column("learned_patterns", "phase_mode", "TEXT DEFAULT 'unknown'")
+
+    def _ensure_column(self, table_name: str, column_name: str, column_def: str) -> None:
+        """Add a missing column in a backward-compatible way."""
+        if not self._conn:
+            return
+        try:
+            rows = self._conn.execute(f"PRAGMA table_info({table_name})").fetchall()
+            existing = {str(row[1]) for row in rows}
+            if column_name in existing:
+                return
+            self._conn.execute(f"ALTER TABLE {table_name} ADD COLUMN {column_name} {column_def}")
+        except Exception as e:
+            logger.warning(f"Failed to ensure column {table_name}.{column_name}: {e}")
+
     def store_reading(self, reading: PowerReading) -> None:
         if not self._conn:
             return
@@ -323,7 +339,8 @@ class SQLiteStore:
                 """
                 SELECT id, created_at, updated_at, first_seen, last_seen, seen_count,
                        avg_power_w, peak_power_w, duration_s, energy_wh,
-                       suggestion_type, user_label, status
+                      suggestion_type, user_label, status,
+                      COALESCE(avg_active_phases, 1.0), COALESCE(phase_mode, 'unknown')
                 FROM learned_patterns
                 ORDER BY seen_count DESC, last_seen DESC
                 LIMIT ?
@@ -348,6 +365,8 @@ class SQLiteStore:
                         "suggestion_type": row[10],
                         "user_label": row[11],
                         "status": row[12],
+                        "avg_active_phases": float(row[13] or 1.0),
+                        "phase_mode": row[14] or "unknown",
                         "candidate_name": self._normalize_pattern_name(row[11] or row[10]),
                         "is_confirmed": bool(str(row[11] or "").strip()),
                     }
@@ -384,13 +403,16 @@ class SQLiteStore:
                 peak_power = float(best["peak_power_w"]) * (1.0 - alpha) + float(cycle["peak_power_w"]) * alpha
                 duration = float(best["duration_s"]) * (1.0 - alpha) + float(cycle["duration_s"]) * alpha
                 energy = float(best["energy_wh"]) * (1.0 - alpha) + float(cycle["energy_wh"]) * alpha
+                avg_active_phases = float(best.get("avg_active_phases", 1.0)) * (1.0 - alpha) + float(cycle.get("active_phase_count", 1.0)) * alpha
+                phase_mode = str(cycle.get("phase_mode") or best.get("phase_mode") or "unknown")
 
                 with self._conn:
                     self._conn.execute(
                         """
                         UPDATE learned_patterns
                         SET updated_at = ?, last_seen = ?, seen_count = ?,
-                            avg_power_w = ?, peak_power_w = ?, duration_s = ?, energy_wh = ?
+                            avg_power_w = ?, peak_power_w = ?, duration_s = ?, energy_wh = ?,
+                            avg_active_phases = ?, phase_mode = ?
                         WHERE id = ?
                         """,
                         (
@@ -401,6 +423,8 @@ class SQLiteStore:
                             peak_power,
                             duration,
                             energy,
+                            avg_active_phases,
+                            phase_mode,
                             int(best["id"]),
                         ),
                     )
@@ -414,6 +438,8 @@ class SQLiteStore:
                         "peak_power_w": peak_power,
                         "duration_s": duration,
                         "energy_wh": energy,
+                        "avg_active_phases": avg_active_phases,
+                        "phase_mode": phase_mode,
                     }
                 )
                 return {
@@ -428,8 +454,9 @@ class SQLiteStore:
                     INSERT INTO learned_patterns (
                         created_at, updated_at, first_seen, last_seen, seen_count,
                         avg_power_w, peak_power_w, duration_s, energy_wh,
-                        suggestion_type, user_label, status
-                    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                        suggestion_type, user_label, status,
+                        avg_active_phases, phase_mode
+                    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                     """,
                     (
                         now,
@@ -444,6 +471,8 @@ class SQLiteStore:
                         suggestion_type,
                         None,
                         "active",
+                        float(cycle.get("active_phase_count", 1.0)),
+                        str(cycle.get("phase_mode", "unknown")),
                     ),
                 )
                 row_id = cur.lastrowid if cur.lastrowid is not None else 0
@@ -463,6 +492,10 @@ class SQLiteStore:
                 "suggestion_type": suggestion_type,
                 "user_label": None,
                 "status": "active",
+                "avg_active_phases": float(cycle.get("active_phase_count", 1.0)),
+                "phase_mode": str(cycle.get("phase_mode", "unknown")),
+                "candidate_name": self._normalize_pattern_name(suggestion_type),
+                "is_confirmed": False,
             }
             return {"matched": False, "distance": None, "pattern": created}
         except Exception as e:

@@ -53,9 +53,10 @@ class NILMDetectionSystem:
         self.config.ensure_storage_path()
 
         self.state_engine = StateEngine()
+        selected_phases = list(self.config.get_selected_phase_entities().keys())
         self.collector = Collector(
             self._build_power_source(),
-            phases=[self.config.power_phase],
+            phases=selected_phases or [self.config.power_phase],
         )
 
         self.storage = None
@@ -130,9 +131,10 @@ class NILMDetectionSystem:
             if token.lower().startswith("bearer "):
                 token = token.split(" ", 1)[1].strip()
 
+            phase_entities = self.config.get_selected_phase_entities()
             logger.info(
                 "Using HA REST power source: "
-                f"entity_id={self.config.ha_power_entity_id}, url={self.config.ha_url}, "
+                f"entity_id={self.config.ha_power_entity_id}, phases={phase_entities}, url={self.config.ha_url}, "
                 f"token_present={bool(token)}"
             )
             return HARestPowerSource(
@@ -141,6 +143,7 @@ class NILMDetectionSystem:
                 token=token,
                 phase=self.config.power_phase,
                 preferred_name=self.config.ha_sensor_name,
+                phase_entity_ids=phase_entities,
             )
 
         logger.warning("Using mock power source. Set power_source=home_assistant_rest for real sensor input.")
@@ -291,6 +294,8 @@ class NILMDetectionSystem:
                             "avg_power_w": cycle.avg_power_w,
                             "peak_power_w": cycle.peak_power_w,
                             "energy_wh": cycle.energy_wh,
+                            "active_phase_count": int(processed.metadata.get("phase_active_count", 1)),
+                            "phase_mode": str(processed.metadata.get("phase_mode", "single_phase")),
                         }
                         suggestion = self.pattern_learner.suggest_device_type(cycle)
                         learn_result = self.storage.learn_cycle_pattern(

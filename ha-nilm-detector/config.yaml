@@ -43,6 +43,10 @@ options:
     sensor_name: ""
     sensor_entity_id: ""
     power_entity_id: ""
+    phase_entities:
+      l1: ""
+      l2: ""
+      l3: ""
     token: ""
     entity_id_prefix: nilm
   storage:
@@ -86,6 +90,10 @@ schema:
     sensor_name: str?
     sensor_entity_id: str?
     power_entity_id: str
+    phase_entities:
+      l1: str?
+      l2: str?
+      l3: str?
     token: password?
     entity_id_prefix: str
   storage:
