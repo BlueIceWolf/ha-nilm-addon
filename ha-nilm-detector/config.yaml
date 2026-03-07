@@ -27,7 +27,6 @@ options:
     off_threshold_w: 25.0
     min_cycle_seconds: 20
   power_source: home_assistant_rest
-  power_phase: L1
   update_interval_seconds: 5
   mqtt:
     enabled: false
@@ -40,9 +39,6 @@ options:
     discovery_enabled: true
   home_assistant:
     url: http://supervisor/core/api
-    sensor_name: ""
-    sensor_entity_id: ""
-    power_entity_id: ""
     phase_entities:
       l1: ""
       l2: ""
@@ -60,7 +56,7 @@ options:
     adaptive_correction: true
   confidence:
     min_confidence: 0.6
-  devices_json: '{"kitchen_fridge":{"enabled":true,"detector_type":"fridge","power_min_w":10,"power_max_w":500,"min_runtime_seconds":30,"min_pause_seconds":60,"startup_duration_seconds":5}}'
+  devices_json: ""
 schema:
   debug: bool
   log_level: list(trace|debug|info|notice|warning|error|fatal)
@@ -74,7 +70,6 @@ schema:
     off_threshold_w: float(0,10000)
     min_cycle_seconds: int(5,86400)
   power_source: list(mock|home_assistant_rest)
-  power_phase: str
   update_interval_seconds: int(1,300)
   mqtt:
     enabled: bool
@@ -87,9 +82,6 @@ schema:
     discovery_enabled: bool
   home_assistant:
     url: str
-    sensor_name: str?
-    sensor_entity_id: str?
-    power_entity_id: str
     phase_entities:
       l1: str?
       l2: str?
