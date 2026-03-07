@@ -1,6 +1,6 @@
 name: "HA NILM Detector"
 description: "Detect appliances from power consumption patterns"
-version: "0.1.6"
+version: "0.1.8"
 slug: "ha_nilm_detector"
 startup: application
 boot: auto
@@ -10,8 +10,64 @@ arch:
   - armv7
 init: false
 options:
+  debug: false
   log_level: info
-schema:
-  log_level: list(trace|debug|info|notice|warning|error|fatal)
+  power_source: home_assistant_rest
+  power_phase: L1
+  update_interval_seconds: 5
+  mqtt:
+    broker: homeassistant.local
+    port: 1883
+    username: ""
+    password: ""
+    topic_prefix: ha-nilm/
+    discovery_prefix: homeassistant
+    discovery_enabled: true
   home_assistant:
+    url: http://supervisor/core/api
+    power_entity_id: sensor.total_power
+    token: ""
+    entity_id_prefix: nilm
+  storage:
+    enabled: true
+    db_path: /data/nilm.sqlite3
+    retention_days: 30
+    learning_warmup_minutes: 120
+  processing:
+    smoothing_window: 5
+    noise_threshold: 2.0
+    adaptive_correction: true
+  confidence:
+    min_confidence: 0.6
+  devices_json: '{"kitchen_fridge":{"enabled":true,"detector_type":"fridge","power_min_w":10,"power_max_w":500,"min_runtime_seconds":30,"min_pause_seconds":60,"startup_duration_seconds":5}}'
+schema:
+  debug: bool
+  log_level: list(trace|debug|info|notice|warning|error|fatal)
+  power_source: list(mock|home_assistant_rest)
+  power_phase: str
+  update_interval_seconds: int(1,300)
+  mqtt:
+    broker: str
+    port: int(1,65535)
+    username: str?
+    password: password?
+    topic_prefix: str
+    discovery_prefix: str
+    discovery_enabled: bool
+  home_assistant:
+    url: str
+    power_entity_id: str
+    token: password?
     entity_id_prefix: str
+  storage:
+    enabled: bool
+    db_path: str
+    retention_days: int(1,3650)
+    learning_warmup_minutes: int(1,10080)
+  processing:
+    smoothing_window: int(1,120)
+    noise_threshold: float(0,1000)
+    adaptive_correction: bool
+  confidence:
+    min_confidence: float(0,1)
+  devices_json: str

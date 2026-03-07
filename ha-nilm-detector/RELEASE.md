@@ -1,10 +1,10 @@
-# Release 0.1.6
+# Release 0.1.8
 
 ## Highlights
-- Added richer logging and configurable `log_level` handling for easier troubleshooting.
-- Improved runtime error context in startup, detector, and MQTT publish flows.
-- Docker health check was removed because no HTTP server is exposed by the add-on.
+- Added direct Home Assistant sensor ingestion via REST (`power_source=home_assistant_rest`).
+- Added built-in SQLite persistence for readings and detection events.
+- Added warm-start learning for adaptive detectors from persisted history.
+- Expanded add-on UI setup to configure sensor source and storage behavior.
 
 ## Notes
-- Current status: startup in Home Assistant is still considered unstable/not fully working.
 - Update via Supervisor by refreshing the repository and reinstalling the add-on to trigger a rebuild.

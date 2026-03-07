@@ -24,6 +24,8 @@ class Config:
         self.debug = False
         self.log_level = "info"
         self.update_interval_seconds = 5
+        self.power_source = "mock"
+        self.power_phase = "L1"
         self.mqtt_broker = "localhost"
         self.mqtt_port = 1883
         self.mqtt_username = None
@@ -33,7 +35,14 @@ class Config:
         self.enable_mqtt_discovery = True
         self.devices: Dict[str, DeviceConfig] = {}
         self.ha_entity_id_prefix = "nilm"
+        self.ha_url = "http://supervisor/core/api"
+        self.ha_power_entity_id = ""
+        self.ha_token = ""
         self.storage_path = "/data"
+        self.storage_enabled = True
+        self.storage_db_path = "/data/nilm.sqlite3"
+        self.storage_retention_days = 30
+        self.learning_warmup_minutes = 120
         self.processing_smoothing_window = 5
         self.processing_noise_threshold = 2.0
         self.processing_adaptive_correction = True
@@ -68,6 +77,8 @@ class Config:
         self.debug = config_dict.get('debug', False)
         self.log_level = str(config_dict.get('log_level', self.log_level)).lower()
         self.update_interval_seconds = config_dict.get('update_interval_seconds', 5)
+        self.power_source = str(config_dict.get('power_source', self.power_source)).lower()
+        self.power_phase = str(config_dict.get('power_phase', self.power_phase))
         self.storage_path = config_dict.get('storage_path', '/data')
         
         # MQTT settings
@@ -83,9 +94,29 @@ class Config:
         # HA settings
         ha_config = config_dict.get('home_assistant', {})
         self.ha_entity_id_prefix = ha_config.get('entity_id_prefix', 'nilm')
+        self.ha_url = ha_config.get('url', self.ha_url)
+        self.ha_power_entity_id = ha_config.get('power_entity_id', self.ha_power_entity_id)
+        self.ha_token = ha_config.get('token', self.ha_token)
+
+        storage_config = config_dict.get('storage', {})
+        self.storage_enabled = bool(storage_config.get('enabled', self.storage_enabled))
+        self.storage_db_path = str(storage_config.get('db_path', self.storage_db_path))
+        self.storage_retention_days = int(storage_config.get('retention_days', self.storage_retention_days))
+        self.learning_warmup_minutes = int(storage_config.get('learning_warmup_minutes', self.learning_warmup_minutes))
         
         # Device configurations
         devices_config = config_dict.get('devices', {})
+        devices_json = config_dict.get('devices_json')
+        if isinstance(devices_json, str) and devices_json.strip():
+            try:
+                parsed_devices = json.loads(devices_json)
+                if isinstance(parsed_devices, dict):
+                    devices_config = parsed_devices
+                else:
+                    logger.warning("devices_json was provided but is not a JSON object; ignoring it")
+            except Exception as e:
+                logger.error(f"Invalid devices_json in options: {e}")
+
         for device_name, device_settings in devices_config.items():
             self.devices[device_name] = self._create_device_config(device_name, device_settings)
     

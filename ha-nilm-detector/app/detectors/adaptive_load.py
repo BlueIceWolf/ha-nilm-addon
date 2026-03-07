@@ -98,6 +98,27 @@ class AdaptiveLoadDetector:
             details=self.get_diagnostics(),
         )
 
+    def prime_with_history(self, power_values: List[float]) -> None:
+        """Warm-start adaptive baseline using persisted readings from storage."""
+        if not power_values:
+            return
+
+        now = datetime.now()
+        window = power_values[-self.power_history.maxlen :]
+        self.power_history.clear()
+        for i, power in enumerate(window):
+            ts = now - timedelta(seconds=(len(window) - i))
+            self.power_history.append((ts, float(power)))
+
+        baseline_pool = [p for p in window if p <= self.config.power_max_w]
+        if baseline_pool:
+            self.baseline_power = float(np.mean(baseline_pool))
+            self.baseline_variance = float(max(np.std(baseline_pool), 2.0))
+            logger.info(
+                f"{self.name}: Warm-start baseline from {len(window)} samples -> "
+                f"{self.baseline_power:.1f}W ± {self.baseline_variance:.1f}W"
+            )
+
     def get_diagnostics(self) -> dict:
         history = list(self.power_history)
         latest = history[-1][1] if history else 0.0

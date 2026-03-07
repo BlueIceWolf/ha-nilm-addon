@@ -25,6 +25,71 @@ Non-Intrusive Load Monitoring (NILM) Add-on for Home Assistant. Automatically de
 
 ## Configuration
 
+### Home Assistant Add-on UI setup
+
+The add-on now exposes core options directly in the Home Assistant add-on UI:
+
+- `debug`, `log_level`, `update_interval_seconds`
+- `power_source` and `power_phase`
+- `mqtt.*` (broker, port, credentials, topic/discovery prefixes)
+- `home_assistant.*` (`url`, `power_entity_id`, `token`, `entity_id_prefix`)
+- `storage.*` for local SQLite persistence and warm-start learning
+- `processing.*` and `confidence.min_confidence`
+- `devices_json` for device definitions
+
+### How to pass your power sensor to the add-on
+
+Set the following in add-on options:
+
+- `power_source: home_assistant_rest`
+- `home_assistant.power_entity_id: sensor.<your_power_sensor>`
+- `home_assistant.url: http://supervisor/core/api` (default for HA add-ons)
+- `home_assistant.token`: can stay empty in most add-on setups because `SUPERVISOR_TOKEN` is used automatically
+
+If your sensor state is numeric (for example `432.5`), the add-on reads it directly.
+
+### Built-in database and learning
+
+Yes, the add-on now has its own local SQLite database:
+
+- Path: `storage.db_path` (default `/data/nilm.sqlite3`)
+- Stored data: raw power readings and detection events
+- Retention: `storage.retention_days`
+- Learning warm-start: `storage.learning_warmup_minutes`
+
+On startup, adaptive detectors are primed from recent stored readings so learning continues across restarts.
+
+Storage crash-safety details:
+
+- SQLite uses `WAL` journaling and `synchronous=FULL` for stronger durability on sudden restarts/power loss.
+- Writes are executed in atomic transactions.
+- On shutdown, a WAL checkpoint is attempted.
+- Database integrity is checked on startup; if corruption is detected, the file is quarantined (`*.corrupt.<timestamp>`) and a new DB is created automatically.
+
+Example for `devices_json`:
+
+```json
+{
+   "kitchen_fridge": {
+      "enabled": true,
+      "detector_type": "fridge",
+      "power_min_w": 10,
+      "power_max_w": 500,
+      "min_runtime_seconds": 30,
+      "min_pause_seconds": 60,
+      "startup_duration_seconds": 5
+   }
+}
+```
+
+### Do I need a Home Assistant integration?
+
+Short answer: no, not required.
+
+- This add-on publishes via MQTT and supports Home Assistant MQTT Discovery.
+- With MQTT Discovery enabled, entities appear automatically without a custom integration.
+- A custom HA integration is only needed if you want a dedicated config flow/UI beyond add-on options (for example, wizard-based device onboarding).
+
 ### Power Data Source
 The add-on currently uses mock data for testing. To connect real power sensors:
 

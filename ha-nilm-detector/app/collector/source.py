@@ -4,7 +4,8 @@ Power data collector - reads from various sources.
 from abc import ABC, abstractmethod
 from datetime import datetime
 from typing import Optional, List
-import json
+
+import requests
 from app.models import PowerReading
 from app.utils.logging import get_logger
 
@@ -76,7 +77,7 @@ class MockPowerSource(PowerSource):
 class HARestPowerSource(PowerSource):
     """Read power from Home Assistant via REST API."""
     
-    def __init__(self, ha_url: str, entity_id: str, token: str = ""):
+    def __init__(self, ha_url: str, entity_id: str, token: str = "", phase: str = "L1"):
         """
         Initialize Home Assistant REST power source.
         
@@ -88,14 +89,54 @@ class HARestPowerSource(PowerSource):
         self.ha_url = ha_url
         self.entity_id = entity_id
         self.token = token
+        self.phase = phase
         self.connected = False
+        self._timeout_seconds = 10
+
+    def _build_headers(self) -> dict:
+        headers = {"Content-Type": "application/json"}
+        if self.token:
+            headers["Authorization"] = f"Bearer {self.token}"
+        return headers
+
+    @staticmethod
+    def _parse_power_value(value) -> Optional[float]:
+        if value is None:
+            return None
+        if isinstance(value, (int, float)):
+            return float(value)
+
+        text = str(value).strip().lower()
+        if text in {"unknown", "unavailable", "none", "null", ""}:
+            return None
+
+        cleaned = text.replace("w", "").strip()
+        try:
+            return float(cleaned)
+        except ValueError:
+            return None
     
     def connect(self) -> bool:
         """Connect to Home Assistant."""
-        # TODO: Implement actual connection check
-        self.connected = True
-        logger.info(f"HA REST source connected to {self.entity_id}")
-        return True
+        try:
+            url = f"{self.ha_url.rstrip('/')}/states/{self.entity_id}"
+            response = requests.get(
+                url,
+                headers=self._build_headers(),
+                timeout=self._timeout_seconds,
+            )
+            if response.status_code != 200:
+                logger.error(
+                    f"HA REST connect check failed for {self.entity_id}: HTTP {response.status_code}"
+                )
+                return False
+
+            self.connected = True
+            logger.info(f"HA REST source connected to {self.entity_id}")
+            return True
+        except Exception as e:
+            logger.error(f"HA REST connect check failed: {e}", exc_info=True)
+            return False
     
     def disconnect(self) -> None:
         """Disconnect from Home Assistant."""
@@ -106,16 +147,46 @@ class HARestPowerSource(PowerSource):
         """Read power from Home Assistant entity."""
         if not self.connected:
             return None
-        
-        # TODO: Implement actual REST call
-        # Example:
-        # url = f"{self.ha_url}/api/states/{self.entity_id}"
-        # headers = {"Authorization": f"Bearer {self.token}"}
-        # response = requests.get(url, headers=headers)
-        # state = response.json()["state"]
-        
-        logger.debug(f"Read from {self.entity_id}")
-        return None
+
+        try:
+            url = f"{self.ha_url.rstrip('/')}/states/{self.entity_id}"
+            response = requests.get(
+                url,
+                headers=self._build_headers(),
+                timeout=self._timeout_seconds,
+            )
+            if response.status_code != 200:
+                logger.warning(
+                    f"Failed to read {self.entity_id} from HA REST: HTTP {response.status_code}"
+                )
+                return None
+
+            payload = response.json()
+            state_value = self._parse_power_value(payload.get("state"))
+
+            if state_value is None:
+                attrs = payload.get("attributes", {})
+                for key in ["power", "power_w", "value"]:
+                    state_value = self._parse_power_value(attrs.get(key))
+                    if state_value is not None:
+                        break
+
+            if state_value is None:
+                logger.debug(f"Entity {self.entity_id} has no numeric power value")
+                return None
+
+            return PowerReading(
+                timestamp=datetime.now(),
+                power_w=state_value,
+                phase=self.phase,
+                metadata={
+                    "entity_id": self.entity_id,
+                    "unit": payload.get("attributes", {}).get("unit_of_measurement", "W"),
+                },
+            )
+        except Exception as e:
+            logger.error(f"Error reading power from HA REST ({self.entity_id}): {e}", exc_info=True)
+            return None
 
 
 class Collector:

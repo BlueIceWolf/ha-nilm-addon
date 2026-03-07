@@ -1,17 +1,19 @@
 """Entry point wiring together the modular NILM detection stack."""
+import os
 import signal
 import sys
 import time
 from datetime import datetime
 from typing import Dict, List
 
-from app.collector.source import Collector, MockPowerSource
+from app.collector.source import Collector, HARestPowerSource, MockPowerSource
 from app.config import Config, load_options_from_file
 from app.confidence.confidence import ConfidenceEvaluator
 from app.detectors import AdaptiveLoadDetector, FridgeDetector, InverterDeviceDetector
 from app.processing.pipeline import ProcessingPipeline
 from app.publishers.mqtt import MQTTPublisher
 from app.state_engine import StateEngine
+from app.storage import SQLiteStore
 from app.utils.logging import get_logger, setup_logging
 
 logger = get_logger(__name__)
@@ -34,11 +36,28 @@ class NILMDetectionSystem:
             f"log_level={self.config.log_level}, "
             f"update_interval_seconds={self.config.update_interval_seconds}, "
             f"devices={len(self.config.devices)}, "
-            f"mqtt={self.config.mqtt_broker}:{self.config.mqtt_port}"
+            f"mqtt={self.config.mqtt_broker}:{self.config.mqtt_port}, "
+            f"power_source={self.config.power_source}"
         )
 
+        self.config.ensure_storage_path()
+
         self.state_engine = StateEngine()
-        self.collector = Collector(MockPowerSource())
+        self.collector = Collector(
+            self._build_power_source(),
+            phases=[self.config.power_phase],
+        )
+
+        self.storage = None
+        if self.config.storage_enabled:
+            self.storage = SQLiteStore(
+                db_path=self.config.storage_db_path,
+                retention_days=self.config.storage_retention_days,
+            )
+            if not self.storage.connect():
+                logger.warning("SQLite storage initialization failed; continuing without persistence")
+                self.storage = None
+
         self.processing_pipeline = ProcessingPipeline(
             smoothing_window=self.config.processing_smoothing_window,
             noise_threshold=self.config.processing_noise_threshold,
@@ -51,6 +70,7 @@ class NILMDetectionSystem:
 
         self.detectors: Dict[str, List] = {}
         self._setup_detectors()
+        self._warm_start_detectors()
 
         self.publisher = MQTTPublisher(
             broker=self.config.mqtt_broker,
@@ -65,6 +85,52 @@ class NILMDetectionSystem:
 
         self.running = False
         self.last_daily_reset = datetime.now()
+
+    def _build_power_source(self):
+        if self.config.power_source == "home_assistant_rest":
+            token = self.config.ha_token or os.getenv("SUPERVISOR_TOKEN", "")
+            if not self.config.ha_power_entity_id:
+                logger.warning(
+                    "power_source=home_assistant_rest is set, but home_assistant.power_entity_id is empty. "
+                    "Falling back to mock source."
+                )
+                return MockPowerSource(phase=self.config.power_phase)
+
+            logger.info(
+                "Using HA REST power source: "
+                f"entity_id={self.config.ha_power_entity_id}, url={self.config.ha_url}"
+            )
+            return HARestPowerSource(
+                ha_url=self.config.ha_url,
+                entity_id=self.config.ha_power_entity_id,
+                token=token,
+                phase=self.config.power_phase,
+            )
+
+        logger.warning("Using mock power source. Set power_source=home_assistant_rest for real sensor input.")
+        return MockPowerSource(phase=self.config.power_phase)
+
+    def _warm_start_detectors(self) -> None:
+        if not self.storage:
+            return
+
+        history = self.storage.get_recent_power_values(
+            minutes=self.config.learning_warmup_minutes,
+            limit=300,
+        )
+        if not history:
+            logger.info("No historical readings available for detector warm start")
+            return
+
+        warmed = 0
+        for detector_group in self.detectors.values():
+            for detector in detector_group:
+                prime_fn = getattr(detector, "prime_with_history", None)
+                if callable(prime_fn):
+                    prime_fn(history)
+                    warmed += 1
+
+        logger.info(f"Warm-started {warmed} detector(s) from {len(history)} stored samples")
 
     def _setup_detectors(self) -> None:
         for device_name, device_config in self.config.devices.items():
@@ -121,6 +187,9 @@ class NILMDetectionSystem:
                     continue
 
                 processed = self.processing_pipeline.process(reading)
+                if self.storage:
+                    self.storage.store_reading(reading)
+
                 for device_name, detector_group in self.detectors.items():
                     detection_candidates = []
                     for detector in detector_group:
@@ -144,6 +213,9 @@ class NILMDetectionSystem:
                     if not best:
                         logger.debug(f"No confident detection for {device_name}")
                         continue
+
+                    if self.storage:
+                        self.storage.store_detection(best)
 
                     device_state = self.state_engine.update_device_state(best)
                     if device_state and self.publisher.is_connected():
@@ -176,6 +248,8 @@ class NILMDetectionSystem:
         self.running = False
         self.collector.disconnect()
         self.publisher.disconnect()
+        if self.storage:
+            self.storage.close()
         logger.info("Detection system stopped")
         sys.exit(0)
 
