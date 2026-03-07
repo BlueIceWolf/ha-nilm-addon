@@ -1,18 +1,19 @@
-# Release 0.2.7
+# Release 0.2.8
 
 ## Store Kurztext
-- Manuelle "Jetzt ausführen" Schaltfläche für sofortige Lernläufe in der Testphase.
-- Debug-Button zum Leeren der Datenbank während Entwicklung/Tests.
-- Verbesserte Test-Workflow-Steuerung direkt in der Web-UI.
+- Multi-Phasen-Verlauf mit ein-/ausblendbaren L1/L2/L3 Linien in der Web-UI.
+- Interaktive Bereichsmarkierung im Graphen zum manuellen Lernen von Mustern.
+- Erweiterte lokale NILM-Features für bessere Erkennung ohne Cloud und ohne PyTorch.
 
 ## Highlights
-- Added "Lernen jetzt ausführen" button for on-demand learning pass execution.
-- Added "DB leeren (Debug)" button for database flush during testing.
-- Enhanced Web UI controls for immediate pattern learning and debugging.
-- Improved test-phase workflow with manual learning triggers.
+- Added multi-phase chart visualization with per-phase toggle buttons (Total/L1/L2/L3).
+- Added "Bereich markieren" flow to select chart intervals and create patterns manually.
+- Added API endpoint `POST /api/patterns/create-from-range` for manual pattern creation.
+- Added advanced lightweight feature extraction (rise/fall rate, variance, duty cycle, substates).
+- Improved local similarity scoring and appliance heuristics with shape-aware features.
 
 ## Notes
-- Use the "Lernen jetzt ausführen" button to manually trigger learning passes during testing.
-- The "DB leeren" button resets all stored patterns and measurements (use with care).
-- Nightly automatic learning still runs between 02:00-05:00 as scheduled.
+- All learning remains local in Home Assistant (privacy-first, no cloud dependency).
+- Existing nightly automatic learning window (02:00-05:00) remains active.
+- Use manual range selection in the chart to speed up labeling during test phase.
 - Update via Supervisor by refreshing the repository and reinstalling the add-on.

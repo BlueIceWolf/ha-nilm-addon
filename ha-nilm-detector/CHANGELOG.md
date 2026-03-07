@@ -1,4 +1,12 @@
 # Changelog
+## 0.2.8
+
+- Added multi-phase chart rendering with L1/L2/L3 toggles (show/hide per phase).
+- Added interactive range selection in Web UI to manually mark timeline segments.
+- Added manual pattern creation endpoint from selected range (`/api/patterns/create-from-range`).
+- Added advanced lightweight NILM features (ramp, variance, duty cycle, substates) for better local pattern matching.
+- Improved heuristic device-type suggestions with shape-based, privacy-preserving local features.
+
 ## 0.2.7
 
 - Added manual "Jetzt ausführen" (Run Now) button in Web UI for immediate learning pass testing.
