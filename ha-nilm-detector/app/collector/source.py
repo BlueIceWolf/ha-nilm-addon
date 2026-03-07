@@ -103,8 +103,11 @@ class HARestPowerSource(PowerSource):
 
     def _build_headers(self) -> dict:
         headers = {"Content-Type": "application/json"}
-        if self.token:
-            headers["Authorization"] = f"Bearer {self.token}"
+        token = str(self.token or "").strip()
+        if token.lower().startswith("bearer "):
+            token = token.split(" ", 1)[1].strip()
+        if token:
+            headers["Authorization"] = f"Bearer {token}"
         return headers
 
     def _build_state_url(self, entity_id: str) -> str:
@@ -232,6 +235,11 @@ class HARestPowerSource(PowerSource):
                 timeout=self._timeout_seconds,
             )
             if response.status_code != 200:
+                if response.status_code == 401:
+                    logger.error(
+                        "HA REST auth failed (401). Check homeassistant_api permission, "
+                        "SUPERVISOR_TOKEN availability, or set home_assistant.token manually."
+                    )
                 logger.error(
                     f"HA REST connect check failed for {self.entity_id}: HTTP {response.status_code}"
                 )

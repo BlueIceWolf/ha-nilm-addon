@@ -39,6 +39,21 @@ The add-on now exposes core options directly in the Home Assistant add-on UI:
 - `processing.*` and `confidence.min_confidence`
 - `devices_json` for device definitions
 
+### Minimal config (what you really need)
+
+For normal use, only these fields are required:
+
+- `power_source: home_assistant_rest`
+- `home_assistant.sensor_entity_id: sensor.<your_power_sensor>`
+- optional `home_assistant.sensor_name` for easier matching/logging
+
+Everything else can stay at defaults.
+
+Recommended defaults for simple setup:
+
+- `mqtt.enabled: false` (enable later only if you want MQTT output)
+- `web.enabled: true` (use built-in UI for stats and corrections)
+
 ### Add-on Web UI (Statistics)
 
 The add-on includes an embedded web server that is exposed via Home Assistant add-on ingress.
@@ -109,6 +124,7 @@ Short answer: usually no.
 - Typical Home Assistant add-on setup:
    - Leave `home_assistant.token` empty.
    - The add-on uses `SUPERVISOR_TOKEN` automatically.
+   - Fallback for older environments: `HASSIO_TOKEN` is also checked.
 - You only need to create and set a manual token when:
    - you access a different HA instance,
    - or your setup does not provide `SUPERVISOR_TOKEN`.

@@ -1,5 +1,13 @@
 # Changelog
 
+## 0.2.2
+
+- Added dedicated Home Assistant supervisor API client module (`app/ha_client.py`) using `requests`.
+- Added robust entity read helpers: `get_entity_state`, `get_all_states`, `get_multiple_entities`.
+- Added optional entity-reader startup mode in `app/main.py` with 5-second polling and sample entities.
+- Improved token handling for supervisor API access (`SUPERVISOR_TOKEN` normalization, optional `HASSIO_TOKEN` fallback).
+- Updated add-on branding assets (`logo.png`, `icon.png`).
+
 ## 0.2.1
 
 - Fixed Web UI JSON loading under Home Assistant ingress (relative API paths + safer JSON parsing).

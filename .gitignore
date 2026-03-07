@@ -23,6 +23,7 @@ htmlcov/
 
 # Docker/Build
 .dockerignore
+!ha-nilm-detector/.dockerignore
 
 # Data
 /data
