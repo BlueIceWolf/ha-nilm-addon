@@ -4,18 +4,22 @@
    <img src="ha-nilm-detector/logo.png" alt="HA NILM Detector Logo" width="180" />
 </p>
 
-Repository fuer den Home Assistant Add-on **HA NILM Detector**.
+Home Assistant Add-on fuer lokale, datenschutzfreundliche NILM-Erkennung
+(Non-Intrusive Load Monitoring).
 
-`v0.2.3` ist aktuell ein Beta-Stand: stabil genug fuer Tests, mit aktiver Weiterentwicklung.
+Aktueller Stand: `v0.2.8` (Beta, aktiv weiterentwickelt).
 
 ## Features
 
-- Lernt wiederkehrende Lastmuster aus einem einzigen Leistungssensor.
-- Erkennt Lastzyklen und macht Geraete-Vorschlaege (z. B. `fridge_like`).
-- Erlaubt Korrekturen in der Web-UI, damit spaetere Zuordnungen besser werden.
-- Speichert Messwerte, Erkennungen und Muster robust in SQLite (`/data/nilm.sqlite3`).
-- Bietet eine Ingress-Web-UI mit Live-Status, Verlauf und Pattern-Liste.
-- MQTT-Ausgabe ist optional (`mqtt.enabled`).
+- 100% lokale Verarbeitung in Home Assistant (keine Cloud, kein externer Dienst).
+- Lernt Lastmuster aus `l1/l2/l3` Leistungsphasen und verbessert Zuordnungen ueber Zeit.
+- Ingress Web-UI mit Live-Status, Verlauf, Phasenkarten und Musterliste.
+- Multi-Phasen-Chart mit ein-/ausblendbaren Linien: `Gesamt`, `L1`, `L2`, `L3`.
+- Manuelles Lernen in der UI:
+   - `Lernen jetzt ausfuehren`
+   - `Bereich markieren` im Verlauf und direkt als Muster speichern
+   - `DB leeren (Debug)` fuer Testphasen
+- SQLite Persistenz (`/data/nilm.sqlite3`) fuer Messwerte, Muster und robuste Neustarts.
 
 ## Schnellstart
 
@@ -23,60 +27,69 @@ Repository fuer den Home Assistant Add-on **HA NILM Detector**.
 2. Repository hinzufuegen:
     `https://github.com/BlueIceWolf/ha-nilm-addon`
 3. Add-on **HA NILM Detector** installieren.
-4. In den Add-on-Optionen mindestens setzen:
+4. In den Add-on-Optionen mindestens eine Phase setzen:
 
 ```yaml
-power_source: home_assistant_rest
 home_assistant:
    phase_entities:
       l1: sensor.dein_l1_sensor
-      l2: sensor.dein_l2_sensor
+      l2: ""
       l3: ""
 ```
 
-Hinweis: Es muss mindestens eine Phase (`l1`, `l2` oder `l3`) gesetzt sein.
+5. Add-on starten und via **Open Web UI** pruefen.
 
-5. Token in der Regel leer lassen:
-    der Add-on nutzt automatisch `SUPERVISOR_TOKEN`.
-6. Add-on starten und via **Open Web UI** pruefen.
+Hinweise:
+- Es muss mindestens eine Phase (`l1`, `l2` oder `l3`) gesetzt sein.
+- `home_assistant.token` kann in der Regel leer bleiben. Das Add-on nutzt automatisch `SUPERVISOR_TOKEN`.
 
-## API Anbindung (wichtig)
+## Aktuelle Minimal-Konfiguration
 
-- Interne URL: `http://supervisor/core/api/`
-- Auth: `Authorization: Bearer <SUPERVISOR_TOKEN>`
-- Falls dein Token mit `Bearer ` eingetragen ist, wird das Prefix intern bereinigt.
+```yaml
+log_level: info
+update_interval_seconds: 5
+home_assistant:
+   url: http://supervisor/core/api
+   phase_entities:
+      l1: sensor.dein_l1_sensor
+      l2: ""
+      l3: ""
+   token: ""
+learning:
+   enabled: true
+   on_threshold_w: 50.0
+   off_threshold_w: 25.0
+storage:
+   retention_days: 30
+```
 
-## Web-UI Statusanzeige
+## Web-UI Workflows
 
-Oben rechts zeigt die UI jetzt live, was gerade passiert:
+- Status oben rechts zeigt live Lade-/Fehler-/Aktivzustand.
+- Im Verlauf kannst du Phasen separat ein-/ausblenden.
+- Mit `Bereich markieren` einen Zeitbereich ziehen, Label vergeben und als Muster speichern.
+- In `Gelernte Muster` kannst du Labels korrigieren, damit spaetere Erkennung praeziser wird.
 
-- `Lade Live-Daten...`
-- `Warte auf erste Messwerte vom Sensor...`
-- `Aktiv: <Wert> W (aktualisiert: ...)`
-- `Warte auf API: ...` bei Fehlern
+## Lokaler Datenschutz
 
-## Muster Lernen und Korrigieren
-
-- Das Add-on lernt beim Lauf automatisch Lastzyklen aus den konfigurierten Phasen (`l1/l2/l3`).
-- In der Pattern-Tabelle siehst du Erkennungen als `evtl. <geraet>`.
-- Mit `Korrigieren` kannst du den echten Namen setzen (z. B. `kuehlschrank`).
-- Nach der Korrektur werden wiederkehrende Muster als `bestaetigt: <geraet>` angezeigt.
-- Zusaetzlich lernt das Add-on pro Muster, ob es eher `1-phasig` oder `mehrphasig` ist.
+- Daten bleiben auf deinem HA-System (SQLite unter `/data`).
+- Kein Upload von Messwerten in externe Services.
+- Keine schweren Cloud/Deep-Learning Abhaengigkeiten im Add-on Runtime-Pfad.
 
 ## Troubleshooting
 
 - `HTTP 401` beim Start:
-   `homeassistant_api: true` im Add-on pruefen und sicherstellen, dass `SUPERVISOR_TOKEN` verfuegbar ist.
-- Web-UI zeigt keine Werte:
-   `home_assistant.phase_entities.l1/l2/l3` pruefen und kontrollieren, ob mindestens eine Phase gesetzt ist und numerische Leistung liefert.
-- Nach Updates wirken Aenderungen nicht:
-   Add-on neu bauen/reinstallieren, damit das Image aktualisiert wird.
+   `homeassistant_api: true` im Add-on sowie Token-Verfuegbarkeit pruefen.
+- Web-UI ohne Werte:
+   `home_assistant.phase_entities.l1/l2/l3` pruefen (mindestens eine numerische Quelle).
+- Nach Update keine Aenderung sichtbar:
+   Add-on neu starten, Browser Hard-Reload (`Ctrl+F5`) und ggf. Add-on neu installieren.
 
 ## Projektstruktur
 
 - Add-on Ordner: `ha-nilm-detector/`
 - Manifest: `ha-nilm-detector/config.yaml`
-- Doku: `ha-nilm-detector/DOCS.md`
+- Add-on Doku: `ha-nilm-detector/DOCS.md`
 - Changelog: `ha-nilm-detector/CHANGELOG.md`
 - Release Notes: `ha-nilm-detector/RELEASE.md`
 
