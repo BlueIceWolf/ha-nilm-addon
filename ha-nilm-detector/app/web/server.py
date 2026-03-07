@@ -110,31 +110,31 @@ def _html_page() -> str:
 <body>
   <div class=\"wrap\">
     <div class=\"head\">
-      <h1>HA NILM Live Statistics</h1>
-      <div id=\"ts\" class=\"muted\">Loading...</div>
+      <h1>HA NILM Live-Statistik</h1>
+      <div id=\"ts\" class=\"muted\">Lädt...</div>
     </div>
 
     <div class=\"grid\">
-      <div class=\"card\"><div class=\"label\">Total Power</div><div id=\"current_power\" class=\"value\">-</div></div>
+      <div class=\"card\"><div class=\"label\">Gesamtleistung</div><div id=\"current_power\" class=\"value\">-</div></div>
       <div class=\"card\" id=\"phaseL1\" style=\"display:none;\"><div class=\"label\">Phase L1</div><div id=\"power_l1\" class=\"value\">-</div></div>
       <div class=\"card\" id=\"phaseL2\" style=\"display:none;\"><div class=\"label\">Phase L2</div><div id=\"power_l2\" class=\"value\">-</div></div>
       <div class=\"card\" id=\"phaseL3\" style=\"display:none;\"><div class=\"label\">Phase L3</div><div id=\"power_l3\" class=\"value\">-</div></div>
     </div>
 
     <div class=\"grid\">
-      <div class=\"card\"><div class=\"label\">Avg (24h)</div><div id=\"avg_power\" class=\"value\">-</div></div>
-      <div class=\"card\"><div class=\"label\">Peak (24h)</div><div id=\"peak_power\" class=\"value\">-</div></div>
-      <div class=\"card\"><div class=\"label\">Readings (24h)</div><div id=\"reading_count\" class=\"value\">-</div></div>
+      <div class=\"card\"><div class=\"label\">Durchschnitt (24h)</div><div id=\"avg_power\" class=\"value\">-</div></div>
+      <div class=\"card\"><div class=\"label\">Spitze (24h)</div><div id=\"peak_power\" class=\"value\">-</div></div>
+      <div class=\"card\"><div class=\"label\">Messwerte (24h)</div><div id=\"reading_count\" class=\"value\">-</div></div>
     </div>
 
     <div class=\"chart-wrap\">
       <canvas id=\"powerChart\" width=\"1000\" height=\"280\"></canvas>
     </div>
 
-    <h2 style=\"margin:14px 0 8px; font-size:1.1rem;\">Erkannte Geraete</h2>
+    <h2 style=\"margin:14px 0 8px; font-size:1.1rem;\">Erkannte Geräte</h2>
     <table>
       <thead>
-        <tr><th>Device</th><th>State</th><th>Power (W)</th><th>Confidence</th><th>Cycles</th><th>Runtime (s)</th></tr>
+        <tr><th>Gerät</th><th>Status</th><th>Leistung (W)</th><th>Konfidenz</th><th>Zyklen</th><th>Laufzeit (s)</th></tr>
       </thead>
       <tbody id=\"deviceRows\"></tbody>
     </table>
@@ -142,7 +142,7 @@ def _html_page() -> str:
     <h2 style=\"margin:14px 0 8px; font-size:1.1rem;\">Gelernte Muster</h2>
     <table>
       <thead>
-        <tr><th>ID</th><th>Type</th><th>Label</th><th>Phasen</th><th>Ø (W)</th><th>Peak (W)</th><th>Dauer (s)</th><th>Count</th><th>Aktion</th></tr>
+        <tr><th>ID</th><th>Typ</th><th>Label</th><th>Phasen</th><th>Ø (W)</th><th>Spitze (W)</th><th>Dauer (s)</th><th>Anzahl</th><th>Aktion</th></tr>
       </thead>
       <tbody id=\"patternRows\"></tbody>
     </table>
@@ -169,7 +169,7 @@ async function fetchJson(path) {
   try {
     return JSON.parse(body);
   } catch (error) {
-    throw new Error(`Ungueltige JSON Antwort fuer ${path}: ${body.slice(0, 120)}`);
+    throw new Error(`Ungültige JSON-Antwort für ${path}: ${body.slice(0, 120)}`);
   }
 }
 
@@ -206,7 +206,7 @@ function drawChart(series) {
   if (!series || series.length < 2) {
     ctx.fillStyle = '#667085';
     ctx.font = '14px Segoe UI';
-    ctx.fillText('Noch nicht genug Daten fuer den Verlauf.', 20, 36);
+    ctx.fillText('Noch nicht genug Daten für den Verlauf.', 20, 36);
     return;
   }
 
@@ -244,7 +244,7 @@ function renderDevices(devices) {
   const names = Object.keys(devices || {});
   if (!names.length) {
     const tr = document.createElement('tr');
-    tr.innerHTML = '<td colspan="6">Keine Geraete konfiguriert oder noch keine Erkennung.</td>';
+    tr.innerHTML = '<td colspan="6">Keine Geräte konfiguriert oder noch keine Erkennung.</td>';
     tbody.appendChild(tr);
     return;
   }
@@ -280,7 +280,7 @@ function renderPatterns(patterns) {
   tbody.querySelectorAll('button[data-id]').forEach(btn => {
     btn.addEventListener('click', async () => {
       const id = Number(btn.getAttribute('data-id'));
-      const label = prompt('Welches Geraet ist das? (z.B. kuehlschrank)');
+      const label = prompt('Welches Gerät ist das? (z.B. Kühlschrank)');
       if (!label) return;
       try {
         const res = await fetch(apiPath(`api/patterns/${id}/label`), {
@@ -317,7 +317,7 @@ async function refresh() {
     document.getElementById('peak_power').textContent = fmt(summary.max_power_w, ' W');
     document.getElementById('reading_count').textContent = String(summary.reading_count ?? 0);
     
-    // Display phase information
+    // Zeige Phaseninformationen
     const phases = live.phases || [];
     ['L1', 'L2', 'L3'].forEach(phaseName => {
       const phaseData = phases.find(p => p.name === phaseName);
