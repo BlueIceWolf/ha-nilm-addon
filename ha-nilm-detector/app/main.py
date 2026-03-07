@@ -119,6 +119,7 @@ class NILMDetectionSystem:
                 get_patterns_data=self._build_patterns_payload,
                 set_pattern_label=self._set_pattern_label,
                 flush_debug_data=self._flush_debug_db,
+                run_learning_now=self._run_learning_now,
             )
 
     def _build_power_source(self):
@@ -258,6 +259,21 @@ class NILMDetectionSystem:
         if not self.storage:
             return {"ok": False, "error": "storage not enabled"}
         return self.storage.flush_debug_data(reset_patterns=reset_patterns)
+
+    def _run_learning_now(self) -> Dict:
+        """Manual trigger for testing the nightly learning pass from Web UI."""
+        if not self.storage:
+            return {"ok": False, "error": "storage not enabled"}
+        if not self.config.learning_enabled:
+            return {"ok": False, "error": "learning is disabled"}
+
+        result = self.storage.run_nightly_learning_pass(
+            merge_tolerance=0.20,
+            max_patterns=800,
+        )
+        if result.get("ok"):
+            self.last_nightly_learning_date = datetime.now().date()
+        return result
 
     def _maybe_run_nightly_learning(self, now: datetime) -> None:
         """Run lightweight learning maintenance once per night (off-peak window)."""

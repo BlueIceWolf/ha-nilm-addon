@@ -114,6 +114,7 @@ def _html_page() -> str:
       <div id=\"ts\" class=\"muted\">Lädt...</div>
     </div>
     <div style=\"margin-bottom: 12px;\">
+      <button id=\"runLearningBtn\" title=\"Lernlauf sofort starten\">Lernen jetzt ausführen</button>
       <button id=\"flushDbBtn\" title=\"Nur für Debugging\">DB leeren (Debug)</button>
     </div>
 
@@ -206,6 +207,27 @@ async function flushDebugDb() {
   } catch (err) {
     alert(`DB-Flush fehlgeschlagen: ${err}`);
     setStatus(`DB-Flush fehlgeschlagen: ${err}`);
+  }
+}
+
+async function runLearningNow() {
+  try {
+    setStatus('Starte Lernlauf...');
+    const response = await fetch(apiPath('api/debug/run-learning-now'), {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: '{}'
+    });
+    const payload = await response.json();
+    if (!response.ok || !payload.ok) {
+      throw new Error(payload.error || `HTTP ${response.status}`);
+    }
+
+    alert(`Lernlauf abgeschlossen. Zusammengeführt: ${payload.merged || 0}, Muster geprüft: ${payload.patterns_considered || 0}`);
+    await refresh();
+  } catch (err) {
+    alert(`Lernlauf fehlgeschlagen: ${err}`);
+    setStatus(`Lernlauf fehlgeschlagen: ${err}`);
   }
 }
 
@@ -372,6 +394,7 @@ async function refresh() {
 
 refresh();
 setInterval(refresh, 5000);
+document.getElementById('runLearningBtn').addEventListener('click', runLearningNow);
 document.getElementById('flushDbBtn').addEventListener('click', flushDebugDb);
 </script>
 </body>
@@ -391,7 +414,8 @@ class StatsWebServer:
         get_series_data: Callable[[int], List[Dict]],
         get_patterns_data: Optional[Callable[[], List[Dict]]] = None,
         set_pattern_label: Optional[Callable[[int, str], bool]] = None,
-      flush_debug_data: Optional[Callable[[bool], Dict]] = None,
+        flush_debug_data: Optional[Callable[[bool], Dict]] = None,
+        run_learning_now: Optional[Callable[[], Dict]] = None,
     ):
         self.host = host
         self.port = int(port)
@@ -401,6 +425,7 @@ class StatsWebServer:
         self.get_patterns_data = get_patterns_data
         self.set_pattern_label = set_pattern_label
         self.flush_debug_data = flush_debug_data
+        self.run_learning_now = run_learning_now
         self._server: Optional[ThreadingHTTPServer] = None
         self._thread: Optional[threading.Thread] = None
 
@@ -487,6 +512,19 @@ class StatsWebServer:
 
             def do_POST(self):
                 parsed = urlparse(self.path)
+                if parsed.path == "/api/debug/run-learning-now":
+                    if not parent.run_learning_now:
+                        self._send_json({"error": "manual learning trigger not enabled"}, status=400)
+                        return
+
+                    result = parent.run_learning_now()
+                    if not result.get("ok"):
+                        self._send_json(result, status=500)
+                        return
+
+                    self._send_json(result)
+                    return
+
                 if parsed.path == "/api/debug/flush-db":
                     if not parent.flush_debug_data:
                         self._send_json({"error": "debug flush not enabled"}, status=400)
