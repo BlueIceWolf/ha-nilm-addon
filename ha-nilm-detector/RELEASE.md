@@ -1,17 +1,19 @@
-# Release 0.2.4
+# Release 0.2.5
 
 ## Store Kurztext
-- Aufgeräumte Konfiguration: Entfernung veralteter Felder.
-- Vereinfachte Multi-Phase Unterstützung (L1/L2/L3).
-- Sauberere Architektur für zukünftige Auto-Discovery Features.
+- Stark vereinfachte Konfiguration - nur noch essenzielle Felder.
+- Multi-Phase UI Support mit L1/L2/L3 Anzeige.
+- Geräte-Erkennung via Auto-Discovery (kein devices_json mehr).
 
 ## Highlights
-- Removed deprecated config fields: `power_phase`, `sensor_name`, `sensor_entity_id`, `power_entity_id`.
-- Simplified to `phase_entities` only (L1/L2/L3) - at least one phase required.
-- Removed legacy fallback code and default device configurations.
-- Cleaner multi-phase detection architecture preparation.
+- Drastically simplified config.yaml - removed MQTT, web, processing, confidence sections.
+- Added multi-phase display in Web UI (L1/L2/L3 power cards).
+- Extract phase information from live readings and display individually.
+- Removed devices_json - use auto-discovery and pattern labeling instead.
+- Cleaner table headers and more compact pattern display.
 
 ## Notes
-- Configuration upgrade: Use `home_assistant.phase_entities.l1/l2/l3` instead of deprecated fields.
-- Configure devices in Web UI instead of `devices_json` config option.
+- Configuration is now minimal: log_level, power_source, phase_entities, learning, storage.
+- All advanced options use sensible defaults (no manual configuration needed).
+- Configure L1/L2/L3 phase entities to see individual phase power in UI.
 - Update via Supervisor by refreshing the repository and reinstalling the add-on.

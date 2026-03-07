@@ -1,4 +1,14 @@
 # Changelog
+## 0.2.5
+
+- Drastically simplified configuration: removed all unnecessary options from config.yaml.
+- Added multi-phase UI support: L1/L2/L3 phase power display in Web UI.
+- Removed devices_json option (configure devices via auto-discovery instead).
+- Removed deprecated MQTT, web, processing, confidence config sections (use sensible defaults).
+- Cleaner, more focused configuration with only essential fields.
+- Extract and display individual phase power values from live readings.
+- Simplified table headers and pattern display for better readability.
+
 
 ## 0.2.4
 
