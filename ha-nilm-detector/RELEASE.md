@@ -1,17 +1,18 @@
-# Release 0.2.9
+# Release 0.2.10
 
 ## Store Kurztext
-- Phasenverlauf im Chart korrigiert: L1/L2/L3 werden aus gespeicherten Metadaten gelesen.
-- Bessere Konsistenz zwischen Live-Phasenanzeige und historischen Verlaufsdaten.
-- README auf aktuellen Stand von Version und Workflow gebracht.
+- Datenbank-Trennung: Live-Rotationsdaten und Geraete-/Musterdaten sind jetzt getrennt.
+- Geraete-/Muster-DB kann dauerhaft unter `/config` liegen und bleibt damit besser erhalten.
+- Bestehende Muster werden beim Umstieg einmalig automatisch in die neue Pattern-DB migriert.
 
 ## Highlights
-- Fixed chart phase history (`L1/L2/L3`) by using persisted `metadata.phase_powers_w`.
-- Ensured historical series aligns better with live phase cards in Web UI.
-- Updated root documentation to reflect current local-only setup and latest UI features.
+- Added dedicated patterns database support via `storage.patterns_db_path`.
+- Default patterns path is `/config/nilm_patterns.sqlite3` for persistent local storage.
+- Pattern operations (labeling, matching, nightly merge, manual pattern creation) now use the dedicated DB.
+- Added automatic one-time migration from existing `learned_patterns` in the live DB.
 
 ## Notes
-- All learning remains local in Home Assistant (privacy-first, no cloud dependency).
-- Existing nightly automatic learning window (02:00-05:00) remains active.
-- Use manual range selection in the chart to speed up labeling during test phase.
+- Live readings/detections continue in the rotating runtime DB.
+- Learned devices/patterns are now decoupled from live data retention cleanup.
+- All processing remains fully local (privacy-first, no cloud dependency).
 - Update via Supervisor by refreshing the repository and reinstalling the add-on.

@@ -16,14 +16,16 @@ logger = get_logger(__name__)
 class SQLiteStore:
     """Persists readings/detections for diagnostics and future learning."""
 
-    def __init__(self, db_path: str, retention_days: int = 30):
+    def __init__(self, db_path: str, retention_days: int = 30, patterns_db_path: str | None = None):
         self.db_path = db_path
+        self.patterns_db_path = str(patterns_db_path or db_path)
         self.retention_days = max(int(retention_days), 1)
         self._conn: sqlite3.Connection | None = None
+        self._patterns_conn: sqlite3.Connection | None = None
 
-    def _open_connection(self) -> sqlite3.Connection:
+    def _open_connection(self, path: str) -> sqlite3.Connection:
         conn = sqlite3.connect(
-            self.db_path,
+            path,
             check_same_thread=False,
             timeout=10,
         )
@@ -64,7 +66,7 @@ class SQLiteStore:
     def _reinitialize_database(self) -> bool:
         try:
             self._quarantine_corrupt_db()
-            self._conn = self._open_connection()
+            self._conn = self._open_connection(self.db_path)
             self._create_tables()
             logger.warning("SQLite storage was reinitialized after integrity failure")
             return True
@@ -77,21 +79,91 @@ class SQLiteStore:
             db_dir = os.path.dirname(self.db_path)
             if db_dir:
                 os.makedirs(db_dir, exist_ok=True)
-            self._conn = self._open_connection()
+            self._conn = self._open_connection(self.db_path)
 
             if not self._check_integrity(self._conn):
                 if not self._reinitialize_database():
                     return False
 
+            patterns_dir = os.path.dirname(self.patterns_db_path)
+            if patterns_dir:
+                os.makedirs(patterns_dir, exist_ok=True)
+            if os.path.abspath(self.patterns_db_path) == os.path.abspath(self.db_path):
+                self._patterns_conn = self._conn
+            else:
+                self._patterns_conn = self._open_connection(self.patterns_db_path)
+                if not self._check_integrity(self._patterns_conn):
+                    logger.warning("Patterns DB integrity check failed; continuing with empty patterns DB")
+
             self._create_tables()
+            self._maybe_migrate_patterns_from_live()
             self.cleanup_old_data()
-            logger.info(f"SQLite storage initialized at {self.db_path}")
+            logger.info(
+                "SQLite storage initialized: "
+                f"live={self.db_path}, patterns={self.patterns_db_path}"
+            )
             return True
         except Exception as e:
             logger.error(f"Failed to initialize SQLite storage: {e}", exc_info=True)
             return False
 
+    def _maybe_migrate_patterns_from_live(self) -> None:
+        """Migrate existing patterns from live DB into dedicated patterns DB once."""
+        if not self._conn or not self._patterns_conn:
+            return
+        if self._patterns_conn is self._conn:
+            return
+
+        try:
+            dst_count = int((self._patterns_conn.execute("SELECT COUNT(*) FROM learned_patterns").fetchone() or [0])[0])
+            if dst_count > 0:
+                return
+
+            src_rows = self._conn.execute(
+                """
+                SELECT id, created_at, updated_at, first_seen, last_seen, seen_count,
+                       avg_power_w, peak_power_w, duration_s, energy_wh,
+                       suggestion_type, user_label, status,
+                       COALESCE(avg_active_phases, 1.0), COALESCE(phase_mode, 'unknown'),
+                       COALESCE(power_variance, 0.0), COALESCE(rise_rate_w_per_s, 0.0),
+                       COALESCE(fall_rate_w_per_s, 0.0), COALESCE(duty_cycle, 0.0),
+                       COALESCE(peak_to_avg_ratio, 1.0), COALESCE(num_substates, 0),
+                       COALESCE(has_heating_pattern, 0), COALESCE(has_motor_pattern, 0)
+                FROM learned_patterns
+                """
+            ).fetchall()
+            if not src_rows:
+                return
+
+            with self._patterns_conn:
+                self._patterns_conn.executemany(
+                    """
+                    INSERT OR REPLACE INTO learned_patterns (
+                        id, created_at, updated_at, first_seen, last_seen, seen_count,
+                        avg_power_w, peak_power_w, duration_s, energy_wh,
+                        suggestion_type, user_label, status,
+                        avg_active_phases, phase_mode,
+                        power_variance, rise_rate_w_per_s, fall_rate_w_per_s,
+                        duty_cycle, peak_to_avg_ratio, num_substates,
+                        has_heating_pattern, has_motor_pattern
+                    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                    """,
+                    src_rows,
+                )
+            logger.info(f"Migrated {len(src_rows)} pattern(s) into dedicated patterns DB")
+        except Exception as e:
+            logger.warning(f"Pattern migration to dedicated DB skipped: {e}")
+
     def close(self) -> None:
+        if self._patterns_conn and self._patterns_conn is not self._conn:
+            try:
+                self._patterns_conn.execute("PRAGMA wal_checkpoint(TRUNCATE);")
+            except Exception as e:
+                logger.warning(f"Patterns SQLite checkpoint during close failed: {e}")
+            finally:
+                self._patterns_conn.close()
+                self._patterns_conn = None
+
         if self._conn:
             try:
                 # Flush WAL changes into main DB before shutdown.
@@ -137,7 +209,12 @@ class SQLiteStore:
             self._conn.execute(
                 "CREATE INDEX IF NOT EXISTS idx_detections_ts ON detections(ts)"
             )
-            self._conn.execute(
+
+        if not self._patterns_conn:
+            return
+
+        with self._patterns_conn:
+            self._patterns_conn.execute(
                 """
                 CREATE TABLE IF NOT EXISTS learned_patterns (
                     id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -156,33 +233,37 @@ class SQLiteStore:
                 )
                 """
             )
-            self._conn.execute(
+            self._patterns_conn.execute(
                 "CREATE INDEX IF NOT EXISTS idx_learned_patterns_seen ON learned_patterns(last_seen)"
             )
 
-            self._ensure_column("learned_patterns", "avg_active_phases", "REAL DEFAULT 1.0")
-            self._ensure_column("learned_patterns", "phase_mode", "TEXT DEFAULT 'unknown'")
+            self._ensure_column(self._patterns_conn, "learned_patterns", "avg_active_phases", "REAL DEFAULT 1.0")
+            self._ensure_column(self._patterns_conn, "learned_patterns", "phase_mode", "TEXT DEFAULT 'unknown'")
             
             # Advanced features inspired by NILM research (Torch-NILM concepts)
-            self._ensure_column("learned_patterns", "power_variance", "REAL DEFAULT 0.0")
-            self._ensure_column("learned_patterns", "rise_rate_w_per_s", "REAL DEFAULT 0.0")
-            self._ensure_column("learned_patterns", "fall_rate_w_per_s", "REAL DEFAULT 0.0")
-            self._ensure_column("learned_patterns", "duty_cycle", "REAL DEFAULT 0.0")
-            self._ensure_column("learned_patterns", "peak_to_avg_ratio", "REAL DEFAULT 1.0")
-            self._ensure_column("learned_patterns", "num_substates", "INTEGER DEFAULT 0")
-            self._ensure_column("learned_patterns", "has_heating_pattern", "INTEGER DEFAULT 0")
-            self._ensure_column("learned_patterns", "has_motor_pattern", "INTEGER DEFAULT 0")
+            self._ensure_column(self._patterns_conn, "learned_patterns", "power_variance", "REAL DEFAULT 0.0")
+            self._ensure_column(self._patterns_conn, "learned_patterns", "rise_rate_w_per_s", "REAL DEFAULT 0.0")
+            self._ensure_column(self._patterns_conn, "learned_patterns", "fall_rate_w_per_s", "REAL DEFAULT 0.0")
+            self._ensure_column(self._patterns_conn, "learned_patterns", "duty_cycle", "REAL DEFAULT 0.0")
+            self._ensure_column(self._patterns_conn, "learned_patterns", "peak_to_avg_ratio", "REAL DEFAULT 1.0")
+            self._ensure_column(self._patterns_conn, "learned_patterns", "num_substates", "INTEGER DEFAULT 0")
+            self._ensure_column(self._patterns_conn, "learned_patterns", "has_heating_pattern", "INTEGER DEFAULT 0")
+            self._ensure_column(self._patterns_conn, "learned_patterns", "has_motor_pattern", "INTEGER DEFAULT 0")
 
-    def _ensure_column(self, table_name: str, column_name: str, column_def: str) -> None:
+    def _ensure_column(
+        self,
+        conn: sqlite3.Connection,
+        table_name: str,
+        column_name: str,
+        column_def: str,
+    ) -> None:
         """Add a missing column in a backward-compatible way."""
-        if not self._conn:
-            return
         try:
-            rows = self._conn.execute(f"PRAGMA table_info({table_name})").fetchall()
+            rows = conn.execute(f"PRAGMA table_info({table_name})").fetchall()
             existing = {str(row[1]) for row in rows}
             if column_name in existing:
                 return
-            self._conn.execute(f"ALTER TABLE {table_name} ADD COLUMN {column_name} {column_def}")
+            conn.execute(f"ALTER TABLE {table_name} ADD COLUMN {column_name} {column_def}")
         except Exception as e:
             logger.warning(f"Failed to ensure column {table_name}.{column_name}: {e}")
 
@@ -366,7 +447,9 @@ class SQLiteStore:
             with self._conn:
                 self._conn.execute("DELETE FROM power_readings WHERE ts < ?", (cutoff,))
                 self._conn.execute("DELETE FROM detections WHERE ts < ?", (cutoff,))
-                self._conn.execute("DELETE FROM learned_patterns WHERE last_seen < ?", (cutoff,))
+            if self._patterns_conn:
+                with self._patterns_conn:
+                    self._patterns_conn.execute("DELETE FROM learned_patterns WHERE last_seen < ?", (cutoff,))
         except Exception as e:
             logger.error(f"Failed to clean old SQLite data: {e}", exc_info=True)
 
@@ -378,7 +461,7 @@ class SQLiteStore:
         try:
             cur_readings = self._conn.execute("SELECT COUNT(*) FROM power_readings")
             cur_detections = self._conn.execute("SELECT COUNT(*) FROM detections")
-            cur_patterns = self._conn.execute("SELECT COUNT(*) FROM learned_patterns")
+            cur_patterns = self._patterns_conn.execute("SELECT COUNT(*) FROM learned_patterns") if self._patterns_conn else None
 
             deleted_readings = int((cur_readings.fetchone() or [0])[0])
             deleted_detections = int((cur_detections.fetchone() or [0])[0])
@@ -387,11 +470,14 @@ class SQLiteStore:
             with self._conn:
                 self._conn.execute("DELETE FROM power_readings")
                 self._conn.execute("DELETE FROM detections")
-                if reset_patterns:
-                    self._conn.execute("DELETE FROM learned_patterns")
+            if reset_patterns and self._patterns_conn:
+                with self._patterns_conn:
+                    self._patterns_conn.execute("DELETE FROM learned_patterns")
 
             try:
                 self._conn.execute("PRAGMA wal_checkpoint(TRUNCATE);")
+                if self._patterns_conn and self._patterns_conn is not self._conn:
+                    self._patterns_conn.execute("PRAGMA wal_checkpoint(TRUNCATE);")
                 self._conn.execute("VACUUM;")
             except Exception as vacuum_error:
                 logger.warning(f"SQLite checkpoint/vacuum after flush failed: {vacuum_error}")
@@ -494,7 +580,7 @@ class SQLiteStore:
         This is not a heavy ML model, but a lightweight weighted similarity model
         using learned signatures as prototypes.
         """
-        if not self._conn:
+        if not self._patterns_conn:
             return {"label": fallback, "confidence": 0.0, "source": "fallback"}
 
         patterns = self.list_patterns(limit=500)
@@ -540,7 +626,7 @@ class SQLiteStore:
         Keeps runtime cheap by running once nightly and merging very similar active
         patterns so the model becomes more stable over time.
         """
-        if not self._conn:
+        if not self._patterns_conn:
             return {"ok": False, "error": "storage not connected"}
 
         patterns = self.list_patterns(limit=max_patterns)
@@ -585,7 +671,7 @@ class SQLiteStore:
         merged = 0
         now = datetime.now().isoformat()
         try:
-            with self._conn:
+            with self._patterns_conn:
                 for a, b, _dist in selected:
                     a_id = int(a["id"])
                     b_id = int(b["id"])
@@ -615,7 +701,7 @@ class SQLiteStore:
                     first_seen = min(str(a.get("first_seen") or now), str(b.get("first_seen") or now))
                     last_seen = max(str(a.get("last_seen") or now), str(b.get("last_seen") or now))
 
-                    self._conn.execute(
+                    self._patterns_conn.execute(
                         """
                         UPDATE learned_patterns
                         SET updated_at = ?,
@@ -646,7 +732,7 @@ class SQLiteStore:
                             a_id,
                         ),
                     )
-                    self._conn.execute("DELETE FROM learned_patterns WHERE id = ?", (b_id,))
+                    self._patterns_conn.execute("DELETE FROM learned_patterns WHERE id = ?", (b_id,))
                     merged += 1
 
             return {
@@ -669,10 +755,10 @@ class SQLiteStore:
         return text.replace("_", " ")
 
     def list_patterns(self, limit: int = 100) -> List[Dict]:
-        if not self._conn:
+        if not self._patterns_conn:
             return []
         try:
-            cur = self._conn.execute(
+            cur = self._patterns_conn.execute(
                 """
                 SELECT id, created_at, updated_at, first_seen, last_seen, seen_count,
                        avg_power_w, peak_power_w, duration_s, energy_wh,
@@ -715,7 +801,7 @@ class SQLiteStore:
 
     def learn_cycle_pattern(self, cycle: Dict, suggestion_type: str, tolerance: float = 0.38) -> Dict:
         """Upsert one cycle into learned_patterns and return the matched/created pattern."""
-        if not self._conn:
+        if not self._patterns_conn:
             return {"matched": False, "pattern": None}
 
         now = datetime.now().isoformat()
@@ -743,8 +829,8 @@ class SQLiteStore:
                 avg_active_phases = float(best.get("avg_active_phases", 1.0)) * (1.0 - alpha) + float(cycle.get("active_phase_count", 1.0)) * alpha
                 phase_mode = str(cycle.get("phase_mode") or best.get("phase_mode") or "unknown")
 
-                with self._conn:
-                    self._conn.execute(
+                with self._patterns_conn:
+                    self._patterns_conn.execute(
                         """
                         UPDATE learned_patterns
                         SET updated_at = ?, last_seen = ?, seen_count = ?,
@@ -785,7 +871,7 @@ class SQLiteStore:
                     "pattern": best,
                 }
 
-            with self._conn:
+            with self._patterns_conn:
                 # Extract advanced features if available
                 power_variance = float(cycle.get("power_variance", 0.0))
                 rise_rate = float(cycle.get("rise_rate_w_per_s", 0.0))
@@ -796,7 +882,7 @@ class SQLiteStore:
                 has_heating = 1 if cycle.get("has_heating_pattern", False) else 0
                 has_motor = 1 if cycle.get("has_motor_pattern", False) else 0
                 
-                cur = self._conn.execute(
+                cur = self._patterns_conn.execute(
                     """
                     INSERT INTO learned_patterns (
                         created_at, updated_at, first_seen, last_seen, seen_count,
@@ -861,11 +947,11 @@ class SQLiteStore:
             return {"matched": False, "pattern": None}
 
     def label_pattern(self, pattern_id: int, user_label: str) -> bool:
-        if not self._conn:
+        if not self._patterns_conn:
             return False
         try:
-            with self._conn:
-                self._conn.execute(
+            with self._patterns_conn:
+                self._patterns_conn.execute(
                     "UPDATE learned_patterns SET user_label = ?, updated_at = ? WHERE id = ?",
                     (str(user_label).strip(), datetime.now().isoformat(), int(pattern_id)),
                 )
@@ -876,7 +962,7 @@ class SQLiteStore:
 
     def create_pattern_from_range(self, start_time: str, end_time: str, user_label: str) -> Dict:
         """Create a learned pattern from a manually selected time range in the UI."""
-        if not self._conn:
+        if not self._conn or not self._patterns_conn:
             return {"ok": False, "error": "database not connected"}
         
         try:
@@ -952,27 +1038,27 @@ class SQLiteStore:
             
             # Erstelle neues Muster mit erweiterten Features
             now = datetime.now().isoformat()
-            cursor = self._conn.execute(
-                """
-                INSERT INTO learned_patterns (
-                    avg_power_w, peak_power_w, duration_s, energy_wh, phase_mode,
-                    user_label, seen_count, suggestion_type, status,
-                    first_seen, last_seen, created_at, updated_at,
-                    power_variance, rise_rate_w_per_s, fall_rate_w_per_s,
-                    duty_cycle, peak_to_avg_ratio, num_substates,
-                    has_heating_pattern, has_motor_pattern
-                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-                """,
-                (
-                    avg_power, peak_power, duration_s, energy_wh, phase_mode,
-                    user_label.strip(), 1, "user_defined", "active",
-                    start_time, end_time, now, now,
-                    power_variance, rise_rate, fall_rate,
-                    duty_cycle_val, peak_to_avg, num_substates,
-                    has_heating, has_motor
+            with self._patterns_conn:
+                cursor = self._patterns_conn.execute(
+                    """
+                    INSERT INTO learned_patterns (
+                        avg_power_w, peak_power_w, duration_s, energy_wh, phase_mode,
+                        user_label, seen_count, suggestion_type, status,
+                        first_seen, last_seen, created_at, updated_at,
+                        power_variance, rise_rate_w_per_s, fall_rate_w_per_s,
+                        duty_cycle, peak_to_avg_ratio, num_substates,
+                        has_heating_pattern, has_motor_pattern
+                    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                    """,
+                    (
+                        avg_power, peak_power, duration_s, energy_wh, phase_mode,
+                        user_label.strip(), 1, "user_defined", "active",
+                        start_time, end_time, now, now,
+                        power_variance, rise_rate, fall_rate,
+                        duty_cycle_val, peak_to_avg, num_substates,
+                        has_heating, has_motor
+                    )
                 )
-            )
-            self._conn.commit()
             
             pattern_id = cursor.lastrowid
             logger.info(

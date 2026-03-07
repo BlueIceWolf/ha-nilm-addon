@@ -1,4 +1,11 @@
 # Changelog
+## 0.2.10
+
+- Added separated storage model: live rotation DB and dedicated patterns/devices DB.
+- Added `storage.patterns_db_path` option (default `/config/nilm_patterns.sqlite3`) to keep learned patterns outside `/data`.
+- Added one-time migration of existing learned patterns from live DB into dedicated patterns DB.
+- Updated runtime wiring to use dedicated patterns DB for labeling, matching, nightly merge, and manual pattern creation.
+
 ## 0.2.9
 
 - Fixed phase history rendering in chart by reading `L1/L2/L3` values from stored reading metadata.

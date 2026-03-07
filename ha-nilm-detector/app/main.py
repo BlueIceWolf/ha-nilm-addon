@@ -63,6 +63,7 @@ class NILMDetectionSystem:
         if self.config.storage_enabled:
             self.storage = SQLiteStore(
                 db_path=self.config.storage_db_path,
+                patterns_db_path=self.config.storage_patterns_db_path,
                 retention_days=self.config.storage_retention_days,
             )
             if not self.storage.connect():

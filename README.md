@@ -7,7 +7,7 @@
 Home Assistant Add-on fuer lokale, datenschutzfreundliche NILM-Erkennung
 (Non-Intrusive Load Monitoring).
 
-Aktueller Stand: `v0.2.8` (Beta, aktiv weiterentwickelt).
+Aktueller Stand: `v0.2.10` (Beta, aktiv weiterentwickelt).
 
 ## Features
 
@@ -60,8 +60,7 @@ learning:
    on_threshold_w: 50.0
    off_threshold_w: 25.0
 storage:
-   retention_days: 30
-```
+   retention_days: 30  patterns_db_path: /config/nilm_patterns.sqlite3```
 
 ## Web-UI Workflows
 
@@ -72,7 +71,9 @@ storage:
 
 ## Lokaler Datenschutz
 
-- Daten bleiben auf deinem HA-System (SQLite unter `/data`).
+- Daten bleiben auf deinem HA-System.
+- Live-Rotationsdaten liegen standardmäßig in `/data/nilm.sqlite3`.
+- Geraete-/Musterdaten liegen standardmäßig in `/config/nilm_patterns.sqlite3` (besser fuer Persistenz bei Add-on-Wechsel).
 - Kein Upload von Messwerten in externe Services.
 - Keine schweren Cloud/Deep-Learning Abhaengigkeiten im Add-on Runtime-Pfad.
 

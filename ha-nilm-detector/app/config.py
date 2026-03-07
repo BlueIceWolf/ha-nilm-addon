@@ -48,6 +48,7 @@ class Config:
         self.storage_path = "/data"
         self.storage_enabled = True
         self.storage_db_path = "/data/nilm.sqlite3"
+        self.storage_patterns_db_path = "/config/nilm_patterns.sqlite3"
         self.storage_retention_days = 30
         self.learning_warmup_minutes = 120
         self.processing_smoothing_window = 5
@@ -134,6 +135,9 @@ class Config:
         storage_config = config_dict.get('storage', {})
         self.storage_enabled = bool(storage_config.get('enabled', self.storage_enabled))
         self.storage_db_path = str(storage_config.get('db_path', self.storage_db_path))
+        self.storage_patterns_db_path = str(
+            storage_config.get('patterns_db_path', self.storage_patterns_db_path)
+        )
         self.storage_retention_days = int(storage_config.get('retention_days', self.storage_retention_days))
         self.learning_warmup_minutes = int(storage_config.get('learning_warmup_minutes', self.learning_warmup_minutes))
         
@@ -204,8 +208,12 @@ class Config:
         return self.devices.get(device_name)
     
     def ensure_storage_path(self) -> None:
-        """Ensure storage path exists."""
+        """Ensure configured storage directories exist."""
         os.makedirs(self.storage_path, exist_ok=True)
+        for db_path in [self.storage_db_path, self.storage_patterns_db_path]:
+            db_dir = os.path.dirname(str(db_path or "").strip())
+            if db_dir:
+                os.makedirs(db_dir, exist_ok=True)
 
 
 def load_options_from_file(options_path: str = "/data/options.json") -> Dict[str, Any]:
