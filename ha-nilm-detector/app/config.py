@@ -120,7 +120,6 @@ class Config:
         ha_config = config_dict.get('home_assistant', {})
         self.ha_entity_id_prefix = ha_config.get('entity_id_prefix', 'nilm')
         self.ha_url = ha_config.get('url', self.ha_url)
-        self.ha_sensor_name = str(ha_config.get('sensor_name', self.ha_sensor_name)).strip()
 
         # Configure phase entities (L1, L2, L3)
         phase_entities_cfg = ha_config.get('phase_entities', {})

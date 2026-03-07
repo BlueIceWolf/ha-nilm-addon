@@ -56,7 +56,7 @@ class NILMDetectionSystem:
         selected_phases = list(self.config.get_selected_phase_entities().keys())
         self.collector = Collector(
             self._build_power_source(),
-            phases=selected_phases or [self.config.power_phase],
+            phases=selected_phases or ['L1'],
         )
 
         self.storage = None
@@ -134,20 +134,18 @@ class NILMDetectionSystem:
             phase_entities = self.config.get_selected_phase_entities()
             logger.info(
                 "Using HA REST power source: "
-                f"entity_id={self.config.ha_power_entity_id}, phases={phase_entities}, url={self.config.ha_url}, "
+                f"phases={phase_entities}, url={self.config.ha_url}, "
                 f"token_present={bool(token)}"
             )
             return HARestPowerSource(
                 ha_url=self.config.ha_url,
-                entity_id=self.config.ha_power_entity_id,
+                entity_id="",
                 token=token,
-                phase=self.config.power_phase,
-                preferred_name=self.config.ha_sensor_name,
                 phase_entity_ids=phase_entities,
             )
 
         logger.warning("Using mock power source. Set power_source=home_assistant_rest for real sensor input.")
-        return MockPowerSource(phase=self.config.power_phase)
+        return MockPowerSource(phase='L1')
 
     def _warm_start_detectors(self) -> None:
         if not self.storage:
