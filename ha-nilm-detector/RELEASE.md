@@ -1,16 +1,14 @@
-# Release 0.2.8
+# Release 0.2.9
 
 ## Store Kurztext
-- Multi-Phasen-Verlauf mit ein-/ausblendbaren L1/L2/L3 Linien in der Web-UI.
-- Interaktive Bereichsmarkierung im Graphen zum manuellen Lernen von Mustern.
-- Erweiterte lokale NILM-Features für bessere Erkennung ohne Cloud und ohne PyTorch.
+- Phasenverlauf im Chart korrigiert: L1/L2/L3 werden aus gespeicherten Metadaten gelesen.
+- Bessere Konsistenz zwischen Live-Phasenanzeige und historischen Verlaufsdaten.
+- README auf aktuellen Stand von Version und Workflow gebracht.
 
 ## Highlights
-- Added multi-phase chart visualization with per-phase toggle buttons (Total/L1/L2/L3).
-- Added "Bereich markieren" flow to select chart intervals and create patterns manually.
-- Added API endpoint `POST /api/patterns/create-from-range` for manual pattern creation.
-- Added advanced lightweight feature extraction (rise/fall rate, variance, duty cycle, substates).
-- Improved local similarity scoring and appliance heuristics with shape-aware features.
+- Fixed chart phase history (`L1/L2/L3`) by using persisted `metadata.phase_powers_w`.
+- Ensured historical series aligns better with live phase cards in Web UI.
+- Updated root documentation to reflect current local-only setup and latest UI features.
 
 ## Notes
 - All learning remains local in Home Assistant (privacy-first, no cloud dependency).

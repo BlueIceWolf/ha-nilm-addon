@@ -1,4 +1,10 @@
 # Changelog
+## 0.2.9
+
+- Fixed phase history rendering in chart by reading `L1/L2/L3` values from stored reading metadata.
+- Improved phase timeline consistency between live payload and historical series.
+- Updated root `README.md` to match current add-on version and workflow.
+
 ## 0.2.8
 
 - Added multi-phase chart rendering with L1/L2/L3 toggles (show/hide per phase).
