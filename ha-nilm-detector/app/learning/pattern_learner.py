@@ -6,6 +6,7 @@ from dataclasses import dataclass
 from datetime import datetime
 from typing import List, Optional
 
+from app.learning.features import CycleFeatures
 from app.models import PowerReading
 from app.utils.logging import get_logger
 
@@ -14,7 +15,7 @@ logger = get_logger(__name__)
 
 @dataclass
 class LearnedCycle:
-    """A completed ON/OFF cycle extracted from power readings."""
+    """A completed ON/OFF cycle extracted from power readings with advanced features."""
 
     start_ts: datetime
     end_ts: datetime
@@ -23,6 +24,9 @@ class LearnedCycle:
     peak_power_w: float
     energy_wh: float
     sample_count: int
+    
+    # Advanced features (optional for backwards compatibility)
+    features: Optional[CycleFeatures] = None
 
 
 class PatternLearner:
@@ -100,6 +104,9 @@ class PatternLearner:
 
         energy_wh = energy_ws / 3600.0
 
+        # Extract advanced features for better pattern recognition
+        features = CycleFeatures.extract(self._cycle_samples)
+
         return LearnedCycle(
             start_ts=self._cycle_start,
             end_ts=end_ts,
@@ -108,14 +115,48 @@ class PatternLearner:
             peak_power_w=peak_power,
             energy_wh=energy_wh,
             sample_count=len(self._cycle_samples),
+            features=features,
         )
 
     @staticmethod
     def suggest_device_type(cycle: LearnedCycle) -> str:
-        """Heuristic first guess for appliance type based on cycle signature."""
+        """AI-like heuristic for appliance type based on advanced cycle features.
+        
+        Uses shape features inspired by NILM research for better accuracy.
+        """
         d = cycle.duration_s
         p = cycle.peak_power_w
-
+        avg = cycle.avg_power_w
+        
+        # Use advanced features if available
+        if cycle.features:
+            f = cycle.features
+            
+            # Kettle/Water heater: fast rise, high power, short duration
+            if f.has_heating_pattern and f.rise_rate_w_per_s > 100 and p >= 1400 and d <= 900:
+                return "kettle_like"
+            
+            # Fridge: motor pattern, low-medium power, regular cycling
+            if f.has_motor_pattern and p < 350 and 120 <= d <= 3600 and f.duty_cycle < 0.7:
+                return "fridge_like"
+            
+            # Washing machine: multiple states, long duration, medium-high power
+            if f.num_substates >= 2 and 400 <= p <= 1600 and 1200 <= d <= 10800:
+                return "washing_machine_like"
+            
+            # Dishwasher: heating pattern initially, long duration
+            if f.has_heating_pattern and 700 <= p <= 2600 and 1200 <= d <= 14400:
+                return "dishwasher_like"
+            
+            # Oven: gradual heating, high power, very stable
+            if f.has_heating_pattern and p >= 1000 and f.power_variance / max(avg*avg, 1.0) < 0.1:
+                return "oven_like"
+            
+            # Microwave: very stable high power, short to medium duration
+            if p >= 800 and f.power_variance / max(avg*avg, 1.0) < 0.05 and 30 <= d <= 600:
+                return "microwave_like"
+        
+        # Fallback to simple heuristics if no advanced features
         if p < 350 and 120 <= d <= 3600:
             return "fridge_like"
         if 400 <= p <= 1600 and 1200 <= d <= 10800:
@@ -124,4 +165,5 @@ class PatternLearner:
             return "dishwasher_like"
         if p >= 1400 and d <= 900:
             return "kettle_or_oven_like"
+        
         return "unknown"

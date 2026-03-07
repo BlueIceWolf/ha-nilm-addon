@@ -162,6 +162,16 @@ class SQLiteStore:
 
             self._ensure_column("learned_patterns", "avg_active_phases", "REAL DEFAULT 1.0")
             self._ensure_column("learned_patterns", "phase_mode", "TEXT DEFAULT 'unknown'")
+            
+            # Advanced features inspired by NILM research (Torch-NILM concepts)
+            self._ensure_column("learned_patterns", "power_variance", "REAL DEFAULT 0.0")
+            self._ensure_column("learned_patterns", "rise_rate_w_per_s", "REAL DEFAULT 0.0")
+            self._ensure_column("learned_patterns", "fall_rate_w_per_s", "REAL DEFAULT 0.0")
+            self._ensure_column("learned_patterns", "duty_cycle", "REAL DEFAULT 0.0")
+            self._ensure_column("learned_patterns", "peak_to_avg_ratio", "REAL DEFAULT 1.0")
+            self._ensure_column("learned_patterns", "num_substates", "INTEGER DEFAULT 0")
+            self._ensure_column("learned_patterns", "has_heating_pattern", "INTEGER DEFAULT 0")
+            self._ensure_column("learned_patterns", "has_motor_pattern", "INTEGER DEFAULT 0")
 
     def _ensure_column(self, table_name: str, column_name: str, column_def: str) -> None:
         """Add a missing column in a backward-compatible way."""
@@ -384,22 +394,77 @@ class SQLiteStore:
 
     @staticmethod
     def _pattern_distance(existing: Dict, candidate: Dict) -> float:
+        """Calculate similarity distance between two patterns.
+        
+        Enhanced with advanced features inspired by NILM research for better accuracy.
+        Returns 0.0 for identical patterns, higher values for more different ones.
+        """
         def rel(a: float, b: float) -> float:
-            base = max(abs(a), 1.0)
+            base = max(abs(a), abs(b), 1.0)
             return abs(a - b) / base
 
+        # Core power characteristics (60% weight)
         avg_dist = rel(float(existing["avg_power_w"]), float(candidate["avg_power_w"]))
         peak_dist = rel(float(existing["peak_power_w"]), float(candidate["peak_power_w"]))
         duration_dist = rel(float(existing["duration_s"]), float(candidate["duration_s"]))
         energy_dist = rel(float(existing["energy_wh"]), float(candidate["energy_wh"]))
         phase_dist = rel(float(existing.get("avg_active_phases", 1.0)), float(candidate.get("active_phase_count", 1.0)))
-        return (
-            (avg_dist * 0.30)
-            + (peak_dist * 0.30)
-            + (duration_dist * 0.18)
-            + (energy_dist * 0.12)
-            + (phase_dist * 0.10)
+        
+        core_distance = (
+            (avg_dist * 0.25)
+            + (peak_dist * 0.20)
+            + (duration_dist * 0.10)
+            + (energy_dist * 0.03)
+            + (phase_dist * 0.02)
         )
+        
+        # Advanced shape features (40% weight) - this is where we gain accuracy!
+        shape_distance = 0.0
+        
+        # Rise/fall rates (how appliance turns on/off)
+        if "rise_rate_w_per_s" in existing and "rise_rate_w_per_s" in candidate:
+            rise_dist = rel(float(existing.get("rise_rate_w_per_s", 0.0)), float(candidate.get("rise_rate_w_per_s", 0.0)))
+            fall_dist = rel(float(existing.get("fall_rate_w_per_s", 0.0)), float(candidate.get("fall_rate_w_per_s", 0.0)))
+            shape_distance += (rise_dist * 0.08) + (fall_dist * 0.07)
+        else:
+            # Fallback if no advanced features: increase weight on basic features
+            shape_distance += 0.15
+        
+        # Duty cycle and variance (power stability)
+        if "duty_cycle" in existing and "duty_cycle" in candidate:
+            duty_dist = abs(float(existing.get("duty_cycle", 0.0)) - float(candidate.get("duty_cycle", 0.0)))
+            variance_dist = rel(float(existing.get("power_variance", 0.0)), float(candidate.get("power_variance", 0.0)))
+            shape_distance += (duty_dist * 0.06) + (variance_dist * 0.05)
+        else:
+            shape_distance += 0.11
+        
+        # Peak-to-average ratio (spikiness)
+        if "peak_to_avg_ratio" in existing and "peak_to_avg_ratio" in candidate:
+            ratio_dist = rel(float(existing.get("peak_to_avg_ratio", 1.0)), float(candidate.get("peak_to_avg_ratio", 1.0)))
+            shape_distance += ratio_dist * 0.04
+        else:
+            shape_distance += 0.04
+        
+        # Multi-state detection (washing machine phases, etc.)
+        if "num_substates" in existing and "num_substates" in candidate:
+            substates_dist = abs(int(existing.get("num_substates", 0)) - int(candidate.get("num_substates", 0))) / 5.0
+            shape_distance += substates_dist * 0.05
+        else:
+            shape_distance += 0.05
+        
+        # Pattern type matching (heating vs motor)
+        pattern_penalty = 0.0
+        if "has_heating_pattern" in existing and "has_heating_pattern" in candidate:
+            if bool(existing.get("has_heating_pattern", 0)) != bool(candidate.get("has_heating_pattern", 0)):
+                pattern_penalty += 0.03
+        if "has_motor_pattern" in existing and "has_motor_pattern" in candidate:
+            if bool(existing.get("has_motor_pattern", 0)) != bool(candidate.get("has_motor_pattern", 0)):
+                pattern_penalty += 0.02
+        
+        shape_distance += pattern_penalty
+        
+        total_distance = core_distance + shape_distance
+        return min(total_distance, 1.0)
 
     def suggest_cycle_label(self, cycle: Dict, fallback: str = "unknown") -> Dict:
         """AI-like nearest-prototype vote based on learned patterns.
@@ -699,14 +764,27 @@ class SQLiteStore:
                 }
 
             with self._conn:
+                # Extract advanced features if available
+                power_variance = float(cycle.get("power_variance", 0.0))
+                rise_rate = float(cycle.get("rise_rate_w_per_s", 0.0))
+                fall_rate = float(cycle.get("fall_rate_w_per_s", 0.0))
+                duty_cycle = float(cycle.get("duty_cycle", 0.0))
+                peak_to_avg = float(cycle.get("peak_to_avg_ratio", 1.0))
+                num_substates = int(cycle.get("num_substates", 0))
+                has_heating = 1 if cycle.get("has_heating_pattern", False) else 0
+                has_motor = 1 if cycle.get("has_motor_pattern", False) else 0
+                
                 cur = self._conn.execute(
                     """
                     INSERT INTO learned_patterns (
                         created_at, updated_at, first_seen, last_seen, seen_count,
                         avg_power_w, peak_power_w, duration_s, energy_wh,
                         suggestion_type, user_label, status,
-                        avg_active_phases, phase_mode
-                    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                        avg_active_phases, phase_mode,
+                        power_variance, rise_rate_w_per_s, fall_rate_w_per_s,
+                        duty_cycle, peak_to_avg_ratio, num_substates,
+                        has_heating_pattern, has_motor_pattern
+                    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                     """,
                     (
                         now,
@@ -723,6 +801,14 @@ class SQLiteStore:
                         "active",
                         float(cycle.get("active_phase_count", 1.0)),
                         str(cycle.get("phase_mode", "unknown")),
+                        power_variance,
+                        rise_rate,
+                        fall_rate,
+                        duty_cycle,
+                        peak_to_avg,
+                        num_substates,
+                        has_heating,
+                        has_motor,
                     ),
                 )
                 row_id = cur.lastrowid if cur.lastrowid is not None else 0
@@ -772,6 +858,10 @@ class SQLiteStore:
             return {"ok": False, "error": "database not connected"}
         
         try:
+            # Import hier um zirkuläre Abhängigkeiten zu vermeiden
+            from app.learning.features import CycleFeatures
+            from app.models import PowerReading
+            
             # Hole Messwerte im Zeitbereich
             rows = self._conn.execute(
                 """
@@ -786,55 +876,98 @@ class SQLiteStore:
             if not rows or len(rows) < 3:
                 return {"ok": False, "error": "not enough data points in selected range"}
             
-            # Berechne Statistiken
-            powers = [float(r[0]) for r in rows]
+            # Konvertiere zu PowerReading Objekten für Feature-Extraction
+            power_readings = []
+            for row in rows:
+                try:
+                    ts = datetime.fromisoformat(row[0])
+                    power_w = float(row[1])
+                    phase = row[2] if len(row) > 2 else "L1"
+                    power_readings.append(PowerReading(timestamp=ts, power_w=power_w, phase=phase))
+                except Exception:
+                    continue
+            
+            if len(power_readings) < 3:
+                return {"ok": False, "error": "failed to parse power readings"}
+            
+            # Berechne Basis-Statistiken
+            powers = [float(r.power_w) for r in power_readings]
             avg_power = sum(powers) / len(powers)
             peak_power = max(powers)
             
-            # Berechne Dauer in Sekunden
-            try:
-                start_dt = datetime.fromisoformat(rows[0][0])
-                end_dt = datetime.fromisoformat(rows[-1][0])
-                duration_s = (end_dt - start_dt).total_seconds()
-            except Exception:
-                duration_s = len(rows) * 5  # Fallback: 5s pro Messung
+            # Berechne Dauer
+            start_dt = power_readings[0].timestamp
+            end_dt = power_readings[-1].timestamp
+            duration_s = (end_dt - start_dt).total_seconds()
+            if duration_s <= 0:
+                duration_s = len(power_readings) * 5.0
             
-            # Erkennung Phasen-Modus (vereinfacht)
-            phases = set(r[2] for r in rows if r[2])
-            phase_mode = "multi_phase" if len(phases) > 1 else "single_phase"
+            # Energie berechnen
+            energy_ws = 0.0
+            for idx in range(1, len(power_readings)):
+                prev = power_readings[idx - 1]
+                curr = power_readings[idx]
+                dt = max((curr.timestamp - prev.timestamp).total_seconds(), 0.0)
+                energy_ws += (float(prev.power_w) + float(curr.power_w)) * 0.5 * dt
+            energy_wh = energy_ws / 3600.0
             
-            # Erstelle neues Muster
+            # Extrahiere erweiterte Features
+            features = CycleFeatures.extract(power_readings)
+            
+            # Erkennung Phasen-Modus
+            phases_set = set(r.phase for r in power_readings if r.phase)
+            phase_mode = "multi_phase" if len(phases_set) > 1 else "single_phase"
+            
+            # Werte für DB vorbereiten
+            power_variance = features.power_variance if features else 0.0
+            rise_rate = features.rise_rate_w_per_s if features else 0.0
+            fall_rate = features.fall_rate_w_per_s if features else 0.0
+            duty_cycle_val = features.duty_cycle if features else 0.0
+            peak_to_avg = features.peak_to_avg_ratio if features else 1.0
+            num_substates = features.num_substates if features else 0
+            has_heating = 1 if (features and features.has_heating_pattern) else 0
+            has_motor = 1 if (features and features.has_motor_pattern) else 0
+            
+            # Erstelle neues Muster mit erweiterten Features
             now = datetime.now().isoformat()
             cursor = self._conn.execute(
                 """
                 INSERT INTO learned_patterns (
-                    avg_power_w, peak_power_w, duration_s, phase_mode,
-                    user_label, is_confirmed, seen_count, 
-                    first_seen, last_seen, created_at, updated_at
-                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                    avg_power_w, peak_power_w, duration_s, energy_wh, phase_mode,
+                    user_label, seen_count, suggestion_type, status,
+                    first_seen, last_seen, created_at, updated_at,
+                    power_variance, rise_rate_w_per_s, fall_rate_w_per_s,
+                    duty_cycle, peak_to_avg_ratio, num_substates,
+                    has_heating_pattern, has_motor_pattern
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                 """,
                 (
-                    avg_power, peak_power, duration_s, phase_mode,
-                    user_label.strip(), True, 1,
-                    start_time, end_time, now, now
+                    avg_power, peak_power, duration_s, energy_wh, phase_mode,
+                    user_label.strip(), 1, "user_defined", "active",
+                    start_time, end_time, now, now,
+                    power_variance, rise_rate, fall_rate,
+                    duty_cycle_val, peak_to_avg, num_substates,
+                    has_heating, has_motor
                 )
             )
             self._conn.commit()
             
             pattern_id = cursor.lastrowid
             logger.info(
-                f"Created pattern {pattern_id} from range: {len(rows)} points, "
+                f"Created pattern {pattern_id} from range: {len(power_readings)} points, "
                 f"avg={avg_power:.1f}W, peak={peak_power:.1f}W, duration={duration_s:.1f}s, "
-                f"label={user_label}"
+                f"label={user_label}, substates={num_substates}, "
+                f"heating={bool(has_heating)}, motor={bool(has_motor)}"
             )
             
             return {
                 "ok": True,
                 "pattern_id": pattern_id,
-                "data_points": len(rows),
+                "data_points": len(power_readings),
                 "avg_power_w": avg_power,
                 "peak_power_w": peak_power,
-                "duration_s": duration_s
+                "duration_s": duration_s,
+                "num_substates": num_substates
             }
         except Exception as e:
             logger.error(f"Failed to create pattern from range: {e}", exc_info=True)
