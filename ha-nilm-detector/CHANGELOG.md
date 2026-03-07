@@ -1,4 +1,11 @@
 # Changelog
+## 0.2.6
+
+- Removed `power_source` from add-on options and schema (HA REST is now fixed runtime source).
+- Removed mock power source fallback from runtime wiring.
+- Kept MQTT backend support while leaving it hidden from visible add-on configuration.
+- Improved visible Web UI text with proper German umlauts.
+
 ## 0.2.5
 
 - Drastically simplified configuration: removed all unnecessary options from config.yaml.
