@@ -48,7 +48,7 @@ class Config:
         self.storage_path = "/data"
         self.storage_enabled = True
         self.storage_db_path = "/data/nilm.sqlite3"
-        self.storage_patterns_db_path = "/config/nilm_patterns.sqlite3"
+        self.storage_patterns_db_path = "/addon_configs/ha_nilm_detector/nilm_patterns.sqlite3"
         self.storage_retention_days = 30
         self.learning_warmup_minutes = 120
         self.processing_smoothing_window = 5

@@ -1,8 +1,12 @@
 # Changelog
+## 0.2.11
+
+- Updated patterns database path to `/addon_configs/ha_nilm_detector/nilm_patterns.sqlite3` (recommended HA addon config location).
+
 ## 0.2.10
 
 - Added separated storage model: live rotation DB and dedicated patterns/devices DB.
-- Added `storage.patterns_db_path` option (default `/config/nilm_patterns.sqlite3`) to keep learned patterns outside `/data`.
+- Added `storage.patterns_db_path` option (default `/addon_configs/ha_nilm_detector/nilm_patterns.sqlite3`) to keep learned patterns outside `/data`.
 - Added one-time migration of existing learned patterns from live DB into dedicated patterns DB.
 - Updated runtime wiring to use dedicated patterns DB for labeling, matching, nightly merge, and manual pattern creation.
 

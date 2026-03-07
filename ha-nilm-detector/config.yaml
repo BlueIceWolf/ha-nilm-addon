@@ -1,6 +1,6 @@
 name: "HA NILM Detector"
 description: "Detect appliances from power consumption patterns"
-version: "0.2.10"
+version: "0.2.11"
 slug: "ha_nilm_detector"
 startup: application
 boot: auto
@@ -30,7 +30,7 @@ options:
     off_threshold_w: 25.0
   storage:
     retention_days: 30
-    patterns_db_path: /config/nilm_patterns.sqlite3
+    patterns_db_path: /addon_configs/ha_nilm_detector/nilm_patterns.sqlite3
 schema:
   log_level: list(debug|info|warning|error)
   update_interval_seconds: int(1,60)

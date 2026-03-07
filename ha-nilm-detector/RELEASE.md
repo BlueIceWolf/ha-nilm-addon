@@ -1,13 +1,26 @@
+# Release 0.2.11
+
+## Store Kurztext
+- Korrigierter Pfad für Pattern-DB: jetzt unter `/addon_configs/ha_nilm_detector/` (empfohlener HA Add-on Speicherort).
+- Folgt den Best Practices für addon-spezifische persistente Konfiguration.
+
+## Highlights
+- Updated patterns database path to `/addon_configs/ha_nilm_detector/nilm_patterns.sqlite3` - the recommended Home Assistant addon configuration directory.
+- Follows HA best practices for addon-specific persistent configuration storage.
+- Existing patterns will be automatically migrated to the new location on first startup.
+
+---
+
 # Release 0.2.10
 
 ## Store Kurztext
 - Datenbank-Trennung: Live-Rotationsdaten und Geraete-/Musterdaten sind jetzt getrennt.
-- Geraete-/Muster-DB kann dauerhaft unter `/config` liegen und bleibt damit besser erhalten.
+- Geraete-/Muster-DB kann dauerhaft unter `/addon_configs/ha_nilm_detector/` liegen und bleibt damit besser erhalten.
 - Bestehende Muster werden beim Umstieg einmalig automatisch in die neue Pattern-DB migriert.
 
 ## Highlights
 - Added dedicated patterns database support via `storage.patterns_db_path`.
-- Default patterns path is `/config/nilm_patterns.sqlite3` for persistent local storage.
+- Default patterns path is `/addon_configs/ha_nilm_detector/nilm_patterns.sqlite3` for persistent local storage.
 - Pattern operations (labeling, matching, nightly merge, manual pattern creation) now use the dedicated DB.
 - Added automatic one-time migration from existing `learned_patterns` in the live DB.
 

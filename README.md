@@ -60,7 +60,7 @@ learning:
    on_threshold_w: 50.0
    off_threshold_w: 25.0
 storage:
-   retention_days: 30  patterns_db_path: /config/nilm_patterns.sqlite3```
+   retention_days: 30  patterns_db_path: /addon_configs/ha_nilm_detector/nilm_patterns.sqlite3```
 
 ## Web-UI Workflows
 
@@ -73,7 +73,7 @@ storage:
 
 - Daten bleiben auf deinem HA-System.
 - Live-Rotationsdaten liegen standardmäßig in `/data/nilm.sqlite3`.
-- Geraete-/Musterdaten liegen standardmäßig in `/config/nilm_patterns.sqlite3` (besser fuer Persistenz bei Add-on-Wechsel).
+- Geraete-/Musterdaten liegen standardmäßig in `/addon_configs/ha_nilm_detector/nilm_patterns.sqlite3` (empfohlener HA Add-on Speicherort für persistente Daten).
 - Kein Upload von Messwerten in externe Services.
 - Keine schweren Cloud/Deep-Learning Abhaengigkeiten im Add-on Runtime-Pfad.
 
