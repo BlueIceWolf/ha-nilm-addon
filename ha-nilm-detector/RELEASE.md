@@ -1,16 +1,14 @@
-# Release 0.2.0
+# Release 0.2.1
 
 ## Store Kurztext
-- Selbstlernende Geraete-Erkennung aus einem einzelnen Leistungssensor.
-- Neue Web-UI mit Live-Statistiken und Muster-Vorschlaegen.
-- Korrektur-Workflow: Vorschlaege direkt labeln, damit kuenftige Erkennung genauer wird.
-- Robuste SQLite-Persistenz fuer Lernhistorie und Neustarts.
+- Fix fuer Web-UI JSON-Fehler unter Home Assistant Ingress.
+- Sensor kann jetzt explizit per `sensor_entity_id` oder `sensor_name` gewaehlt werden.
+- MQTT ist jetzt wirklich optional (`mqtt.enabled`).
 
 ## Highlights
-- Added autonomous pattern learning from a single power sensor (cycle extraction + signature storage).
-- Added learned pattern persistence in SQLite with recurring-match updates over time.
-- Added suggestion and correction workflow in Web UI (`/api/patterns`, `/api/patterns/<id>/label`).
-- Added configurable learning thresholds in add-on options (`learning.*`).
+- Web-UI requests use ingress-safe relative API paths and improved JSON error handling.
+- Added explicit sensor selection aliases for analysis target configuration.
+- Disabled MQTT connection attempts when `mqtt.enabled` is false.
 
 ## Notes
 - Update via Supervisor by refreshing the repository and reinstalling the add-on to trigger a rebuild.

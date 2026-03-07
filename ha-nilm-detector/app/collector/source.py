@@ -77,7 +77,14 @@ class MockPowerSource(PowerSource):
 class HARestPowerSource(PowerSource):
     """Read power from Home Assistant via REST API."""
     
-    def __init__(self, ha_url: str, entity_id: str, token: str = "", phase: str = "L1"):
+    def __init__(
+        self,
+        ha_url: str,
+        entity_id: str,
+        token: str = "",
+        phase: str = "L1",
+        preferred_name: str = "",
+    ):
         """
         Initialize Home Assistant REST power source.
         
@@ -90,6 +97,7 @@ class HARestPowerSource(PowerSource):
         self.entity_id = entity_id
         self.token = token
         self.phase = phase
+        self.preferred_name = preferred_name.strip().lower()
         self.connected = False
         self._timeout_seconds = 10
 
@@ -172,6 +180,7 @@ class HARestPowerSource(PowerSource):
                 attrs = item.get("attributes", {}) if isinstance(item.get("attributes"), dict) else {}
                 unit = str(attrs.get("unit_of_measurement", "")).lower()
                 device_class = str(attrs.get("device_class", "")).lower()
+                friendly_name = str(attrs.get("friendly_name", "")).lower()
 
                 power_value = self._extract_power_value_from_payload(item)
                 if power_value is None:
@@ -183,6 +192,12 @@ class HARestPowerSource(PowerSource):
                     score += 2
                 if any(tag in entity_id for tag in ["total", "house", "home", "main", "grid", "power"]):
                     score += 1
+
+                if self.preferred_name:
+                    if self.preferred_name == entity_id.lower() or self.preferred_name == friendly_name:
+                        score += 8
+                    elif self.preferred_name in entity_id.lower() or self.preferred_name in friendly_name:
+                        score += 4
 
                 candidates.append(entity_id)
                 scored.append((score, entity_id))

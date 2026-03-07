@@ -33,8 +33,8 @@ The add-on now exposes core options directly in the Home Assistant add-on UI:
 - `web.*` for embedded statistics UI
 - `learning.*` for automatic pattern learning from one power sensor
 - `power_source` and `power_phase`
-- `mqtt.*` (broker, port, credentials, topic/discovery prefixes)
-- `home_assistant.*` (`url`, `power_entity_id`, `token`, `entity_id_prefix`)
+- `mqtt.*` (optional output; enable only if needed)
+- `home_assistant.*` (`url`, `sensor_entity_id`, `sensor_name`, `token`, `entity_id_prefix`)
 - `storage.*` for local SQLite persistence and warm-start learning
 - `processing.*` and `confidence.min_confidence`
 - `devices_json` for device definitions
@@ -87,7 +87,9 @@ API for advanced usage:
 Set the following in add-on options:
 
 - `power_source: home_assistant_rest`
-- `home_assistant.power_entity_id: sensor.<your_power_sensor>` (or leave empty for auto-discovery)
+- `home_assistant.sensor_entity_id: sensor.<your_power_sensor>` (preferred explicit field)
+- `home_assistant.sensor_name: <friendly sensor name>` (optional name-based matching)
+- `home_assistant.power_entity_id` remains as legacy fallback
 - `home_assistant.url: http://supervisor/core/api` (default for HA add-ons)
 - `home_assistant.token`: can stay empty in most add-on setups because `SUPERVISOR_TOKEN` is used automatically
 
@@ -97,7 +99,35 @@ Automatic connection behavior:
 
 - Add-on uses Home Assistant API access (`homeassistant_api: true`).
 - If `home_assistant.token` is empty, the runtime token from `SUPERVISOR_TOKEN` is used.
-- If `home_assistant.power_entity_id` is empty, the add-on auto-discovers a suitable `sensor.*` power entity and logs which one it selected.
+- If sensor entity is empty, the add-on auto-discovers a suitable `sensor.*` power entity and logs which one it selected.
+- If `home_assistant.sensor_name` is set, auto-discovery prioritizes matching `friendly_name`/entity names.
+
+### Do I need to create a token?
+
+Short answer: usually no.
+
+- Typical Home Assistant add-on setup:
+   - Leave `home_assistant.token` empty.
+   - The add-on uses `SUPERVISOR_TOKEN` automatically.
+- You only need to create and set a manual token when:
+   - you access a different HA instance,
+   - or your setup does not provide `SUPERVISOR_TOKEN`.
+
+How to create a manual token in Home Assistant:
+
+1. Open your HA user profile (bottom-left user icon).
+2. Scroll to **Long-Lived Access Tokens**.
+3. Click **Create Token** and copy it.
+4. Paste it into add-on option `home_assistant.token`.
+
+Important: token is shown only once at creation time.
+
+### MQTT output optional
+
+MQTT is optional and can be disabled:
+
+- `mqtt.enabled: false` -> no MQTT connect attempt, analysis still runs
+- `mqtt.enabled: true` -> states are published and discovery can be used
 
 ### Built-in database and learning
 

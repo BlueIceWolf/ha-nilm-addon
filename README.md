@@ -4,7 +4,7 @@ Repository fuer den Home Assistant Add-on **HA NILM Detector**.
 
 ## Status
 
-`v0.2.0` ist als Beta-Stand gedacht: lauffaehig, mit aktiver Weiterentwicklung.
+`v0.2.1` ist als Beta-Stand gedacht: lauffaehig, mit aktiver Weiterentwicklung.
 
 ## Was der Add-on kann
 
@@ -23,7 +23,8 @@ Repository fuer den Home Assistant Add-on **HA NILM Detector**.
 3. In den Add-on-Optionen setzen:
    `power_source: home_assistant_rest`
 4. Optional `home_assistant.power_entity_id` leer lassen, dann versucht das Add-on Auto-Discovery.
-5. Add-on starten und ueber **Open Web UI** Statistiken und Muster ansehen.
+5. `home_assistant.token` in der Regel leer lassen (Supervisor-Token wird automatisch genutzt).
+6. Add-on starten und ueber **Open Web UI** Statistiken und Muster ansehen.
 
 ## Wichtige Dateien
 

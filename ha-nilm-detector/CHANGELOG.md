@@ -1,5 +1,11 @@
 # Changelog
 
+## 0.2.1
+
+- Fixed Web UI JSON loading under Home Assistant ingress (relative API paths + safer JSON parsing).
+- Added explicit sensor selection options: `home_assistant.sensor_entity_id` and `home_assistant.sensor_name`.
+- Made MQTT output truly optional via `mqtt.enabled` (analysis can run without MQTT connection).
+
 ## 0.2.0
 
 - Added autonomous pattern learning from one power sensor using cycle detection.

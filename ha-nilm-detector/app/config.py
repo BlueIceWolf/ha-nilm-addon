@@ -33,6 +33,7 @@ class Config:
         self.learning_min_cycle_seconds = 20
         self.power_source = "mock"
         self.power_phase = "L1"
+        self.mqtt_enabled = False
         self.mqtt_broker = "localhost"
         self.mqtt_port = 1883
         self.mqtt_username = None
@@ -43,6 +44,7 @@ class Config:
         self.devices: Dict[str, DeviceConfig] = {}
         self.ha_entity_id_prefix = "nilm"
         self.ha_url = "http://supervisor/core/api"
+        self.ha_sensor_name = ""
         self.ha_power_entity_id = ""
         self.ha_token = ""
         self.storage_path = "/data"
@@ -108,6 +110,7 @@ class Config:
         
         # MQTT settings
         mqtt_config = config_dict.get('mqtt', {})
+        self.mqtt_enabled = bool(mqtt_config.get('enabled', self.mqtt_enabled))
         self.mqtt_broker = mqtt_config.get('broker', 'localhost')
         self.mqtt_port = mqtt_config.get('port', 1883)
         self.mqtt_username = mqtt_config.get('username')
@@ -120,7 +123,11 @@ class Config:
         ha_config = config_dict.get('home_assistant', {})
         self.ha_entity_id_prefix = ha_config.get('entity_id_prefix', 'nilm')
         self.ha_url = ha_config.get('url', self.ha_url)
-        self.ha_power_entity_id = ha_config.get('power_entity_id', self.ha_power_entity_id)
+        self.ha_sensor_name = str(ha_config.get('sensor_name', self.ha_sensor_name)).strip()
+
+        sensor_entity_id = str(ha_config.get('sensor_entity_id', '')).strip()
+        legacy_power_entity_id = str(ha_config.get('power_entity_id', self.ha_power_entity_id)).strip()
+        self.ha_power_entity_id = sensor_entity_id or legacy_power_entity_id
         self.ha_token = ha_config.get('token', self.ha_token)
 
         storage_config = config_dict.get('storage', {})

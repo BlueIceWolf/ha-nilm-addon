@@ -1,6 +1,6 @@
 name: "HA NILM Detector"
 description: "Detect appliances from power consumption patterns"
-version: "0.2.0"
+version: "0.2.1"
 slug: "ha_nilm_detector"
 startup: application
 boot: auto
@@ -30,6 +30,7 @@ options:
   power_phase: L1
   update_interval_seconds: 5
   mqtt:
+    enabled: false
     broker: homeassistant.local
     port: 1883
     username: ""
@@ -39,6 +40,8 @@ options:
     discovery_enabled: true
   home_assistant:
     url: http://supervisor/core/api
+    sensor_name: ""
+    sensor_entity_id: ""
     power_entity_id: ""
     token: ""
     entity_id_prefix: nilm
@@ -70,6 +73,7 @@ schema:
   power_phase: str
   update_interval_seconds: int(1,300)
   mqtt:
+    enabled: bool
     broker: str
     port: int(1,65535)
     username: str?
@@ -79,6 +83,8 @@ schema:
     discovery_enabled: bool
   home_assistant:
     url: str
+    sensor_name: str?
+    sensor_entity_id: str?
     power_entity_id: str
     token: password?
     entity_id_prefix: str

@@ -82,16 +82,18 @@ class NILMDetectionSystem:
         self._setup_detectors()
         self._warm_start_detectors()
 
-        self.publisher = MQTTPublisher(
-            broker=self.config.mqtt_broker,
-            port=self.config.mqtt_port,
-            username=self.config.mqtt_username,
-            password=self.config.mqtt_password,
-            topic_prefix=self.config.mqtt_topic_prefix,
-            discovery_prefix=self.config.mqtt_discovery_prefix,
-            enable_discovery=self.config.enable_mqtt_discovery,
-            entity_id_prefix=self.config.ha_entity_id_prefix,
-        )
+        self.publisher: MQTTPublisher | None = None
+        if self.config.mqtt_enabled:
+            self.publisher = MQTTPublisher(
+                broker=self.config.mqtt_broker,
+                port=self.config.mqtt_port,
+                username=self.config.mqtt_username,
+                password=self.config.mqtt_password,
+                topic_prefix=self.config.mqtt_topic_prefix,
+                discovery_prefix=self.config.mqtt_discovery_prefix,
+                enable_discovery=self.config.enable_mqtt_discovery,
+                entity_id_prefix=self.config.ha_entity_id_prefix,
+            )
 
         self.running = False
         self.last_daily_reset = datetime.now()
@@ -120,6 +122,7 @@ class NILMDetectionSystem:
                 entity_id=self.config.ha_power_entity_id,
                 token=token,
                 phase=self.config.power_phase,
+                preferred_name=self.config.ha_sensor_name,
             )
 
         logger.warning("Using mock power source. Set power_source=home_assistant_rest for real sensor input.")
@@ -220,13 +223,16 @@ class NILMDetectionSystem:
             return
         logger.info("Collector connected successfully")
 
-        if not self.publisher.connect():
+        if self.publisher and not self.publisher.connect():
             logger.warning(
                 "MQTT connect failed; continuing without publisher "
                 f"(mqtt={self.config.mqtt_broker}:{self.config.mqtt_port})"
             )
-        else:
+            self.publisher = None
+        elif self.publisher:
             logger.info("MQTT publisher connected")
+        else:
+            logger.info("MQTT output disabled by configuration (mqtt.enabled=false)")
 
         if self.web_server:
             if not self.web_server.start():
@@ -306,7 +312,7 @@ class NILMDetectionSystem:
                         self.storage.store_detection(best)
 
                     device_state = self.state_engine.update_device_state(best)
-                    if device_state and self.publisher.is_connected():
+                    if device_state and self.publisher and self.publisher.is_connected():
                         try:
                             self.publisher.publish_state(device_state)
                         except Exception as publish_error:
@@ -335,7 +341,8 @@ class NILMDetectionSystem:
     def stop(self) -> None:
         self.running = False
         self.collector.disconnect()
-        self.publisher.disconnect()
+        if self.publisher:
+            self.publisher.disconnect()
         if self.web_server:
             self.web_server.stop()
         if self.storage:

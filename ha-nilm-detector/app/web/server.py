@@ -145,6 +145,26 @@ def _html_page() -> str:
 const canvas = document.getElementById('powerChart');
 const ctx = canvas.getContext('2d');
 
+function apiPath(path) {
+  const clean = String(path || '').replace(/^\\/+/, '');
+  return clean;
+}
+
+async function fetchJson(path) {
+  const response = await fetch(apiPath(path));
+  const body = await response.text();
+
+  if (!response.ok) {
+    throw new Error(`HTTP ${response.status}: ${body.slice(0, 120)}`);
+  }
+
+  try {
+    return JSON.parse(body);
+  } catch (error) {
+    throw new Error(`Ungueltige JSON Antwort fuer ${path}: ${body.slice(0, 120)}`);
+  }
+}
+
 function fmt(v, suffix='') {
   if (v === null || v === undefined) return '-';
   return `${Number(v).toFixed(1)}${suffix}`;
@@ -233,6 +253,7 @@ function renderPatterns(patterns) {
       if (!label) return;
       try {
         const res = await fetch(`/api/patterns/${id}/label`, {
+        const res = await fetch(apiPath(`api/patterns/${id}/label`), {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify({ label })
@@ -249,16 +270,16 @@ function renderPatterns(patterns) {
 async function refresh() {
   try {
     const [summaryRes, seriesRes, liveRes, patternsRes] = await Promise.all([
-      fetch('/api/summary'),
-      fetch('/api/series?limit=360'),
-      fetch('/api/live'),
-      fetch('/api/patterns')
+      fetchJson('api/summary'),
+      fetchJson('api/series?limit=360'),
+      fetchJson('api/live'),
+      fetchJson('api/patterns')
     ]);
 
-    const summary = await summaryRes.json();
-    const series = await seriesRes.json();
-    const live = await liveRes.json();
-    const patterns = await patternsRes.json();
+    const summary = summaryRes;
+    const series = seriesRes;
+    const live = liveRes;
+    const patterns = patternsRes;
 
     document.getElementById('current_power').textContent = fmt(live.current_power_w, ' W');
     document.getElementById('avg_power').textContent = fmt(summary.avg_power_w, ' W');
