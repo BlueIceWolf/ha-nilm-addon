@@ -113,6 +113,9 @@ def _html_page() -> str:
       <h1>HA NILM Live-Statistik</h1>
       <div id=\"ts\" class=\"muted\">Lädt...</div>
     </div>
+    <div style=\"margin-bottom: 12px;\">
+      <button id=\"flushDbBtn\" title=\"Nur für Debugging\">DB leeren (Debug)</button>
+    </div>
 
     <div class=\"grid\">
       <div class=\"card\"><div class=\"label\">Gesamtleistung</div><div id=\"current_power\" class=\"value\">-</div></div>
@@ -180,6 +183,30 @@ function fmt(v, suffix='') {
 
 function setStatus(message) {
   statusEl.textContent = message;
+}
+
+async function flushDebugDb() {
+  const sure = confirm('Soll die Debug-Datenbank wirklich geleert werden?');
+  if (!sure) return;
+
+  try {
+    setStatus('Leere Datenbank...');
+    const response = await fetch(apiPath('api/debug/flush-db'), {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ reset_patterns: true })
+    });
+    const payload = await response.json();
+    if (!response.ok || !payload.ok) {
+      throw new Error(payload.error || `HTTP ${response.status}`);
+    }
+    const deleted = payload.deleted || {};
+    alert(`DB geleert. Messwerte: ${deleted.power_readings || 0}, Erkennungen: ${deleted.detections || 0}, Muster: ${deleted.learned_patterns || 0}`);
+    await refresh();
+  } catch (err) {
+    alert(`DB-Flush fehlgeschlagen: ${err}`);
+    setStatus(`DB-Flush fehlgeschlagen: ${err}`);
+  }
 }
 
 function buildLiveStatusMessage(live) {
@@ -345,6 +372,7 @@ async function refresh() {
 
 refresh();
 setInterval(refresh, 5000);
+document.getElementById('flushDbBtn').addEventListener('click', flushDebugDb);
 </script>
 </body>
 </html>
@@ -363,6 +391,7 @@ class StatsWebServer:
         get_series_data: Callable[[int], List[Dict]],
         get_patterns_data: Optional[Callable[[], List[Dict]]] = None,
         set_pattern_label: Optional[Callable[[int, str], bool]] = None,
+      flush_debug_data: Optional[Callable[[bool], Dict]] = None,
     ):
         self.host = host
         self.port = int(port)
@@ -371,6 +400,7 @@ class StatsWebServer:
         self.get_series_data = get_series_data
         self.get_patterns_data = get_patterns_data
         self.set_pattern_label = set_pattern_label
+        self.flush_debug_data = flush_debug_data
         self._server: Optional[ThreadingHTTPServer] = None
         self._thread: Optional[threading.Thread] = None
 
@@ -457,6 +487,28 @@ class StatsWebServer:
 
             def do_POST(self):
                 parsed = urlparse(self.path)
+                if parsed.path == "/api/debug/flush-db":
+                    if not parent.flush_debug_data:
+                        self._send_json({"error": "debug flush not enabled"}, status=400)
+                        return
+
+                    length = int(self.headers.get("Content-Length", "0") or 0)
+                    raw = self.rfile.read(length) if length > 0 else b"{}"
+                    try:
+                        payload = json.loads(raw.decode("utf-8")) if raw else {}
+                    except json.JSONDecodeError:
+                        self._send_json({"error": "invalid json"}, status=400)
+                        return
+
+                    reset_patterns = bool(payload.get("reset_patterns", True))
+                    result = parent.flush_debug_data(reset_patterns)
+                    if not result.get("ok"):
+                        self._send_json(result, status=500)
+                        return
+
+                    self._send_json(result)
+                    return
+
                 if parsed.path.startswith("/api/patterns/") and parsed.path.endswith("/label"):
                     if not parent.set_pattern_label:
                         self._send_json({"error": "labeling not enabled"}, status=400)

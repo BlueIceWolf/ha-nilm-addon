@@ -117,6 +117,7 @@ class NILMDetectionSystem:
                 get_series_data=self._build_series_payload,
                 get_patterns_data=self._build_patterns_payload,
                 set_pattern_label=self._set_pattern_label,
+                flush_debug_data=self._flush_debug_db,
             )
 
     def _build_power_source(self):
@@ -252,6 +253,11 @@ class NILMDetectionSystem:
             return False
         return self.storage.label_pattern(pattern_id=pattern_id, user_label=label)
 
+    def _flush_debug_db(self, reset_patterns: bool = True) -> Dict:
+        if not self.storage:
+            return {"ok": False, "error": "storage not enabled"}
+        return self.storage.flush_debug_data(reset_patterns=reset_patterns)
+
     def start(self) -> None:
         if not self.collector.connect():
             logger.error("Collector failed to connect")
@@ -308,7 +314,12 @@ class NILMDetectionSystem:
                             "active_phase_count": int(processed.metadata.get("phase_active_count", 1)),
                             "phase_mode": str(processed.metadata.get("phase_mode", "single_phase")),
                         }
-                        suggestion = self.pattern_learner.suggest_device_type(cycle)
+                        heuristic_suggestion = self.pattern_learner.suggest_device_type(cycle)
+                        model_suggestion = self.storage.suggest_cycle_label(
+                            cycle_payload,
+                            fallback=heuristic_suggestion,
+                        )
+                        suggestion = str(model_suggestion.get("label") or heuristic_suggestion)
                         learn_result = self.storage.learn_cycle_pattern(
                             cycle=cycle_payload,
                             suggestion_type=suggestion,
@@ -322,6 +333,8 @@ class NILMDetectionSystem:
                                 "Pattern learned/updated: "
                                 f"id={pattern.get('id')} suggestion={pattern.get('suggestion_type')} "
                                 f"label={pattern.get('user_label') or '-'} seen={pattern.get('seen_count')} "
+                                f"model_source={model_suggestion.get('source')} "
+                                f"model_conf={float(model_suggestion.get('confidence', 0.0)):.2f} "
                                 f"-> {guess_prefix} {candidate_name}"
                             )
 

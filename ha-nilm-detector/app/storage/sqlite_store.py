@@ -1,6 +1,7 @@
 """SQLite storage for power readings and detection events."""
 
 import json
+import math
 import os
 import sqlite3
 from datetime import datetime, timedelta
@@ -310,6 +311,50 @@ class SQLiteStore:
         except Exception as e:
             logger.error(f"Failed to clean old SQLite data: {e}", exc_info=True)
 
+    def flush_debug_data(self, reset_patterns: bool = True) -> Dict:
+        """Delete runtime data for debugging and return deletion statistics."""
+        if not self._conn:
+            return {"ok": False, "error": "storage not connected"}
+
+        try:
+            cur_readings = self._conn.execute("SELECT COUNT(*) FROM power_readings")
+            cur_detections = self._conn.execute("SELECT COUNT(*) FROM detections")
+            cur_patterns = self._conn.execute("SELECT COUNT(*) FROM learned_patterns")
+
+            deleted_readings = int((cur_readings.fetchone() or [0])[0])
+            deleted_detections = int((cur_detections.fetchone() or [0])[0])
+            deleted_patterns = int((cur_patterns.fetchone() or [0])[0]) if reset_patterns else 0
+
+            with self._conn:
+                self._conn.execute("DELETE FROM power_readings")
+                self._conn.execute("DELETE FROM detections")
+                if reset_patterns:
+                    self._conn.execute("DELETE FROM learned_patterns")
+
+            try:
+                self._conn.execute("PRAGMA wal_checkpoint(TRUNCATE);")
+                self._conn.execute("VACUUM;")
+            except Exception as vacuum_error:
+                logger.warning(f"SQLite checkpoint/vacuum after flush failed: {vacuum_error}")
+
+            logger.warning(
+                "Debug DB flush executed: "
+                f"readings={deleted_readings}, detections={deleted_detections}, patterns={deleted_patterns}"
+            )
+
+            return {
+                "ok": True,
+                "deleted": {
+                    "power_readings": deleted_readings,
+                    "detections": deleted_detections,
+                    "learned_patterns": deleted_patterns,
+                },
+                "reset_patterns": bool(reset_patterns),
+            }
+        except Exception as e:
+            logger.error(f"Failed to flush debug DB data: {e}", exc_info=True)
+            return {"ok": False, "error": str(e)}
+
     @staticmethod
     def _pattern_distance(existing: Dict, candidate: Dict) -> float:
         def rel(a: float, b: float) -> float:
@@ -320,7 +365,60 @@ class SQLiteStore:
         peak_dist = rel(float(existing["peak_power_w"]), float(candidate["peak_power_w"]))
         duration_dist = rel(float(existing["duration_s"]), float(candidate["duration_s"]))
         energy_dist = rel(float(existing["energy_wh"]), float(candidate["energy_wh"]))
-        return (avg_dist * 0.35) + (peak_dist * 0.35) + (duration_dist * 0.2) + (energy_dist * 0.1)
+        phase_dist = rel(float(existing.get("avg_active_phases", 1.0)), float(candidate.get("active_phase_count", 1.0)))
+        return (
+            (avg_dist * 0.30)
+            + (peak_dist * 0.30)
+            + (duration_dist * 0.18)
+            + (energy_dist * 0.12)
+            + (phase_dist * 0.10)
+        )
+
+    def suggest_cycle_label(self, cycle: Dict, fallback: str = "unknown") -> Dict:
+        """AI-like nearest-prototype vote based on learned patterns.
+
+        This is not a heavy ML model, but a lightweight weighted similarity model
+        using learned signatures as prototypes.
+        """
+        if not self._conn:
+            return {"label": fallback, "confidence": 0.0, "source": "fallback"}
+
+        patterns = self.list_patterns(limit=500)
+        if not patterns:
+            return {"label": fallback, "confidence": 0.0, "source": "fallback"}
+
+        score_by_label: Dict[str, float] = {}
+        total_score = 0.0
+
+        for item in patterns:
+            if item.get("status") != "active":
+                continue
+
+            label_raw = str(item.get("user_label") or item.get("suggestion_type") or "").strip()
+            if not label_raw:
+                continue
+
+            distance = self._pattern_distance(item, cycle)
+            similarity = math.exp(-4.0 * max(distance, 0.0))
+            seen_weight = 1.0 + math.log1p(max(int(item.get("seen_count", 1)), 1))
+            vote = similarity * seen_weight
+            if vote <= 0.0:
+                continue
+
+            score_by_label[label_raw] = score_by_label.get(label_raw, 0.0) + vote
+            total_score += vote
+
+        if not score_by_label or total_score <= 0.0:
+            return {"label": fallback, "confidence": 0.0, "source": "fallback"}
+
+        best_label, best_score = max(score_by_label.items(), key=lambda pair: pair[1])
+        confidence = float(best_score / total_score)
+
+        # Keep fallback if confidence is too low.
+        if confidence < 0.45:
+            return {"label": fallback, "confidence": confidence, "source": "fallback_low_confidence"}
+
+        return {"label": best_label, "confidence": confidence, "source": "prototype_similarity"}
 
     @staticmethod
     def _normalize_pattern_name(name: str) -> str:
