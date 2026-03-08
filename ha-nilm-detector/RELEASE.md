@@ -1,3 +1,31 @@
+# Release 0.4.1
+
+## Store Kurztext
+- **KRITISCHER BUGFIX**: Automatische Geräteerkennung erkennt jetzt 1-Phasen-Geräte korrekt!
+- Phase-Erkennung nutzt echte Messdaten statt primitive Heuristik
+
+## Highlights
+- **Fixed 1-phase device detection**: SmartDeviceClassifier now uses actual phase information from power readings instead of power-based heuristic (>5kW = 3-phase)
+- **LearnedCycle phase tracking**: Cycles now include `phase_mode` field extracted from readings
+- Massively improved automatic device classification for single-phase appliances
+- Better match scores for devices like microwave, toaster, kettle that were previously misclassified
+
+## Technical Details
+- `LearnedCycle` dataclass now includes `phase_mode: str` field ("single_phase" or "multi_phase")
+- Phase mode extracted in `_build_cycle()` from PowerReading phases: `phases_set = set(r.phase for r in samples)`
+- `SmartDeviceClassifier._detect_phase_mode()` prioritizes actual phase data over power heuristic
+- Fallback to >5kW heuristic only when phase data unavailable
+
+## Why This Matters
+Previously, the classifier ignored actual phase information and used `peak_power > 5000W` to determine 3-phase. This caused:
+- High-confidence single-phase devices to get -0.20 penalty if they had >5kW peak
+- Low-power 3-phase devices to be misclassified as 1-phase
+- Poor classification scores for common 1-phase appliances
+
+Now: Phase information flows from collector → PowerReading → LearnedCycle → SmartClassifier properly.
+
+---
+
 # Release 0.4.0
 
 ## Store Kurztext

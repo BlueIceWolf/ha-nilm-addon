@@ -1,4 +1,10 @@
 # Changelog
+## 0.4.1
+
+**Bugfix:**
+- **Phase-Erkennung repariert**: SmartDeviceClassifier nutzt jetzt echte Phase-Informationen aus den Messdaten statt primitiver Heuristik (>5kW = 3-Phase). **Dies verbessert die automatische Erkennung von 1-Phasen-Geräten massiv!**
+- `LearnedCycle` enthält jetzt `phase_mode` Feld, das automatisch aus PowerReadings extrahiert wird.
+
 ## 0.4.0
 
 **Neue Features:**

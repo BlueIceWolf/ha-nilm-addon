@@ -34,6 +34,9 @@ class LearnedCycle:
     # Multi-mode detection
     operating_modes: List[Dict] = field(default_factory=list)  # [{mode, avg_power, duration, stability}]
     has_multiple_modes: bool = False
+    
+    # Phase information
+    phase_mode: str = "single_phase"  # "single_phase" or "multi_phase"
 
 
 class PatternLearner:
@@ -245,6 +248,10 @@ class PatternLearner:
                 logger.debug(f"Detected {len(operating_modes)} operating modes in cycle")
             except Exception as e:
                 logger.debug(f"Mode analysis failed: {e}")
+        
+        # Detect phase mode from samples
+        phases_set = set(r.phase for r in self._cycle_samples if r.phase)
+        phase_mode = "multi_phase" if len(phases_set) > 1 else "single_phase"
 
         return LearnedCycle(
             start_ts=self._cycle_start,
@@ -257,6 +264,7 @@ class PatternLearner:
             features=features,
             operating_modes=operating_modes,
             has_multiple_modes=has_multiple_modes,
+            phase_mode=phase_mode,
         )
 
     @staticmethod

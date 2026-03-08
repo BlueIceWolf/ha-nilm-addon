@@ -399,8 +399,14 @@ class SmartDeviceClassifier:
     @staticmethod
     def _detect_phase_mode(cycle: LearnedCycle) -> PhaseMode:
         """Detect if device operates on single-phase or three-phase power."""
-        # For now, simple heuristic: very high power (>5kW) often 3-phase
-        # In production, would use actual phase information from meter
+        # Use actual phase information from cycle data if available
+        if hasattr(cycle, 'phase_mode'):
+            if cycle.phase_mode == "multi_phase":
+                return PhaseMode.THREE_PHASE
+            elif cycle.phase_mode == "single_phase":
+                return PhaseMode.SINGLE_PHASE
+        
+        # Fallback: Use power-based heuristic (very high power often 3-phase)
         if cycle.peak_power_w > 5000:
             return PhaseMode.THREE_PHASE
         return PhaseMode.SINGLE_PHASE
