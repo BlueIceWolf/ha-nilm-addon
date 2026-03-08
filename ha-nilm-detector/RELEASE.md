@@ -1,3 +1,58 @@
+# Release 0.5.0
+
+## Store Kurztext
+- **UI-Verbesserungen**: Aufgaben-Fortschritt oben angezeigt, Chart flackert nicht mehr
+- Viele kleine Performance-Optimierungen
+
+## Highlights
+- **Task Progress Indicator**: Shows active tasks (learning runs, HA import) with percentage progress bar
+- **Chart Flickering Fixed**: Diagram only redraws when data actually changes - no more flickering on every refresh
+- Smooth rendering with requestAnimationFrame
+- Visual progress bar (0-100%) for long-running operations
+
+## Technical Details
+**UI Components Added:**
+- `.active-task` container with progress bar
+- `updateTaskProgress(taskInfo)` function
+- Task info displayed from `/api/live` response (live.task)
+
+**Chart Optimization:**
+```javascript
+// Before: Always redraw (flickering)
+ctx.clearRect(0, 0, w, h);
+
+// After: Smart detection
+if (prevLength === newLength && lastPoint.identical) {
+  return; // Skip redraw
+}
+requestAnimationFrame(() => { /* render */ });
+```
+
+**Detection Logic:**
+1. Compare series length (prevLength vs newLength)
+2. If same length, compare last data point (timestamp + power_w)
+3. Only redraw if data changed
+4. Wrap rendering in requestAnimationFrame for smoothness
+
+**Why This Matters:**
+- Previously: Chart redrawn every 5 seconds even if data identical → flickering
+- Now: Only redraws when new data arrives → smooth experience
+- Task progress visible during long operations (learning 24h of data)
+
+**Backend Integration (future):**
+API should return `task` object in `/api/live`:
+```json
+{
+  "task": {
+    "active": true,
+    "name": "Lernlauf (24h Daten)",
+    "progress": 67.5
+  }
+}
+```
+
+---
+
 # Release 0.4.4
 
 ## Store Kurztext

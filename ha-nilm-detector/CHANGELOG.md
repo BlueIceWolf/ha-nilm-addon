@@ -1,4 +1,16 @@
 # Changelog
+## 0.5.0
+
+**Neue Features:**
+- **Aufgaben-Fortschrittsanzeige**: Oben in der UI zeigt aktive Aufgaben (Lernläufe, HA-Import) mit Prozentanzeige
+- **Chart-Optimierung**: Diagramm flackert nicht mehr bei jedem Live-Daten-Update - nur noch neu zeichnen wenn sich Daten geändert haben
+- requestAnimationFrame für smoothes Rendering
+
+**Technische Verbesserungen:**
+- Intelligente Redraw-Erkennung: Vergleich von Datenpunkt-Länge und letztem Timestamp
+- Progressbar mit visueller Darstellung (0-100%)
+- Task-Info wird bei jedem refresh() aktualisiert
+
 ## 0.4.4
 
 **Bugfix:**

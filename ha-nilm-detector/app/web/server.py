@@ -277,6 +277,12 @@ const ctx = canvas.getContext('2d');
 const statusEl = document.getElementById('ts');
 const selectionOverlay = document.getElementById('selectionOverlay');
 
+// Task progress elements
+const activeTaskEl = document.getElementById('activeTask');
+const taskNameEl = document.getElementById('taskName');
+const taskPercentEl = document.getElementById('taskPercent');
+const progressFillEl = document.getElementById('progressFill');
+
 // State für sichtbare Phasen und Daten
 let visiblePhases = { total: true, L1: false, L2: false, L3: false };
 let currentSeriesData = null;
@@ -322,6 +328,22 @@ function fmt(v, suffix='') {
 
 function setStatus(message) {
   statusEl.textContent = message;
+}
+
+function updateTaskProgress(taskInfo) {
+  if (!taskInfo || !taskInfo.active) {
+    // Hide task progress if no active task
+    activeTaskEl.classList.remove('visible');
+    return;
+  }
+  
+  // Show and update task progress
+  activeTaskEl.classList.add('visible');
+  taskNameEl.textContent = taskInfo.name || 'Aufgabe läuft...';
+  
+  const percent = Math.min(100, Math.max(0, taskInfo.progress || 0));
+  taskPercentEl.textContent = `${percent.toFixed(0)}%`;
+  progressFillEl.style.width = `${percent}%`;
 }
 
 async function clearReadingsOnly() {
@@ -439,6 +461,21 @@ function buildLiveStatusMessage(live) {
 }
 
 function drawChart(series) {
+  // Store previous series length to detect changes
+  const prevLength = currentSeriesData ? currentSeriesData.length : 0;
+  const newLength = series ? series.length : 0;
+  
+  // Skip redraw if data hasn't changed (same length and last point identical)
+  if (prevLength === newLength && newLength > 0 && currentSeriesData) {
+    const lastOld = currentSeriesData[prevLength - 1];
+    const lastNew = series[newLength - 1];
+    if (lastOld && lastNew && 
+        lastOld.timestamp === lastNew.timestamp && 
+        lastOld.power_w === lastNew.power_w) {
+      return; // No change detected - skip redraw to prevent flickering
+    }
+  }
+  
   currentSeriesData = series;
   const w = canvas.width, h = canvas.height;
   const leftPad = 10;
@@ -447,9 +484,11 @@ function drawChart(series) {
   const bottomPad = 36; // Reserve space for time scale labels
   const plotHeight = h - topPad - bottomPad;
 
-  ctx.clearRect(0, 0, w, h);
-  ctx.fillStyle = '#ffffff';
-  ctx.fillRect(0, 0, w, h);
+  // Use requestAnimationFrame for smooth rendering
+  requestAnimationFrame(() => {
+    ctx.clearRect(0, 0, w, h);
+    ctx.fillStyle = '#ffffff';
+    ctx.fillRect(0, 0, w, h);
 
   if (!series || series.length < 2) {
     ctx.fillStyle = '#667085';
@@ -586,6 +625,7 @@ function drawChart(series) {
   ctx.fillText(`min ${min.toFixed(1)}W`, 12, 14);
   ctx.textAlign = 'right';
   ctx.fillText(`max ${max.toFixed(1)}W`, w - 12, 14);
+  }); // End of requestAnimationFrame
 }
 
 function renderDevices(devices) {
@@ -760,6 +800,13 @@ async function refresh() {
     const series = seriesRes;
     const live = liveRes;
     const patterns = patternsRes;
+
+    // Update task progress if available
+    if (live && live.task) {
+      updateTaskProgress(live.task);
+    } else {
+      updateTaskProgress(null); // Hide if no task
+    }
 
     document.getElementById('current_power').textContent = fmt(live.current_power_w, ' W');
     document.getElementById('avg_power').textContent = fmt(summary.avg_power_w, ' W');
