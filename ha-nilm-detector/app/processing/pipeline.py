@@ -51,7 +51,8 @@ class ProcessingPipeline:
         if not self.adaptive_correction:
             return value
 
-        if value <= self._baseline_power + 5.0 or self._baseline_samples < self.smoothing_window:
+        # Only adapt baseline if in idle range AND learning phase not exceeded (cap at 50)
+        if value <= self._baseline_power + 5.0 and self._baseline_samples < 50:
             self._baseline_samples += 1
             weight = 1 / self._baseline_samples
             self._baseline_power = (self._baseline_power * (1 - weight)) + value * weight

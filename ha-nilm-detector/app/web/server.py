@@ -29,6 +29,15 @@ def _html_page() -> str:
       --accent: #006d77;
       --accent-soft: #e6f6f8;
     }
+    :root.dark-mode {
+      --bg: #1a1a1a;
+      --card: #2d2d2d;
+      --ink: #e5e5e5;
+      --muted: #a0a0a0;
+      --line: #404040;
+      --accent: #4db8c4;
+      --accent-soft: #2a4a4e;
+    }
     body {
       margin: 0;
       font-family: \"Segoe UI\", \"Helvetica Neue\", sans-serif;
@@ -122,6 +131,43 @@ def _html_page() -> str:
       pointer-events: none;
       display: none;
     }
+    .tooltip {
+      position: relative;
+      cursor: help;
+      border-bottom: 1px dotted var(--muted);
+    }
+    .tooltip .tooltiptext {
+      visibility: hidden;
+      width: 200px;
+      background-color: #333;
+      color: #fff;
+      text-align: left;
+      border-radius: 6px;
+      padding: 8px;
+      position: absolute;
+      z-index: 1000;
+      bottom: 125%;
+      left: 50%;
+      margin-left: -100px;
+      opacity: 0;
+      transition: opacity 0.3s;
+      font-size: 0.8rem;
+      line-height: 1.4;
+    }
+    .tooltip .tooltiptext::after {
+      content: "";
+      position: absolute;
+      top: 100%;
+      left: 50%;
+      margin-left: -5px;
+      border-width: 5px;
+      border-style: solid;
+      border-color: #333 transparent transparent transparent;
+    }
+    .tooltip:hover .tooltiptext {
+      visibility: visible;
+      opacity: 1;
+    }
     @media (max-width: 700px) {
       .head { flex-direction: column; align-items: flex-start; }
       canvas { height: 220px; }
@@ -150,6 +196,7 @@ def _html_page() -> str:
       <div class=\"card\"><div class=\"label\">Durchschnitt (24h)</div><div id=\"avg_power\" class=\"value\">-</div></div>
       <div class=\"card\"><div class=\"label\">Spitze (24h)</div><div id=\"peak_power\" class=\"value\">-</div></div>
       <div class=\"card\"><div class=\"label\">Messwerte (24h)</div><div id=\"reading_count\" class=\"value\">-</div></div>
+      <div class=\"card\"><div class=\"label\">Gelernte Muster</div><div id=\"pattern_count\" class=\"value\">-</div></div>
     </div>
 
     <div class=\"chart-wrap\">
@@ -181,7 +228,7 @@ def _html_page() -> str:
     <h2 style=\"margin:14px 0 8px; font-size:1.1rem;\">Gelernte Muster</h2>
     <table>
       <thead>
-        <tr><th>ID</th><th>Typ</th><th>Label</th><th>Phasen</th><th>Ø (W)</th><th>Spitze (W)</th><th>Dauer (s)</th><th>Anzahl</th><th>Aktion</th></tr>
+        <tr><th>ID</th><th>Typ</th><th>Label</th><th style="font-size:0.85rem;">Häufig.</th><th style="font-size:0.85rem;">Intervall</th><th style="font-size:0.85rem;">Uhrzeit</th><th style="font-size:0.85rem;">Stabilit.</th><th>Phasen</th><th style="font-size:0.85rem;">Modi</th><th>Ø (W)</th><th>Spitze (W)</th><th>Dauer (s)</th><th>Anzahl</th><th>Aktion</th></tr>
       </thead>
       <tbody id=\"patternRows\"></tbody>
     </table>
@@ -199,6 +246,15 @@ let currentSeriesData = null;
 let availablePhases = [];
 let isSelectingRange = false;
 let selectionStart = null;
+let allPatterns = [];
+let currentSortBy = 'seen_count';
+
+// Dark Mode initialisieren
+if (localStorage.getItem('darkMode') === 'true') {
+  document.documentElement.classList.add('dark-mode');
+}
+
+
 
 function apiPath(path) {
   const clean = String(path || '').replace(/^\\/+/, '');
@@ -395,11 +451,16 @@ function renderDevices(devices) {
 }
 
 function renderPatterns(patterns) {
+  // Store all patterns for filtering/sorting  
+  if (patterns && patterns.length > 0) {
+    allPatterns = patterns;
+  }
+  
   const tbody = document.getElementById('patternRows');
   tbody.innerHTML = '';
   if (!patterns || !patterns.length) {
     const tr = document.createElement('tr');
-    tr.innerHTML = '<td colspan="9">Noch keine Muster erkannt.</td>';
+    tr.innerHTML = '<td colspan="14">Noch keine Muster erkannt.</td>';
     tbody.appendChild(tr);
     return;
   }
@@ -411,7 +472,85 @@ function renderPatterns(patterns) {
     const typeText = p.is_confirmed ? candidate : `evtl. ${candidate}`;
     const phaseModeRaw = String(p.phase_mode || 'unknown');
     const phaseMode = phaseModeRaw === 'single_phase' ? '1-ph' : (phaseModeRaw === 'multi_phase' ? '3-ph' : '?');
-    tr.innerHTML = `<td>${p.id}</td><td>${typeText}</td><td>${label}</td><td>${phaseMode}</td><td>${fmt(p.avg_power_w)}</td><td>${fmt(p.peak_power_w)}</td><td>${fmt(p.duration_s)}</td><td>${p.seen_count ?? 0}</td><td><button data-id="${p.id}">Label</button></td>`;
+    
+    // Häufigkeits- und Stabilitäts-Indikatoren
+    const frequency = p.frequency_label || 'unbekannt';
+    const stability = p.stability_score ?? 50;
+    const stabilityColor = stability >= 80 ? '#28a745' : (stability >= 60 ? '#ffc107' : '#dc3545');
+    const stabilityBar = `<div style="background:#e9ecef;border-radius:3px;height:16px;overflow:hidden;position:relative;"><div style="background:${stabilityColor};width:${stability}%;height:100%;">&nbsp;</div><span style="position:absolute;top:0;left:2px;font-size:0.75rem;color:#000;line-height:16px;font-weight:bold;">${stability}%</span></div>`;
+    
+    // Temporale Muster - Intervall
+    const typicalInterval = p.typical_interval_s || 0;
+    let intervalText = '-';
+    let intervalTooltip = '';
+    if (typicalInterval > 0) {
+      if (typicalInterval < 120) {
+        intervalText = `${Math.round(typicalInterval)}s`;
+      } else if (typicalInterval < 3600) {
+        intervalText = `${Math.round(typicalInterval / 60)}min`;
+      } else if (typicalInterval < 86400) {
+        intervalText = `${(typicalInterval / 3600).toFixed(1)}h`;
+      } else {
+        intervalText = `${(typicalInterval / 86400).toFixed(1)}d`;
+      }
+      
+      // Zusätzliche Details für Tooltip
+      try {
+        const lastIntervals = JSON.parse(p.last_intervals_json || '[]');
+        if (lastIntervals.length > 0) {
+          const intervalList = lastIntervals.map(iv => {
+            if (iv < 120) return `${Math.round(iv)}s`;
+            if (iv < 3600) return `${Math.round(iv / 60)}min`;
+            if (iv < 86400) return `${(iv / 3600).toFixed(1)}h`;
+            return `${(iv / 86400).toFixed(1)}d`;
+          }).join(', ');
+          intervalTooltip = `Letzte Intervalle:<br>${intervalList}`;
+        }
+      } catch (e) {}
+    }
+    
+    // Temporale Muster - Durchschnittliche Tageszeit
+    const avgHour = p.avg_hour_of_day || 0;
+    let timeText = '-';
+    let timeTooltip = '';
+    if (avgHour > 0) {
+      const hours = Math.floor(avgHour);
+      const minutes = Math.round((avgHour - hours) * 60);
+      timeText = `${hours.toString().padStart(2, '0')}:${minutes.toString().padStart(2, '0')}`;
+      
+      // Stunden-Verteilung für Tooltip
+      try {
+        const hourDist = JSON.parse(p.hour_distribution_json || '{}');
+        const hourKeys = Object.keys(hourDist).sort((a, b) => hourDist[b] - hourDist[a]);
+        if (hourKeys.length > 0) {
+          const top3 = hourKeys.slice(0, 3).map(h => {
+            const hNum = parseInt(h);
+            return `${hNum}:00 (${hourDist[h]}x)`;
+          }).join('<br>');
+          timeTooltip = `Häufigste Stunden:<br>${top3}`;
+        }
+      } catch (e) {}
+    }
+    
+    // Multi-Mode Info (intelligent!)
+    const modes = p.operating_modes || [];
+    const modeLabels = modes.map(m => {
+      const modeIcon = m.type === 'startup' ? '↑' : (m.type === 'shutdown' ? '↓' : (m.type === 'standby' ? '◯' : '●'));
+      return `${modeIcon}${m.type.slice(0,3).toUpperCase()}(${m.avg_power_w.toFixed(0)}W)`;
+    }).join(' ');
+    const modeInfo = p.has_multiple_modes ? `<span style="font-size:0.8rem;color:#666;">${modeLabels}</span>` : '<span style="font-size:0.8rem;color:#999;">-</span>';
+    
+    // Intervall-Zelle mit Tooltip
+    const intervalCell = intervalTooltip 
+      ? `<td><div class="tooltip" style="font-size:0.85rem;color:#006d77;font-weight:600;">${intervalText}<span class="tooltiptext">${intervalTooltip}</span></div></td>`
+      : `<td style="font-size:0.85rem;color:#006d77;font-weight:600;">${intervalText}</td>`;
+    
+    // Uhrzeit-Zelle mit Tooltip
+    const timeCell = timeTooltip
+      ? `<td><div class="tooltip" style="font-size:0.85rem;color:#666;">${timeText}<span class="tooltiptext">${timeTooltip}</span></div></td>`
+      : `<td style="font-size:0.85rem;color:#666;">${timeText}</td>`;
+    
+    tr.innerHTML = `<td>${p.id}</td><td>${typeText}</td><td>${label}</td><td style="font-size:0.85rem;color:#666;">${frequency}</td>${intervalCell}${timeCell}<td style="padding:4px 2px;">${stabilityBar}</td><td>${phaseMode}</td><td>${modeInfo}</td><td>${fmt(p.avg_power_w)}</td><td>${fmt(p.peak_power_w)}</td><td>${fmt(p.duration_s)}</td><td>${p.seen_count ?? 0}</td><td><button data-id="${p.id}">Label</button></td>`;
     tbody.appendChild(tr);
   });
 
@@ -454,6 +593,14 @@ async function refresh() {
     document.getElementById('avg_power').textContent = fmt(summary.avg_power_w, ' W');
     document.getElementById('peak_power').textContent = fmt(summary.max_power_w, ' W');
     document.getElementById('reading_count').textContent = String(summary.reading_count ?? 0);
+    
+    // Muster-Statistik
+    const patternArray = Array.isArray(patterns) ? patterns : [];
+    const confirmedCount = patternArray.filter(p => p.is_confirmed).length;
+    const totalCount = patternArray.length;
+    document.getElementById('pattern_count').textContent = totalCount > 0 
+      ? `${totalCount} (${confirmedCount} best\u00e4tigt)` 
+      : '0';
     
     // Zeige Phaseninformationen und aktualisiere verfügbare Phasen
     const phases = live.phases || [];
@@ -604,6 +751,53 @@ refresh();
 setInterval(refresh, 5000);
 document.getElementById('runLearningBtn').addEventListener('click', runLearningNow);
 document.getElementById('flushDbBtn').addEventListener('click', flushDebugDb);
+document.getElementById('darkModeToggle').addEventListener('click', toggleDarkMode);
+document.getElementById('patternSearch').addEventListener('input', filterAndSortPatterns);
+document.getElementById('patternSort').addEventListener('change', (e) => {
+  currentSortBy = e.target.value;
+  filterAndSortPatterns();
+});
+
+function toggleDarkMode() {
+  const isDark = document.documentElement.classList.toggle('dark-mode');
+  localStorage.setItem('darkMode', isDark);
+  const btn = document.getElementById('darkModeToggle');
+  btn.textContent = isDark ? '☀️ Tagmodus' : '🌙 Nachtmodus';
+}
+
+function filterAndSortPatterns() {
+  const searchTerm = document.getElementById('patternSearch').value.toLowerCase();
+  let filtered = allPatterns;
+  
+  // Filtern
+  if (searchTerm) {
+    filtered = allPatterns.filter(p => {
+      const label = (p.user_label || '').toLowerCase();
+      const type = (p.suggestion_type || '').toLowerCase();
+      const candidate = (p.candidate_name || '').toLowerCase();
+      const id = String(p.id || '');
+      return label.includes(searchTerm) || type.includes(searchTerm) || 
+             candidate.includes(searchTerm) || id.includes(searchTerm);
+    });
+  }
+  
+  // Sortieren
+  filtered.sort((a, b) => {
+    const aVal = a[currentSortBy] ?? 0;
+    const bVal = b[currentSortBy] ?? 0;
+    // Für ID aufsteigend, sonst absteigend
+    return currentSortBy === 'id' ? aVal - bVal : bVal - aVal;
+  });
+  
+  renderPatterns(filtered);
+}
+
+// Dark Mode Button Text initial setzen
+if (document.documentElement.classList.contains('dark-mode')) {
+  document.getElementById('darkModeToggle').textContent = '☀️ Tagmodus';
+}
+
+
 </script>
 </body>
 </html>

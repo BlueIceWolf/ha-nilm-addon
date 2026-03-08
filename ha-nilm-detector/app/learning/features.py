@@ -69,11 +69,24 @@ class CycleFeatures:
         variance = sum((v - avg_power) ** 2 for v in values) / n
         std_dev = math.sqrt(variance)
 
-        # Rise rate (first 20% of samples or first minute)
-        rise_samples = min(max(int(n * 0.2), 3), 12)  # First 20% or max 12 samples
-        rise_duration = (samples[rise_samples - 1].timestamp - samples[0].timestamp).total_seconds()
-        rise_duration = max(rise_duration, 1.0)
-        rise_rate = (values[rise_samples - 1] - values[0]) / rise_duration
+        # Rise rate (robust: average multiple slopes across ramp)
+        # Instead of single point, calculate slopes at multiple windows
+        rise_rates = []
+        ramp_size = max(3, int(n * 0.3))  # Check up to 30% of cycle
+        for window in range(1, min(ramp_size, 12)):
+            if window < len(values):
+                dt = (samples[window].timestamp - samples[0].timestamp).total_seconds()
+                if dt > 0.1:  # Avoid division by tiny values
+                    slope = (values[window] - values[0]) / dt
+                    rise_rates.append(slope)
+        
+        # Use mean of slopes for robustness
+        if rise_rates:
+            rise_rate = sum(rise_rates) / len(rise_rates)
+        else:
+            # Fallback if no valid rates calculated
+            rise_duration = max(1.0, (samples[-1].timestamp - samples[0].timestamp).total_seconds())
+            rise_rate = (values[-1] - values[0]) / rise_duration
 
         # Fall rate (last 20% of samples)
         fall_samples = min(max(int(n * 0.2), 3), 12)
@@ -187,10 +200,19 @@ class CycleFeatures:
             return False
 
         # Motor patterns have moderate variance (cycling on/off)
-        # Variance should be 10-60% of average power squared
-        rel_variance = variance / max(avg * avg, 1.0)
+        # Use Coefficient of Variation (CV = stdev/mean) - scale-independent
+        # This is more robust than variance/(mean^2)
+        std_dev = variance ** 0.5 if variance > 0 else 0.0
+        if avg > 5.0:  # Only for meaningful power levels
+            cv = std_dev / avg
+        else:
+            cv = 0.0
 
-        if not (0.1 <= rel_variance <= 0.6):
+        # CV 0.25-0.85 = good motor pattern (25-85% variation around mean)
+        # Refrigerators: 100W avg, 50-150W cycle -> CV ~0.35-0.5 OK
+        # Well-regulated devices: CV < 0.25 (not motor pattern)
+        # Chaotic loads: CV > 0.85 (not typical motor)
+        if not (0.25 <= cv <= 0.85):
             return False
 
         # Look for periodic peaks (simple zero-crossing of detrended signal)

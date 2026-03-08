@@ -363,6 +363,8 @@ class NILMDetectionSystem:
                             "avg_power_w": cycle.avg_power_w,
                             "peak_power_w": cycle.peak_power_w,
                             "energy_wh": cycle.energy_wh,
+                            "operating_modes": cycle.operating_modes,  # Multi-mode learning!
+                            "has_multiple_modes": cycle.has_multiple_modes,
                             "active_phase_count": int(processed.metadata.get("phase_active_count", 1)),
                             "phase_mode": str(processed.metadata.get("phase_mode", "single_phase")),
                         }

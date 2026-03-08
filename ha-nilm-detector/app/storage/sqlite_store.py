@@ -249,6 +249,16 @@ class SQLiteStore:
             self._ensure_column(self._patterns_conn, "learned_patterns", "num_substates", "INTEGER DEFAULT 0")
             self._ensure_column(self._patterns_conn, "learned_patterns", "has_heating_pattern", "INTEGER DEFAULT 0")
             self._ensure_column(self._patterns_conn, "learned_patterns", "has_motor_pattern", "INTEGER DEFAULT 0")
+            
+            # Multi-mode learning (intelligent!)
+            self._ensure_column(self._patterns_conn, "learned_patterns", "operating_modes", "TEXT DEFAULT ''")  # JSON
+            self._ensure_column(self._patterns_conn, "learned_patterns", "has_multiple_modes", "INTEGER DEFAULT 0")
+            
+            # Temporal pattern tracking (for anomaly detection and prediction)
+            self._ensure_column(self._patterns_conn, "learned_patterns", "typical_interval_s", "REAL DEFAULT 0.0")  # Avg time between cycles
+            self._ensure_column(self._patterns_conn, "learned_patterns", "avg_hour_of_day", "REAL DEFAULT 12.0")  # Typical hour (0-24)
+            self._ensure_column(self._patterns_conn, "learned_patterns", "last_intervals_json", "TEXT DEFAULT '[]'")  # Last N intervals
+            self._ensure_column(self._patterns_conn, "learned_patterns", "hour_distribution_json", "TEXT DEFAULT '{}'")  # Hour frequency map
 
     def _ensure_column(
         self,
@@ -465,7 +475,7 @@ class SQLiteStore:
 
             deleted_readings = int((cur_readings.fetchone() or [0])[0])
             deleted_detections = int((cur_detections.fetchone() or [0])[0])
-            deleted_patterns = int((cur_patterns.fetchone() or [0])[0]) if reset_patterns else 0
+            deleted_patterns = int((cur_patterns.fetchone() or [0])[0]) if (reset_patterns and cur_patterns) else 0
 
             with self._conn:
                 self._conn.execute("DELETE FROM power_readings")
@@ -763,7 +773,12 @@ class SQLiteStore:
                 SELECT id, created_at, updated_at, first_seen, last_seen, seen_count,
                        avg_power_w, peak_power_w, duration_s, energy_wh,
                       suggestion_type, user_label, status,
-                      COALESCE(avg_active_phases, 1.0), COALESCE(phase_mode, 'unknown')
+                      COALESCE(avg_active_phases, 1.0), COALESCE(phase_mode, 'unknown'),
+                      COALESCE(power_variance, 0.0), COALESCE(duty_cycle, 0.0),
+                      COALESCE(peak_to_avg_ratio, 1.0),
+                      COALESCE(operating_modes, '[]'), COALESCE(has_multiple_modes, 0),
+                      COALESCE(typical_interval_s, 0.0), COALESCE(avg_hour_of_day, 12.0),
+                      COALESCE(last_intervals_json, '[]'), COALESCE(hour_distribution_json, '{}')
                 FROM learned_patterns
                 ORDER BY seen_count DESC, last_seen DESC
                 LIMIT ?
@@ -773,6 +788,47 @@ class SQLiteStore:
             rows = cur.fetchall()
             out: List[Dict] = []
             for row in rows:
+                seen_count = int(row[5])
+                created_ts = datetime.fromisoformat(row[1]) if row[1] else datetime.now()
+                last_seen_ts = datetime.fromisoformat(row[4]) if row[4] else created_ts
+                
+                # Berechne Stabilität (Varianz normiert)
+                avg_power = float(row[6])
+                power_variance = float(row[15] or 0.0)
+                if avg_power > 10:
+                    stability_score = max(0, 100 - (power_variance * 100))  # 100 = sehr stabil
+                else:
+                    stability_score = 50
+                
+                # Berechne Spitzenwert/Durchschnitt Verhältnis
+                peak_to_avg = float(row[17] or 1.0)
+                
+                # Berechne Häufigkeitsmuster
+                days_since_created = max(1, (last_seen_ts - created_ts).days)
+                frequency_per_day = seen_count / max(1, days_since_created) if days_since_created > 0 else 0
+                
+                # Bestimme Häufigkeits-Label
+                if frequency_per_day >= 1.5:
+                    frequency_label = f">1x tägl. (~{int(frequency_per_day)}x)"
+                elif frequency_per_day >= 0.5:
+                    frequency_label = "1x tägl."
+                elif frequency_per_day >= 0.2:
+                    frequency_label = "1-2x/Woche"
+                elif frequency_per_day >= 0.05:
+                    frequency_label = "1-2x/Mon."
+                else:
+                    frequency_label = "selten"
+                
+                # Parse operating modes (multi-mode learning!)
+                operating_modes = []
+                try:
+                    modes_json = str(row[18] or "[]")
+                    operating_modes = json.loads(modes_json) if modes_json else []
+                except Exception:
+                    operating_modes = []
+                
+                has_multiple_modes = bool(int(row[19] or 0))
+                
                 out.append(
                     {
                         "id": int(row[0]),
@@ -780,7 +836,7 @@ class SQLiteStore:
                         "updated_at": row[2],
                         "first_seen": row[3],
                         "last_seen": row[4],
-                        "seen_count": int(row[5]),
+                        "seen_count": seen_count,
                         "avg_power_w": float(row[6]),
                         "peak_power_w": float(row[7]),
                         "duration_s": float(row[8]),
@@ -790,6 +846,18 @@ class SQLiteStore:
                         "status": row[12],
                         "avg_active_phases": float(row[13] or 1.0),
                         "phase_mode": row[14] or "unknown",
+                        "power_variance": power_variance,
+                        "duty_cycle": float(row[16] or 0.0),
+                        "peak_to_avg_ratio": peak_to_avg,
+                        "stability_score": int(stability_score),
+                        "frequency_label": frequency_label,
+                        "frequency_per_day": round(frequency_per_day, 2),
+                        "operating_modes": operating_modes,  # Multi-mode learning!
+                        "has_multiple_modes": has_multiple_modes,
+                        "typical_interval_s": float(row[20] or 0.0),
+                        "avg_hour_of_day": float(row[21] or 12.0),
+                        "last_intervals_json": row[22] or "[]",
+                        "hour_distribution_json": row[23] or "{}",
                         "candidate_name": self._normalize_pattern_name(row[11] or row[10]),
                         "is_confirmed": bool(str(row[11] or "").strip()),
                     }
@@ -828,6 +896,47 @@ class SQLiteStore:
                 energy = float(best["energy_wh"]) * (1.0 - alpha) + float(cycle["energy_wh"]) * alpha
                 avg_active_phases = float(best.get("avg_active_phases", 1.0)) * (1.0 - alpha) + float(cycle.get("active_phase_count", 1.0)) * alpha
                 phase_mode = str(cycle.get("phase_mode") or best.get("phase_mode") or "unknown")
+                
+                # Temporal pattern tracking - calculate interval since last occurrence
+                last_seen_str = best.get("last_seen", cycle["end_ts"])
+                try:
+                    last_seen_dt = datetime.fromisoformat(last_seen_str)
+                    cycle_end_dt = datetime.fromisoformat(cycle["end_ts"])
+                    interval_s = (cycle_end_dt - last_seen_dt).total_seconds()
+                    
+                    # Update last_intervals history (keep last 10)
+                    last_intervals = json.loads(best.get("last_intervals_json", "[]"))
+                    last_intervals.append(interval_s)
+                    if len(last_intervals) > 10:
+                        last_intervals = last_intervals[-10:]
+                    last_intervals_json = json.dumps(last_intervals)
+                    
+                    # Calculate typical interval (median of last intervals)
+                    if len(last_intervals) >= 2:
+                        sorted_intervals = sorted(last_intervals)
+                        median_idx = len(sorted_intervals) // 2
+                        typical_interval_s = sorted_intervals[median_idx]
+                    else:
+                        typical_interval_s = interval_s
+                    
+                    # Update hour distribution
+                    cycle_hour = cycle_end_dt.hour + cycle_end_dt.minute / 60.0
+                    hour_dist = json.loads(best.get("hour_distribution_json", "{}"))
+                    hour_bucket = str(cycle_end_dt.hour)  # Bucket by hour
+                    hour_dist[hour_bucket] = hour_dist.get(hour_bucket, 0) + 1
+                    hour_distribution_json = json.dumps(hour_dist)
+                    
+                    # Calculate weighted average hour of day
+                    total_count = sum(hour_dist.values())
+                    weighted_hour = sum(int(h) * c for h, c in hour_dist.items()) / total_count
+                    avg_hour_of_day = weighted_hour
+                    
+                except (ValueError, TypeError) as e:
+                    logger.debug(f"Failed to calculate temporal patterns: {e}")
+                    typical_interval_s = best.get("typical_interval_s", 0.0)
+                    avg_hour_of_day = best.get("avg_hour_of_day", 12.0)
+                    last_intervals_json = best.get("last_intervals_json", "[]")
+                    hour_distribution_json = best.get("hour_distribution_json", "{}")
 
                 with self._patterns_conn:
                     self._patterns_conn.execute(
@@ -835,7 +944,9 @@ class SQLiteStore:
                         UPDATE learned_patterns
                         SET updated_at = ?, last_seen = ?, seen_count = ?,
                             avg_power_w = ?, peak_power_w = ?, duration_s = ?, energy_wh = ?,
-                            avg_active_phases = ?, phase_mode = ?
+                            avg_active_phases = ?, phase_mode = ?,
+                            typical_interval_s = ?, avg_hour_of_day = ?,
+                            last_intervals_json = ?, hour_distribution_json = ?
                         WHERE id = ?
                         """,
                         (
@@ -848,6 +959,10 @@ class SQLiteStore:
                             energy,
                             avg_active_phases,
                             phase_mode,
+                            typical_interval_s,
+                            avg_hour_of_day,
+                            last_intervals_json,
+                            hour_distribution_json,
                             int(best["id"]),
                         ),
                     )
@@ -882,6 +997,20 @@ class SQLiteStore:
                 has_heating = 1 if cycle.get("has_heating_pattern", False) else 0
                 has_motor = 1 if cycle.get("has_motor_pattern", False) else 0
                 
+                # Multi-mode learning
+                operating_modes_json = json.dumps(cycle.get("operating_modes", []))
+                has_multiple_modes = 1 if cycle.get("has_multiple_modes", False) else 0
+                
+                # Temporal pattern tracking - initialize for new pattern
+                try:
+                    cycle_end_dt = datetime.fromisoformat(cycle["end_ts"])
+                    initial_hour_of_day = cycle_end_dt.hour + cycle_end_dt.minute / 60.0
+                    initial_hour_bucket = str(cycle_end_dt.hour)
+                    initial_hour_dist_json = json.dumps({initial_hour_bucket: 1})
+                except (ValueError, TypeError):
+                    initial_hour_of_day = 12.0
+                    initial_hour_dist_json = "{}"
+                
                 cur = self._patterns_conn.execute(
                     """
                     INSERT INTO learned_patterns (
@@ -891,8 +1020,10 @@ class SQLiteStore:
                         avg_active_phases, phase_mode,
                         power_variance, rise_rate_w_per_s, fall_rate_w_per_s,
                         duty_cycle, peak_to_avg_ratio, num_substates,
-                        has_heating_pattern, has_motor_pattern
-                    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                        has_heating_pattern, has_motor_pattern,
+                        operating_modes, has_multiple_modes,
+                        typical_interval_s, avg_hour_of_day, last_intervals_json, hour_distribution_json
+                    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                     """,
                     (
                         now,
@@ -917,6 +1048,12 @@ class SQLiteStore:
                         num_substates,
                         has_heating,
                         has_motor,
+                        operating_modes_json,
+                        has_multiple_modes,
+                        0.0,  # typical_interval_s - no interval yet for new pattern
+                        initial_hour_of_day,  # avg_hour_of_day
+                        "[]",  # last_intervals_json - empty for new pattern
+                        initial_hour_dist_json,  # hour_distribution_json
                     ),
                 )
                 row_id = cur.lastrowid if cur.lastrowid is not None else 0

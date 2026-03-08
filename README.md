@@ -7,7 +7,7 @@
 Home Assistant Add-on fuer lokale, datenschutzfreundliche NILM-Erkennung
 (Non-Intrusive Load Monitoring).
 
-Aktueller Stand: `v0.2.10` (Beta, aktiv weiterentwickelt).
+Aktueller Stand: `v0.3.0` (Beta, aktiv weiterentwickelt).
 
 ## Features
 
@@ -20,6 +20,32 @@ Aktueller Stand: `v0.2.10` (Beta, aktiv weiterentwickelt).
    - `Bereich markieren` im Verlauf und direkt als Muster speichern
    - `DB leeren (Debug)` fuer Testphasen
 - SQLite Persistenz (`/data/nilm.sqlite3`) fuer Messwerte, Muster und robuste Neustarts.
+
+
+## Neue Features in v0.3.0 🎉
+
+### 🎯 Intelligente Pattern-Erkennung
+- **Adaptive Schwellwerte**: Automatische Anpassung an wechselnde Grundlasten (z.B. 10W → 50W)
+- **Rauschfilterung**: Median-Filter eliminiert transiente Störungen (500W Spikes werden ignoriert)
+- **Debouncing**: 2-Sample-Bestätigung verhindert Falsch-Trigger bei oszillierenden Signalen
+
+### ⏰ Temporale Muster-Verfolgung
+- Lernt **typische Intervalle** zwischen Zyklen (Kühlschrank: alle 30min)
+- Erkennt **durchschnittliche Tageszeiten** (Waschmaschine: normalerweise 18:00)
+- Speichert Verlauf für zukünftige **Anomalie-Erkennung**
+
+### 🌙 Verbesserte Web UI
+- **Dark Mode** - Nachtmodus-Toggle für angenehmes Arbeiten
+- **Muster-Suche** - Schnelles Filtern nach Label, Typ oder ID
+- **Flexible Sortierung** - Nach Häufigkeit, Leistung, Dauer, Stabilität, Intervall
+- **Interactive Tooltips** - Detaillierte Informationen bei Hover (Intervall-Historie, Stunden-Verteilung)
+- **Temporale Spalten** - Zeigt wann und wie oft Geräte normalerweise laufen
+
+### 🔧 Technische Verbesserungen
+- Kürzere Zyklen erkannt (5s statt 20s) → Mikrowelle, Toaster jetzt sichtbar
+- Optimierter Noise-Filter (Window 3 statt 5) → Schnellere Response
+- Erweiterte SQLite-Schema → Temporale Daten persistent gespeichert
+
 
 ## Schnellstart
 

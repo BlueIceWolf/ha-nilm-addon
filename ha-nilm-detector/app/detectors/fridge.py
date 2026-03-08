@@ -1,5 +1,6 @@
+from collections import deque
 from datetime import datetime, timedelta
-from typing import List, Optional
+from typing import Deque, Optional
 
 import numpy as np
 
@@ -16,15 +17,13 @@ class FridgeDetector:
         self.config = config
         self.name = config.name
         self.current_state = DeviceState.OFF
-        self.power_history: List[PowerReading] = []
+        self.power_history: Deque[PowerReading] = deque(maxlen=300)
         self.cycle_start: Optional[datetime] = None
         self.last_cycle_duration = 0.0
         self.startup_phase_end: Optional[datetime] = None
 
     def detect(self, reading: PowerReading) -> Optional[DetectionResult]:
         self.power_history.append(reading)
-        if len(self.power_history) > 300:
-            self.power_history.pop(0)
 
         power_w = reading.power_w
         if self.current_state == DeviceState.OFF:
@@ -86,7 +85,8 @@ class FridgeDetector:
         phase_total = float(reading.power_w)
 
         # Use a short history window to approximate idle baseline for this phase.
-        recent = [r.power_w for r in self.power_history[-60:]]
+        # Convert deque to list for slicing (still O(1) amortized)
+        recent = [r.power_w for r in list(self.power_history)[-60:]]
         baseline = min(recent) if recent else 0.0
 
         estimated = max(0.0, phase_total - baseline)

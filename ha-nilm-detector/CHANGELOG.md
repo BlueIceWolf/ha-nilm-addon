@@ -1,4 +1,42 @@
 # Changelog
+## 0.3.0
+
+**Große Feature-Verbesserungen**:
+- 🎯 **Adaptive Schwellwerte**: Automatische Anpassung der On/Off-Thresholds an wechselnde Baselines (10W → 50W transparent handled)
+  - Baseline-Tracking via Median der letzten 60 Idle-Samples
+  - Dynamische Schwellwerte: on = baseline + 30W, off = baseline + 10W
+  - 20W Hysteresis-Gap verhindert Oszillation
+
+- 🔇 **Rauschfilterung**: Median-Filter (Window=3) für stabile Zykluserkennung
+  - 500W Spikes werden von echter 100W-Last getrennt
+  - Verhindert Falsch-Trigger durch transiente Störungen
+
+- ⏱️ **Debouncing**: Erfordert 2 aufeinanderfolgende Samples für Zustandswechsel
+  - Eliminiert Falsch-Zyklen bei oszillierenden Signalen (45W↔15W)
+  - Verhindert "Flackern" in der Geräteerkennung
+
+- ⏰ **Temporale Muster-Verfolgung**: Lernt zeitliche Verhaltensmuster
+  - Typisches Intervall zwischen Zyklen (z.B. Kühlschrank alle 30min)
+  - Durchschnittliche Tageszeit (z.B. Waschmaschine um 18:00)
+  - Speichert letzte 10 Intervalle für Anomalie-Erkennung
+
+- 🌙 **Web UI Verbesserungen**:
+  - **Dark Mode** - Nachtmodus mit einem Klick umschaltbar
+  - **Muster-Suche** - Filter nach Label, Typ, ID
+  - **Flexible Sortierung** - Nach Häufigkeit, Leistung, Dauer, Stabilität, Intervall oder ID
+  - **Temporale Spalten** - Zeigt typisches Intervall und durchschnittliche Uhrzeit
+  - **Interactive Tooltips** - Hover über Intervall/Uhrzeit für Details
+
+**Technische Verbesserungen**:
+- min_cycle_seconds von 20s → 5s reduziert (Mikrowelle/Toaster jetzt erkennbar)
+- Noise filter window von 5 → 3 optimiert (schnellere Response)
+- SQLite-Schema erweitert: `typical_interval_s`, `avg_hour_of_day`, `last_intervals_json`, `hour_distribution_json`
+- Bug-Fixes: Circular imports, deque slicing, type hints
+
+**Validierung**:
+- Comprehensive test suite mit 6 Szenarien
+- Alle Tests bestehen (adaptive thresholds, noise filtering, debouncing, multi-device, temporal patterns, mode detection)
+
 ## 0.2.11
 
 - Updated patterns database path to `/addon_configs/ha_nilm_detector/nilm_patterns.sqlite3` (recommended HA addon config location).
