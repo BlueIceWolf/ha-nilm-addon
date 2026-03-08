@@ -1,4 +1,16 @@
 # Changelog
+## 0.4.0
+
+**Neue Features:**
+- **Einzelne Muster löschen**: Jedes Muster hat jetzt einen "Löschen"-Button in der Tabelle
+- **Separate Clear-Buttons**: "Live-Daten löschen" und "Muster löschen" getrennt (statt generischem "DB leeren")
+- Bessere Kontrolle über was gelöscht wird - Muster bleiben beim Löschen von Live-Daten erhalten
+
+**Backend:**
+- `DELETE /api/patterns/{id}/delete` endpoint für einzelnes Muster löschen
+- `POST /api/debug/clear-readings` endpoint nur Live-Readings löschen
+- `POST /api/debug/clear-patterns` endpoint nur Patterns löschen
+
 ## 0.3.6
 
 - **Fixed timezone-aware datetime subtraction error**: Normalize all parsed datetimes to naive before calculations in list_patterns().

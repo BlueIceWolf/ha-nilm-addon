@@ -1,3 +1,23 @@
+# Release 0.4.0
+
+## Store Kurztext
+- Neue UI-Features: Einzelne Muster löschen, separate Clear-Buttons für Live-Daten vs. Muster
+- Bessere Kontrolle: Muster bleiben beim Löschen von Live-Daten erhalten
+
+## Highlights
+- **Pattern management**: Delete individual patterns with button in table
+- **Selective clearing**: Separate buttons to clear only live readings or only patterns
+- No more accidental pattern deletion when clearing readings
+- Each pattern row has Label + Delete buttons
+- Cleaner UI with targeted data management
+
+## Technical Details
+- New endpoints: `/api/patterns/{id}/delete`, `/api/debug/clear-readings`, `/api/debug/clear-patterns`
+- Storage functions: `delete_pattern()`, `clear_readings_only()`, `clear_patterns_only()`
+- Old "DB leeren" button replaced with targeted "Live-Daten löschen" and "Muster löschen"
+
+---
+
 # Release 0.3.6
 
 ## Store Kurztext

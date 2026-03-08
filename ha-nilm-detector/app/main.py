@@ -120,7 +120,10 @@ class NILMDetectionSystem:
                 get_series_data=self._build_series_payload,
                 get_patterns_data=self._build_patterns_payload,
                 set_pattern_label=self._set_pattern_label,
+                delete_pattern=self._delete_pattern,
                 flush_debug_data=self._flush_debug_db,
+                clear_readings_only=self._clear_readings_only,
+                clear_patterns_only=self._clear_patterns_only,
                 run_learning_now=self._run_learning_now,
                 import_history_from_ha=self._import_history_from_ha,
                 create_pattern_from_range=self._create_pattern_from_range,
@@ -269,6 +272,24 @@ class NILMDetectionSystem:
             end_time=end_time,
             user_label=label
         )
+
+    def _delete_pattern(self, pattern_id: int) -> bool:
+        """Delete a single learned pattern."""
+        if not self.storage:
+            return False
+        return self.storage.delete_pattern(pattern_id=pattern_id)
+
+    def _clear_readings_only(self) -> Dict:
+        """Clear only live readings, keep patterns."""
+        if not self.storage:
+            return {"ok": False, "error": "storage not enabled"}
+        return self.storage.clear_readings_only()
+
+    def _clear_patterns_only(self) -> Dict:
+        """Clear only patterns, keep live readings."""
+        if not self.storage:
+            return {"ok": False, "error": "storage not enabled"}
+        return self.storage.clear_patterns_only()
 
     def _flush_debug_db(self, reset_patterns: bool = True) -> Dict:
         if not self.storage:

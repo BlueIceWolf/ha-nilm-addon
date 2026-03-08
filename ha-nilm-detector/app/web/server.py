@@ -113,6 +113,17 @@ def _html_page() -> str:
     }
     button:hover { background: var(--accent-soft); }
     button.active { background: var(--accent); color: #fff; }
+    button.btn-delete {
+      background: #fee;
+      border-color: #fcc;
+      color: #c33;
+      padding: 3px 6px;
+      font-size: 0.8rem;
+    }
+    button.btn-delete:hover {
+      background: #fcc;
+      border-color: #c33;
+    }
     .chart-controls {
       display: flex;
       gap: 8px;
@@ -182,7 +193,8 @@ def _html_page() -> str:
     </div>
     <div style=\"margin-bottom: 12px; display: flex; gap: 8px; flex-wrap: wrap; align-items: center;\">
       <button id=\"runLearningBtn\" title=\"Lernlauf sofort starten\">Lernen jetzt ausführen</button>
-      <button id=\"flushDbBtn\" title=\"Nur für Debugging\">DB leeren (Debug)</button>
+      <button id=\"clearReadingsBtn\" title=\"Nur Live-Daten (Readings) löschen\">🗑️ Live-Daten löschen</button>
+      <button id=\"clearPatternsBtn\" title=\"Nur gelernte Muster löschen\">🗑️ Muster löschen</button>
       <button id=\"importHistoryBtn\" title=\"Verlauf aus Home Assistant importieren\">HA Verlauf importieren</button>
       <button id=\"darkModeToggle\" title=\"Hell/Dunkel umschalten\">🌙 Nachtmodus</button>
     </div>
@@ -312,27 +324,45 @@ function setStatus(message) {
   statusEl.textContent = message;
 }
 
-async function flushDebugDb() {
-  const sure = confirm('Soll die Debug-Datenbank wirklich geleert werden?');
+async function clearReadingsOnly() {
+  const sure = confirm('Nur Live-Daten (Readings) löschen? Muster bleiben erhalten!');
   if (!sure) return;
 
   try {
-    setStatus('Leere Datenbank...');
-    const response = await fetch(apiPath('api/debug/flush-db'), {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ reset_patterns: true })
+    setStatus('Lösche Live-Daten...');
+    const response = await fetch(apiPath('api/debug/clear-readings'), {
+      method: 'POST'
     });
     const payload = await response.json();
     if (!response.ok || !payload.ok) {
       throw new Error(payload.error || `HTTP ${response.status}`);
     }
-    const deleted = payload.deleted || {};
-    alert(`DB geleert. Messwerte: ${deleted.power_readings || 0}, Erkennungen: ${deleted.detections || 0}, Muster: ${deleted.learned_patterns || 0}`);
+    alert('Live-Daten gelöscht. Muster bleiben erhalten.');
     await refresh();
   } catch (err) {
-    alert(`DB-Flush fehlgeschlagen: ${err}`);
-    setStatus(`DB-Flush fehlgeschlagen: ${err}`);
+    alert(`Löschen fehlgeschlagen: ${err}`);
+    setStatus(`Löschen fehlgeschlagen: ${err}`);
+  }
+}
+
+async function clearPatternsOnly() {
+  const sure = confirm('Nur gelernte Muster löschen? Live-Daten bleiben erhalten!');
+  if (!sure) return;
+
+  try {
+    setStatus('Lösche Muster...');
+    const response = await fetch(apiPath('api/debug/clear-patterns'), {
+      method: 'POST'
+    });
+    const payload = await response.json();
+    if (!response.ok || !payload.ok) {
+      throw new Error(payload.error || `HTTP ${response.status}`);
+    }
+    alert('Muster gelöscht. Live-Daten bleiben erhalten.');
+    await refresh();
+  } catch (err) {
+    alert(`Löschen fehlgeschlagen: ${err}`);
+    setStatus(`Löschen fehlgeschlagen: ${err}`);
   }
 }
 
@@ -676,11 +706,11 @@ function renderPatterns(patterns) {
       ? `<td><div class="tooltip" style="font-size:0.85rem;color:#666;">${timeText}<span class="tooltiptext">${timeTooltip}</span></div></td>`
       : `<td style="font-size:0.85rem;color:#666;">${timeText}</td>`;
     
-    tr.innerHTML = `<td>${p.id}</td><td>${typeText}</td><td>${label}</td><td style="font-size:0.85rem;color:#666;">${frequency}</td>${intervalCell}${timeCell}<td style="padding:4px 2px;">${stabilityBar}</td><td>${phaseMode}</td><td>${modeInfo}</td><td>${fmt(p.avg_power_w)}</td><td>${fmt(p.peak_power_w)}</td><td>${fmt(p.duration_s)}</td><td>${p.seen_count ?? 0}</td><td><button data-id="${p.id}">Label</button></td>`;
+    tr.innerHTML = `<td>${p.id}</td><td>${typeText}</td><td>${label}</td><td style="font-size:0.85rem;color:#666;">${frequency}</td>${intervalCell}${timeCell}<td style="padding:4px 2px;">${stabilityBar}</td><td>${phaseMode}</td><td>${modeInfo}</td><td>${fmt(p.avg_power_w)}</td><td>${fmt(p.peak_power_w)}</td><td>${fmt(p.duration_s)}</td><td>${p.seen_count ?? 0}</td><td><button data-id="${p.id}" class="btn-label">Label</button> <button data-id="${p.id}" class="btn-delete">Löschen</button></td>`;
     tbody.appendChild(tr);
   });
 
-  tbody.querySelectorAll('button[data-id]').forEach(btn => {
+  tbody.querySelectorAll('button.btn-label[data-id]').forEach(btn => {
     btn.addEventListener('click', async () => {
       const id = Number(btn.getAttribute('data-id'));
       const label = prompt('Welches Gerät ist das? (z.B. Kühlschrank)');
@@ -695,6 +725,22 @@ function renderPatterns(patterns) {
         await refresh();
       } catch (err) {
         alert(`Konnte Label nicht speichern: ${err}`);
+      }
+    });
+  });
+
+  tbody.querySelectorAll('button.btn-delete[data-id]').forEach(btn => {
+    btn.addEventListener('click', async () => {
+      const id = Number(btn.getAttribute('data-id'));
+      if (!confirm(`Muster ${id} wirklich löschen?`)) return;
+      try {
+        const res = await fetch(apiPath(`api/patterns/${id}/delete`), {
+          method: 'POST'
+        });
+        if (!res.ok) throw new Error(`HTTP ${res.status}`);
+        await refresh();
+      } catch (err) {
+        alert(`Konnte Muster nicht löschen: ${err}`);
       }
     });
   });
@@ -881,7 +927,8 @@ async function createPatternFromRange(startIdx, endIdx) {
 refresh();
 setInterval(refresh, 5000);
 document.getElementById('runLearningBtn').addEventListener('click', runLearningNow);
-document.getElementById('flushDbBtn').addEventListener('click', flushDebugDb);
+document.getElementById('clearReadingsBtn').addEventListener('click', clearReadingsOnly);
+document.getElementById('clearPatternsBtn').addEventListener('click', clearPatternsOnly);
 document.getElementById('importHistoryBtn').addEventListener('click', importHistoryFromHA);
 document.getElementById('darkModeToggle').addEventListener('click', toggleDarkMode);
 document.getElementById('windowSelect').addEventListener('change', async (e) => {
@@ -964,7 +1011,10 @@ class StatsWebServer:
         get_series_data: Callable[[int, int], List[Dict]],
         get_patterns_data: Optional[Callable[[], List[Dict]]] = None,
         set_pattern_label: Optional[Callable[[int, str], bool]] = None,
+        delete_pattern: Optional[Callable[[int], bool]] = None,
         flush_debug_data: Optional[Callable[[bool], Dict]] = None,
+        clear_readings_only: Optional[Callable[[], Dict]] = None,
+        clear_patterns_only: Optional[Callable[[], Dict]] = None,
         run_learning_now: Optional[Callable[[], Dict]] = None,
         import_history_from_ha: Optional[Callable[[int], Dict]] = None,
         create_pattern_from_range: Optional[Callable[[str, str, str], Dict]] = None,
@@ -976,7 +1026,10 @@ class StatsWebServer:
         self.get_series_data = get_series_data
         self.get_patterns_data = get_patterns_data
         self.set_pattern_label = set_pattern_label
+        self.delete_pattern = delete_pattern
         self.flush_debug_data = flush_debug_data
+        self.clear_readings_only = clear_readings_only
+        self.clear_patterns_only = clear_patterns_only
         self.run_learning_now = run_learning_now
         self.import_history_from_ha = import_history_from_ha
         self.create_pattern_from_range = create_pattern_from_range
@@ -1200,6 +1253,56 @@ class StatsWebServer:
                         return
 
                     result = parent.create_pattern_from_range(start_time, end_time, label)
+                    if not result.get("ok"):
+                        self._send_json(result, status=500)
+                        return
+
+                    self._send_json(result)
+                    return
+
+                if parsed.path.startswith("/api/patterns/") and parsed.path.endswith("/delete"):
+                    if not parent.delete_pattern:
+                        self._send_json({"error": "pattern deletion not enabled"}, status=400)
+                        return
+
+                    parts = [part for part in parsed.path.split("/") if part]
+                    if len(parts) != 4:
+                        self._send_json({"error": "invalid path"}, status=400)
+                        return
+
+                    try:
+                        pattern_id = int(parts[2])
+                    except ValueError:
+                        self._send_json({"error": "invalid pattern id"}, status=400)
+                        return
+
+                    ok = parent.delete_pattern(pattern_id)
+                    if not ok:
+                        self._send_json({"error": "failed to delete pattern"}, status=500)
+                        return
+
+                    self._send_json({"ok": True})
+                    return
+
+                if parsed.path == "/api/debug/clear-readings":
+                    if not parent.clear_readings_only:
+                        self._send_json({"error": "clear readings not enabled"}, status=400)
+                        return
+
+                    result = parent.clear_readings_only()
+                    if not result.get("ok"):
+                        self._send_json(result, status=500)
+                        return
+
+                    self._send_json(result)
+                    return
+
+                if parsed.path == "/api/debug/clear-patterns":
+                    if not parent.clear_patterns_only:
+                        self._send_json({"error": "clear patterns not enabled"}, status=400)
+                        return
+
+                    result = parent.clear_patterns_only()
                     if not result.get("ok"):
                         self._send_json(result, status=500)
                         return

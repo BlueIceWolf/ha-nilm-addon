@@ -1122,6 +1122,49 @@ class SQLiteStore:
             logger.error(f"Failed to label pattern {pattern_id}: {e}", exc_info=True)
             return False
 
+    def delete_pattern(self, pattern_id: int) -> bool:
+        """Delete a single learned pattern by ID."""
+        if not self._patterns_conn:
+            return False
+        try:
+            with self._patterns_conn:
+                self._patterns_conn.execute(
+                    "DELETE FROM learned_patterns WHERE id = ?",
+                    (int(pattern_id),)
+                )
+            logger.info(f"Deleted pattern {pattern_id}")
+            return True
+        except Exception as e:
+            logger.error(f"Failed to delete pattern {pattern_id}: {e}", exc_info=True)
+            return False
+
+    def clear_readings_only(self) -> Dict:
+        """Clear only live power readings and detections, keep learned patterns."""
+        if not self._conn:
+            return {"ok": False, "error": "storage not connected"}
+        try:
+            with self._conn:
+                self._conn.execute("DELETE FROM power_readings")
+                self._conn.execute("DELETE FROM detections")
+            logger.info("Cleared live readings and detections (patterns preserved)")
+            return {"ok": True, "cleared": "readings"}
+        except Exception as e:
+            logger.error(f"Failed to clear readings: {e}", exc_info=True)
+            return {"ok": False, "error": str(e)}
+
+    def clear_patterns_only(self) -> Dict:
+        """Clear only learned patterns, keep live readings."""
+        if not self._patterns_conn:
+            return {"ok": False, "error": "patterns storage not connected"}
+        try:
+            with self._patterns_conn:
+                self._patterns_conn.execute("DELETE FROM learned_patterns")
+            logger.info("Cleared learned patterns (live readings preserved)")
+            return {"ok": True, "cleared": "patterns"}
+        except Exception as e:
+            logger.error(f"Failed to clear patterns: {e}", exc_info=True)
+            return {"ok": False, "error": str(e)}
+
     def create_pattern_from_range(self, start_time: str, end_time: str, user_label: str) -> Dict:
         """Create a learned pattern from a manually selected time range in the UI."""
         if not self._conn or not self._patterns_conn:
