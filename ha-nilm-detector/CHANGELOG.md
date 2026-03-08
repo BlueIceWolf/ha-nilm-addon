@@ -1,4 +1,9 @@
 # Changelog
+## 0.4.4
+
+**Bugfix:**
+- Behoben: IndentationError in pattern_learner.py durch verwaiste Debug-Zeile (Container-Start schlägt nicht mehr fehl)
+
 ## 0.4.3
 
 **Neue Features:**

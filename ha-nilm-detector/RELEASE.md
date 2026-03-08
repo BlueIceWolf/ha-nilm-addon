@@ -1,3 +1,24 @@
+# Release 0.4.4
+
+## Store Kurztext
+- **Kritischer Bugfix**: IndentationError behoben - Container startet wieder korrekt
+
+## Highlights
+- Fixed IndentationError in pattern_learner.py that prevented addon from starting
+- Removed orphaned debug line from merge conflict
+
+## Technical Details
+Orphaned line at line 258:
+```python
+                logger.debug(f"Baseline updated: {self._baseline_power_w:.1f}W (from {len(self._baseline_history)} samples)")
+```
+
+This line was outside any function scope, causing Python interpreter to fail on import.
+
+**Impact:** Without this fix, addon completely fails to start with IndentationError
+
+---
+
 # Release 0.4.3
 
 ## Store Kurztext
