@@ -1,3 +1,39 @@
+# Release 0.4.2
+
+## Store Kurztext
+- **Intelligente 3-Phasen-Erkennung**: Unterscheidet echte 3-Phasen-Geräte von mehreren 1-Phasen-Geräten
+- Prüft synchrone Anstiege auf allen Phasen
+
+## Highlights
+- **Synchronized phase rise detection**: Checks if all phases rise within 10 seconds → true 3-phase device
+- **Prevents false classification**: Distinguishes multiple 1-phase devices (e.g., microwave on L1 + kettle on L2) from real 3-phase appliances
+- Better accuracy for mixed-phase environments
+- Uses actual timeline analysis instead of just counting active phases
+
+## Technical Details
+New method: `PatternLearner._check_synchronized_phase_rise(samples)`:
+1. Extracts `phase_powers_w` from PowerReading metadata
+2. Finds rise point for each phase (>30W increase from baseline)
+3. Checks if all rises occur within 10-second window
+4. Sets `phase_mode = "multi_phase"` only if synchronized
+
+**Logic:**
+- Synchronized rises (≤10s apart) → true 3-phase device (e.g., heat pump, EV charger)
+- Non-synchronized rises → multiple 1-phase devices on different phases
+- Single phase data → 1-phase device
+
+## Why This Matters
+Previously: Just counted active phases → misclassified overlapping 1-phase devices as 3-phase
+
+Now: Analyzes temporal synchronization → accurate 3-phase detection even with complex multi-device scenarios
+
+Common false positives now fixed:
+- Microwave (L1) + toaster (L2) running simultaneously
+- Fridge (L1) + washing machine (L3) overlapping cycles
+- Multiple kitchen appliances on different phases
+
+---
+
 # Release 0.4.1
 
 ## Store Kurztext

@@ -201,6 +201,60 @@ class PatternLearner:
                 sorted_samples = sorted(self._baseline_history)
                 median_idx = len(sorted_samples) // 2
                 self._baseline_power_w = sorted_samples[median_idx]
+    
+    def _check_synchronized_phase_rise(self, samples: List[PowerReading]) -> bool:
+        """Check if multiple phases rise synchronously (true 3-phase device).
+        
+        A true 3-phase device has all phases rising/falling together.
+        Multiple 1-phase devices on different phases rise independently.
+        """
+        if len(samples) < 5:
+            return False
+        
+        try:
+            # Extract phase powers over time
+            phase_timeseries: Dict[str, List[Tuple[datetime, float]]] = {}
+            
+            for reading in samples:
+                # Check metadata for individual phase powers
+                if isinstance(reading.metadata, dict) and "phase_powers_w" in reading.metadata:
+                    phase_powers = reading.metadata.get("phase_powers_w", {})
+                    for phase_name, power_w in phase_powers.items():
+                        if phase_name not in phase_timeseries:
+                            phase_timeseries[phase_name] = []
+                        phase_timeseries[phase_name].append((reading.timestamp, float(power_w)))
+            
+            # Need at least 2 active phases to check synchronization
+            active_phases = {ph: ts for ph, ts in phase_timeseries.items() if len(ts) >= 3}
+            if len(active_phases) < 2:
+                return False
+            
+            # Find the rise point for each phase (first significant increase)
+            rise_times: Dict[str, Optional[datetime]] = {}
+            for phase_name, timeseries in active_phases.items():
+                # Find when power increases by >30W
+                baseline_power = timeseries[0][1]
+                for ts, power in timeseries:
+                    if power > baseline_power + 30.0:
+                        rise_times[phase_name] = ts
+                        break
+            
+            # Check if rises are synchronized (within 10 seconds window)
+            valid_rises = [t for t in rise_times.values() if t is not None]
+            if len(valid_rises) < 2:
+                return False
+            
+            rise_window_s = (max(valid_rises) - min(valid_rises)).total_seconds()
+            is_synchronized = rise_window_s <= 10.0  # Phases rise within 10s = synchronized
+            
+            if is_synchronized:
+                logger.debug(f"Synchronized 3-phase rise detected: {len(valid_rises)} phases within {rise_window_s:.1f}s")
+            
+            return is_synchronized
+            
+        except Exception as e:
+            logger.debug(f"Phase synchronization check failed: {e}")
+            return False
                 logger.debug(f"Baseline updated: {self._baseline_power_w:.1f}W (from {len(self._baseline_history)} samples)")
 
     def _build_cycle(self, end_ts: datetime) -> Optional[LearnedCycle]:
@@ -249,9 +303,21 @@ class PatternLearner:
             except Exception as e:
                 logger.debug(f"Mode analysis failed: {e}")
         
-        # Detect phase mode from samples
+        # Detect phase mode from samples with synchronization check
         phases_set = set(r.phase for r in self._cycle_samples if r.phase)
-        phase_mode = "multi_phase" if len(phases_set) > 1 else "single_phase"
+        
+        # Check if multiple phases rise synchronously (true 3-phase device)
+        # vs. just happening to have multiple phases in samples (separate 1-phase devices)
+        is_synchronized_3phase = False
+        if len(phases_set) > 1:
+            is_synchronized_3phase = self._check_synchronized_phase_rise(self._cycle_samples)
+        
+        if is_synchronized_3phase:
+            phase_mode = "multi_phase"  # True 3-phase device (synchronized)
+        elif len(phases_set) > 1:
+            phase_mode = "single_phase"  # Multiple 1-phase devices on different phases
+        else:
+            phase_mode = "single_phase"  # Single phase only
 
         return LearnedCycle(
             start_ts=self._cycle_start,

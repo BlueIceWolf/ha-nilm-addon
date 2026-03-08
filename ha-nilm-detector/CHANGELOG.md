@@ -1,4 +1,11 @@
 # Changelog
+## 0.4.2
+
+**Verbesserung:**
+- **Synchrone Phasen-Erkennung**: Unterscheidet jetzt zwischen echten 3-Phasen-Geräten (alle Phasen steigen synchron an) und mehreren 1-Phasen-Geräten auf verschiedenen Phasen (zeitlich versetzte Anstiege).
+- Prüft ob Phasen innerhalb von 10 Sekunden gemeinsam ansteigen → echtes 3-Phasen-Gerät
+- Verhindert Fehlklassifikation wenn z.B. Mikrowelle (L1) und Wasserkocher (L2) gleichzeitig laufen
+
 ## 0.4.1
 
 **Bugfix:**

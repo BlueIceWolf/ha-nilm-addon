@@ -398,7 +398,12 @@ class SmartDeviceClassifier:
     
     @staticmethod
     def _detect_phase_mode(cycle: LearnedCycle) -> PhaseMode:
-        """Detect if device operates on single-phase or three-phase power."""
+        """Detect if device operates on single-phase or three-phase power.
+        
+        Uses actual phase information from cycle data:
+        - multi_phase: All phases rise synchronously (true 3-phase device)
+        - single_phase: Single phase or multiple 1-phase devices on different phases
+        """
         # Use actual phase information from cycle data if available
         if hasattr(cycle, 'phase_mode'):
             if cycle.phase_mode == "multi_phase":
