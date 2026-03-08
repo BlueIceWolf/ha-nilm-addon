@@ -255,7 +255,6 @@ class PatternLearner:
         except Exception as e:
             logger.debug(f"Phase synchronization check failed: {e}")
             return False
-                logger.debug(f"Baseline updated: {self._baseline_power_w:.1f}W (from {len(self._baseline_history)} samples)")
 
     def _build_cycle(self, end_ts: datetime) -> Optional[LearnedCycle]:
         if not self._cycle_start or len(self._cycle_samples) < 2:
