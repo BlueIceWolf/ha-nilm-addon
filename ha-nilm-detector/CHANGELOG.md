@@ -1,4 +1,11 @@
 # Changelog
+## 0.3.3
+
+- Fixed import reconstruction to reduce artificial downward spikes by carrying forward per-phase values while rebuilding total power timeline.
+- Improved manual learning replay robustness for historical data (`debounce_samples=1`, `noise_filter_window=1`) to detect cycles more reliably.
+- Added chart time-window navigation in Web UI: selectable window (`1h/3h/6h/12h/24h`) plus `Älter` / `Neuer` scrolling.
+- Extended series API and storage access with `offset` pagination support for browsing older points.
+
 ## 0.3.2
 
 - Fixed manual `Lernen jetzt ausführen` to replay recent stored readings and actually learn new cycles before merge.

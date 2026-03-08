@@ -244,10 +244,10 @@ class NILMDetectionSystem:
             }
         return self.storage.get_summary(hours=24)
 
-    def _build_series_payload(self, limit: int) -> List[Dict]:
+    def _build_series_payload(self, limit: int, offset: int = 0) -> List[Dict]:
         if not self.storage:
             return []
-        return self.storage.get_power_series(limit=limit)
+        return self.storage.get_power_series(limit=limit, offset=offset)
 
     def _build_patterns_payload(self) -> List[Dict]:
         if not self.storage:
@@ -313,6 +313,8 @@ class NILMDetectionSystem:
             on_threshold_w=self.config.learning_on_threshold_w,
             off_threshold_w=self.config.learning_off_threshold_w,
             min_cycle_seconds=self.config.learning_min_cycle_seconds,
+            debounce_samples=1,
+            noise_filter_window=1,
         )
 
         cycles_detected = 0
@@ -377,8 +379,9 @@ class NILMDetectionSystem:
         now = datetime.now()
         start_time = now - timedelta(hours=max(1, min(int(hours), 168)))
 
-        # Bucket by second to merge L1/L2/L3 into one total reading.
-        buckets: Dict[str, Dict[str, float]] = {}
+        # Build chronological phase events and reconstruct totals with carry-forward
+        # values per phase. This avoids artificial drops when only one phase updates.
+        phase_events: List[tuple[datetime, str, float]] = []
         source_counts: Dict[str, int] = {}
         skipped_non_positive = 0
 
@@ -401,22 +404,38 @@ class NILMDetectionSystem:
                         skipped_non_positive += 1
                         continue
 
-                    # Normalize to second precision to align phases.
-                    ts_key = str(ts_raw).split(".")[0]
-                    phase_map = buckets.setdefault(ts_key, {})
-                    phase_map[phase_name] = value
+                    try:
+                        ts_obj = datetime.fromisoformat(str(ts_raw).replace("Z", "+00:00"))
+                    except ValueError:
+                        continue
+
+                    phase_events.append((ts_obj, phase_name, value))
 
             imported = 0
-            for ts_key in sorted(buckets.keys()):
-                phase_map = buckets[ts_key]
-                total_power = float(sum(phase_map.values()))
+            if not phase_events:
+                return {
+                    "ok": True,
+                    "imported": 0,
+                    "sources": source_counts,
+                    "skipped_non_positive": skipped_non_positive,
+                    "hours": max(1, min(int(hours), 168)),
+                }
+
+            phase_events.sort(key=lambda item: item[0])
+            last_phase_values: Dict[str, float] = {phase: 0.0 for phase in phase_entities.keys()}
+
+            for ts_obj, phase_name, value in phase_events:
+                last_phase_values[phase_name] = float(value)
+                total_power = float(sum(last_phase_values.values()))
+                if total_power <= 0.0:
+                    continue
+
                 metadata = {
-                    "phase_powers_w": phase_map,
+                    "phase_powers_w": dict(last_phase_values),
                     "phase_entities": phase_entities,
                     "imported_from": "ha_history",
                 }
-                ts_norm = datetime.fromisoformat(ts_key)
-                self.storage.store_reading(PowerReading(timestamp=ts_norm, power_w=total_power, phase="TOTAL", metadata=metadata))
+                self.storage.store_reading(PowerReading(timestamp=ts_obj, power_w=total_power, phase="TOTAL", metadata=metadata))
                 imported += 1
 
             return {

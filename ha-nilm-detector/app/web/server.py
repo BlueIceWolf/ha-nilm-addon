@@ -211,6 +211,18 @@ def _html_page() -> str:
           <button class=\"phase-toggle\" data-phase=\"L3\" style=\"display:none;\">L3</button>
         </div>
         <span class=\"muted\" style=\"font-size: 0.85rem; margin-left: 12px;\">|</span>
+        <label for=\"windowSelect\" class=\"muted\" style=\"font-size: 0.85rem;\">Fenster:</label>
+        <select id=\"windowSelect\" style=\"padding: 4px 8px; border: 1px solid var(--line); border-radius: 8px; background: var(--card); color: var(--ink);\">
+          <option value=\"120\">1h</option>
+          <option value=\"360\" selected>3h</option>
+          <option value=\"720\">6h</option>
+          <option value=\"1440\">12h</option>
+          <option value=\"2880\">24h</option>
+        </select>
+        <button id=\"olderBtn\" title=\"Ältere Messpunkte anzeigen\">← Älter</button>
+        <button id=\"newerBtn\" title=\"Neuere Messpunkte anzeigen\">Neuer →</button>
+        <span id=\"windowInfo\" class=\"muted\" style=\"font-size: 0.8rem;\">3h, aktuell</span>
+        <span class=\"muted\" style=\"font-size: 0.85rem; margin-left: 12px;\">|</span>
         <button id=\"selectRangeBtn\" title=\"Bereich im Graphen markieren und als Muster speichern\">📍 Bereich markieren</button>
       </div>
       <div style=\"position: relative;\">
@@ -261,6 +273,8 @@ let isSelectingRange = false;
 let selectionStart = null;
 let allPatterns = [];
 let currentSortBy = 'seen_count';
+let seriesWindow = 360;
+let seriesOffset = 0;
 
 // Dark Mode initialisieren
 if (localStorage.getItem('darkMode') === 'true') {
@@ -622,7 +636,7 @@ async function refresh() {
     setStatus('Lade Live-Daten...');
     const [summaryRes, seriesRes, liveRes, patternsRes] = await Promise.all([
       fetchJson('api/summary'),
-      fetchJson('api/series?limit=360'),
+      fetchJson(`api/series?limit=${seriesWindow}&offset=${seriesOffset}`),
       fetchJson('api/live'),
       fetchJson('api/patterns')
     ]);
@@ -671,6 +685,11 @@ async function refresh() {
     drawChart(series.points || []);
     renderDevices(live.devices || {});
     renderPatterns(Array.isArray(patterns) ? patterns : []);
+    const windowInfo = document.getElementById('windowInfo');
+    if (windowInfo) {
+      const hours = Math.round((seriesWindow / 120.0) * 10) / 10;
+      windowInfo.textContent = `${hours}h, ${seriesOffset === 0 ? 'aktuell' : `offset ${seriesOffset}`}`;
+    }
     setStatus(buildLiveStatusMessage(live));
   } catch (err) {
     setStatus(`Warte auf API: ${err}`);
@@ -796,6 +815,22 @@ document.getElementById('runLearningBtn').addEventListener('click', runLearningN
 document.getElementById('flushDbBtn').addEventListener('click', flushDebugDb);
 document.getElementById('importHistoryBtn').addEventListener('click', importHistoryFromHA);
 document.getElementById('darkModeToggle').addEventListener('click', toggleDarkMode);
+document.getElementById('windowSelect').addEventListener('change', async (e) => {
+  const val = Number(e.target.value);
+  if (Number.isFinite(val) && val >= 60) {
+    seriesWindow = Math.round(val);
+    seriesOffset = 0;
+    await refresh();
+  }
+});
+document.getElementById('olderBtn').addEventListener('click', async () => {
+  seriesOffset += seriesWindow;
+  await refresh();
+});
+document.getElementById('newerBtn').addEventListener('click', async () => {
+  seriesOffset = Math.max(0, seriesOffset - seriesWindow);
+  await refresh();
+});
 document.getElementById('patternSearch').addEventListener('input', filterAndSortPatterns);
 document.getElementById('patternSort').addEventListener('change', (e) => {
   currentSortBy = e.target.value;
@@ -857,7 +892,7 @@ class StatsWebServer:
         port: int,
         get_live_data: Callable[[], Dict],
         get_summary_data: Callable[[], Dict],
-        get_series_data: Callable[[int], List[Dict]],
+        get_series_data: Callable[[int, int], List[Dict]],
         get_patterns_data: Optional[Callable[[], List[Dict]]] = None,
         set_pattern_label: Optional[Callable[[int, str], bool]] = None,
         flush_debug_data: Optional[Callable[[bool], Dict]] = None,
@@ -944,11 +979,16 @@ class StatsWebServer:
                 if parsed.path == "/api/series":
                     query = parse_qs(parsed.query or "")
                     limit_raw = (query.get("limit") or ["300"])[0]
+                    offset_raw = (query.get("offset") or ["0"])[0]
                     try:
                         limit = max(10, min(int(limit_raw), 2000))
                     except ValueError:
                         limit = 300
-                    self._send_json({"points": parent.get_series_data(limit)})
+                    try:
+                        offset = max(0, int(offset_raw))
+                    except ValueError:
+                        offset = 0
+                    self._send_json({"points": parent.get_series_data(limit, offset)})
                     return
 
                 if parsed.path == "/api/patterns":

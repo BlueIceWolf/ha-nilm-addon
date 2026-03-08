@@ -345,19 +345,21 @@ class SQLiteStore:
             logger.error(f"Failed to load recent power values: {e}", exc_info=True)
             return []
 
-    def get_power_series(self, limit: int = 300) -> List[Dict]:
+    def get_power_series(self, limit: int = 300, offset: int = 0) -> List[Dict]:
         if not self._conn:
             return []
 
         try:
+            safe_limit = max(10, min(int(limit), 2000))
+            safe_offset = max(0, int(offset))
             # Hole Gesamtleistungen
             cur = self._conn.execute(
                 """
                 SELECT ts, power_w, phase, metadata FROM power_readings
                 ORDER BY ts DESC
-                LIMIT ?
+                LIMIT ? OFFSET ?
                 """,
-                (int(limit) * 4,),  # Mehr holen um Phasen zu aggregieren
+                (safe_limit * 4, safe_offset * 4),  # *4 wegen potenzieller L1/L2/L3-Einträge
             )
             rows = cur.fetchall()
             
@@ -408,7 +410,7 @@ class SQLiteStore:
             
             # Sortiere und limitiere
             sorted_points = sorted(points_by_ts.values(), key=lambda p: p["timestamp"])
-            return sorted_points[-limit:]
+            return sorted_points[-safe_limit:]
         except Exception as e:
             logger.error(f"Failed to load power series: {e}", exc_info=True)
             return []
