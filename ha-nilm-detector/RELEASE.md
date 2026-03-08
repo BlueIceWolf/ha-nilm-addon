@@ -1,3 +1,23 @@
+# Release 0.3.5
+
+## Store Kurztext
+- Behoben: Manuelle Muster-Erstellung speichert jetzt zuverlässig (cursor-Fix).
+- Behoben: Muster-Erkennung schlägt nicht mehr fehl wegen fehlender Feature-Spalten in der Datenbank.
+- Muster werden jetzt sofort erkannt, wenn genug Datenpunkte vorhanden sind.
+
+## Highlights
+- **Critical fix for pattern recognition**: Added missing feature columns (rise/fall rates, substates, pattern types) to pattern matching logic. These were being omitted from database queries, causing fallback penalties that blocked valid pattern detection.
+- **Fixed manual pattern persistence**: Moved cursor.lastrowid retrieval inside transaction context to ensure pattern IDs are properly retrieved when created from UI range selection.
+- Patterns now reliably save and match even with minimal power variations, significantly improving learning accuracy.
+
+## Technical Details
+- Pattern distance calculation was applying 0.35 fallback penalty when advanced features were missing
+- Manual pattern creation could fail silently without returning a valid pattern ID
+- Both issues combined prevented new patterns from being recognized even with adequate data
+- All storage operations remain local with no cloud dependency
+
+---
+
 # Release 0.2.11
 
 ## Store Kurztext

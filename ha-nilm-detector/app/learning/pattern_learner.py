@@ -81,6 +81,30 @@ class PatternLearner:
         self._cycle_start: Optional[datetime] = None
         self._cycle_samples: List[PowerReading] = []
 
+    def prime_baseline(self, power_values: List[float]) -> None:
+        """Seed adaptive baseline from historical idle-ish samples before ingesting replay data."""
+        if not self.use_adaptive_thresholds:
+            return
+
+        cleaned: List[float] = []
+        for value in power_values:
+            try:
+                cleaned.append(float(value))
+            except (TypeError, ValueError):
+                continue
+
+        if not cleaned:
+            return
+
+        sorted_samples = sorted(cleaned)
+        median_idx = len(sorted_samples) // 2
+        baseline = sorted_samples[median_idx]
+        self._baseline_power_w = baseline
+
+        self._baseline_history.clear()
+        for sample in cleaned[-self.baseline_window_size:]:
+            self._baseline_history.append(sample)
+
     def ingest(self, reading: PowerReading) -> Optional[LearnedCycle]:
         """Ingest one reading. Returns a completed cycle when one is detected."""
         raw_power = float(reading.power_w)

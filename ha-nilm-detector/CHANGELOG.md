@@ -1,4 +1,10 @@
 # Changelog
+## 0.3.5
+
+- **Fixed pattern recognition failure**: Manual pattern creation now saves reliably (cursor.lastrowid moved inside transaction).
+- **Fixed missing learned features in pattern matching**: Added rise_rate_w_per_s, fall_rate_w_per_s, num_substates, has_heating_pattern, has_motor_pattern columns to pattern comparison (these were causing fallback penalties that blocked pattern detection).
+- Pattern learner now correctly recognizes patterns with sufficient data points due to proper feature column retrieval from database.
+
 ## 0.3.4
 
 - Fixed `Lernen jetzt ausführen` API robustness: endpoint now always returns valid JSON on failures.

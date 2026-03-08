@@ -308,7 +308,7 @@ class NILMDetectionSystem:
         # Approximate sample count from configured polling interval.
         interval = max(int(self.config.update_interval_seconds), 1)
         approx_points = max(300, min(int((hours * 3600) / interval) + 120, 50000))
-        points = self.storage.get_power_series(limit=approx_points)
+        points = self.storage.get_power_series(limit=approx_points, max_limit=50000)
         if not points:
             return {"cycles_detected": 0, "points_processed": 0}
 
@@ -321,8 +321,18 @@ class NILMDetectionSystem:
             noise_filter_window=1,
         )
 
+        # Prime adaptive baseline from initial samples so replay does not start in a false ON state.
+        baseline_seed_count = min(60, len(points))
+        baseline_values: List[float] = []
+        for point in points[:baseline_seed_count]:
+            try:
+                baseline_values.append(float(point.get("power_w") or 0.0))
+            except (TypeError, ValueError):
+                continue
+        replay_learner.prime_baseline(baseline_values)
+
         cycles_detected = 0
-        for point in points:
+        for idx, point in enumerate(points):
             try:
                 ts_raw = str(point.get("timestamp") or "").strip()
                 if not ts_raw:
@@ -337,6 +347,10 @@ class NILMDetectionSystem:
                 phases = point.get("phases") if isinstance(point.get("phases"), dict) else {}
                 metadata = {"phase_powers_w": phases, "replay_learning": True}
                 reading = PowerReading(timestamp=ts, power_w=power_w, phase="TOTAL", metadata=metadata)
+
+                # Skip cycle detection during warmup points used for baseline seeding.
+                if idx < baseline_seed_count:
+                    continue
 
                 cycle = replay_learner.ingest(reading)
                 if not cycle:

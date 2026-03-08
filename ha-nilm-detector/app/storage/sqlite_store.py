@@ -345,12 +345,13 @@ class SQLiteStore:
             logger.error(f"Failed to load recent power values: {e}", exc_info=True)
             return []
 
-    def get_power_series(self, limit: int = 300, offset: int = 0) -> List[Dict]:
+    def get_power_series(self, limit: int = 300, offset: int = 0, max_limit: int = 2000) -> List[Dict]:
         if not self._conn:
             return []
 
         try:
-            safe_limit = max(10, min(int(limit), 2000))
+            safe_max_limit = max(10, min(int(max_limit), 100000))
+            safe_limit = max(10, min(int(limit), safe_max_limit))
             safe_offset = max(0, int(offset))
             # Hole Gesamtleistungen
             cur = self._conn.execute(
@@ -583,6 +584,8 @@ class SQLiteStore:
         
         shape_distance += pattern_penalty
         
+        # Weights are already baked into core_distance (0.6) and shape_distance (0.4)
+        # So we combine them directly to get normalized 0-1 distance
         total_distance = core_distance + shape_distance
         return min(total_distance, 1.0)
 
@@ -780,7 +783,9 @@ class SQLiteStore:
                       COALESCE(peak_to_avg_ratio, 1.0),
                       COALESCE(operating_modes, '[]'), COALESCE(has_multiple_modes, 0),
                       COALESCE(typical_interval_s, 0.0), COALESCE(avg_hour_of_day, 12.0),
-                      COALESCE(last_intervals_json, '[]'), COALESCE(hour_distribution_json, '{}')
+                      COALESCE(last_intervals_json, '[]'), COALESCE(hour_distribution_json, '{}'),
+                      COALESCE(rise_rate_w_per_s, 0.0), COALESCE(fall_rate_w_per_s, 0.0),
+                      COALESCE(num_substates, 0), COALESCE(has_heating_pattern, 0), COALESCE(has_motor_pattern, 0)
                 FROM learned_patterns
                 ORDER BY seen_count DESC, last_seen DESC
                 LIMIT ?
@@ -860,6 +865,11 @@ class SQLiteStore:
                         "avg_hour_of_day": float(row[21] or 12.0),
                         "last_intervals_json": row[22] or "[]",
                         "hour_distribution_json": row[23] or "{}",
+                        "rise_rate_w_per_s": float(row[24] or 0.0),
+                        "fall_rate_w_per_s": float(row[25] or 0.0),
+                        "num_substates": int(row[26] or 0),
+                        "has_heating_pattern": int(row[27] or 0),
+                        "has_motor_pattern": int(row[28] or 0),
                         "candidate_name": self._normalize_pattern_name(row[11] or row[10]),
                         "is_confirmed": bool(str(row[11] or "").strip()),
                     }
@@ -1177,6 +1187,7 @@ class SQLiteStore:
             
             # Erstelle neues Muster mit erweiterten Features
             now = datetime.now().isoformat()
+            pattern_id = None
             with self._patterns_conn:
                 cursor = self._patterns_conn.execute(
                     """
@@ -1198,8 +1209,7 @@ class SQLiteStore:
                         has_heating, has_motor
                     )
                 )
-            
-            pattern_id = cursor.lastrowid
+                pattern_id = cursor.lastrowid
             logger.info(
                 f"Created pattern {pattern_id} from range: {len(power_readings)} points, "
                 f"avg={avg_power:.1f}W, peak={peak_power:.1f}W, duration={duration_s:.1f}s, "

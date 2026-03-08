@@ -411,6 +411,12 @@ function buildLiveStatusMessage(live) {
 function drawChart(series) {
   currentSeriesData = series;
   const w = canvas.width, h = canvas.height;
+  const leftPad = 10;
+  const rightPad = 10;
+  const topPad = 20;
+  const bottomPad = 36; // Reserve space for time scale labels
+  const plotHeight = h - topPad - bottomPad;
+
   ctx.clearRect(0, 0, w, h);
   ctx.fillStyle = '#ffffff';
   ctx.fillRect(0, 0, w, h);
@@ -448,8 +454,8 @@ function drawChart(series) {
   ctx.strokeStyle = '#d0d5dd';
   ctx.lineWidth = 1;
   for (let i = 0; i < 5; i++) {
-    const y = 20 + (i * (h - 40) / 4);
-    ctx.beginPath(); ctx.moveTo(10, y); ctx.lineTo(w - 10, y); ctx.stroke();
+    const y = topPad + (i * plotHeight / 4);
+    ctx.beginPath(); ctx.moveTo(leftPad, y); ctx.lineTo(w - rightPad, y); ctx.stroke();
   }
 
   const colors = {
@@ -465,8 +471,8 @@ function drawChart(series) {
     ctx.lineWidth = 2;
     ctx.beginPath();
     series.forEach((point, i) => {
-      const x = 10 + (i * (w - 20) / (series.length - 1));
-      const y = h - 20 - ((point.power_w - min) / span) * (h - 40);
+      const x = leftPad + (i * (w - leftPad - rightPad) / (series.length - 1));
+      const y = topPad + plotHeight - ((point.power_w - min) / span) * plotHeight;
       if (i === 0) ctx.moveTo(x, y); else ctx.lineTo(x, y);
     });
     ctx.stroke();
@@ -480,19 +486,76 @@ function drawChart(series) {
       ctx.beginPath();
       series.forEach((point, i) => {
         const value = (point.phases && point.phases[phase]) || 0;
-        const x = 10 + (i * (w - 20) / (series.length - 1));
-        const y = h - 20 - ((value - min) / span) * (h - 40);
+        const x = leftPad + (i * (w - leftPad - rightPad) / (series.length - 1));
+        const y = topPad + plotHeight - ((value - min) / span) * plotHeight;
         if (i === 0) ctx.moveTo(x, y); else ctx.lineTo(x, y);
       });
       ctx.stroke();
     }
   });
 
+  // Zeitachse unten (Start/Ende + Zwischen-Ticks)
+  const parseTs = (raw) => {
+    const d = new Date(raw);
+    return Number.isNaN(d.getTime()) ? null : d;
+  };
+  const fmtTime = (d, includeDate) => {
+    if (!d) return '--:--';
+    if (includeDate) {
+      return d.toLocaleString([], {
+        day: '2-digit',
+        month: '2-digit',
+        hour: '2-digit',
+        minute: '2-digit'
+      });
+    }
+    return d.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
+  };
+
+  const firstTs = parseTs(series[0] && series[0].timestamp);
+  const lastTs = parseTs(series[series.length - 1] && series[series.length - 1].timestamp);
+
+  ctx.strokeStyle = '#98a2b3';
+  ctx.lineWidth = 1;
+  const axisY = h - bottomPad + 10;
+  ctx.beginPath();
+  ctx.moveTo(leftPad, axisY);
+  ctx.lineTo(w - rightPad, axisY);
+  ctx.stroke();
+
+  const rangeMs = (firstTs && lastTs) ? Math.max(lastTs.getTime() - firstTs.getTime(), 1) : 0;
+  const includeDate = rangeMs >= 24 * 60 * 60 * 1000;
+  const minLabelSpacing = includeDate ? 110 : 72;
+  const usableWidth = Math.max(w - leftPad - rightPad, 1);
+  const dynamicTicks = Math.floor(usableWidth / minLabelSpacing);
+  const tickCount = Math.min(8, Math.max(2, dynamicTicks));
+  ctx.fillStyle = '#667085';
+  ctx.font = '11px Segoe UI';
+  ctx.textAlign = 'center';
+
+  for (let i = 0; i <= tickCount; i++) {
+    const t = i / tickCount;
+    const x = leftPad + t * (w - leftPad - rightPad);
+    ctx.beginPath();
+    ctx.moveTo(x, axisY);
+    ctx.lineTo(x, axisY + 5);
+    ctx.stroke();
+
+    let label = '--:--';
+    if (firstTs && lastTs) {
+      const ts = new Date(firstTs.getTime() + (lastTs.getTime() - firstTs.getTime()) * t);
+      label = fmtTime(ts, includeDate);
+    }
+    ctx.fillText(label, x, axisY + 17);
+  }
+
   // Legende
   ctx.fillStyle = '#667085';
   ctx.font = '12px Segoe UI';
-  ctx.fillText(`min ${min.toFixed(1)}W`, 12, h - 6);
-  ctx.fillText(`max ${max.toFixed(1)}W`, w - 90, h - 6);
+  ctx.textAlign = 'left';
+  ctx.fillText(`min ${min.toFixed(1)}W`, 12, 14);
+  ctx.textAlign = 'right';
+  ctx.fillText(`max ${max.toFixed(1)}W`, w - 12, 14);
 }
 
 function renderDevices(devices) {
