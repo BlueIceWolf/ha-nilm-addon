@@ -796,8 +796,21 @@ class SQLiteStore:
             out: List[Dict] = []
             for row in rows:
                 seen_count = int(row[5])
-                created_ts = datetime.fromisoformat(row[1]) if row[1] else datetime.now()
-                last_seen_ts = datetime.fromisoformat(row[4]) if row[4] else created_ts
+                
+                # Parse datetimes and normalize to naive (remove local timezone if present)
+                try:
+                    created_ts = datetime.fromisoformat(row[1]) if row[1] else datetime.now()
+                    if created_ts.tzinfo:
+                        created_ts = created_ts.replace(tzinfo=None)
+                except (ValueError, TypeError):
+                    created_ts = datetime.now()
+                
+                try:
+                    last_seen_ts = datetime.fromisoformat(row[4]) if row[4] else created_ts
+                    if last_seen_ts.tzinfo:
+                        last_seen_ts = last_seen_ts.replace(tzinfo=None)
+                except (ValueError, TypeError):
+                    last_seen_ts = created_ts
                 
                 # Berechne Stabilität (Varianz normiert)
                 avg_power = float(row[6])
