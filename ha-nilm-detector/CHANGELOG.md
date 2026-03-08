@@ -1,4 +1,11 @@
 # Changelog
+## 0.3.2
+
+- Fixed manual `Lernen jetzt ausführen` to replay recent stored readings and actually learn new cycles before merge.
+- Added learning result metrics in Web UI response (`cycles_detected`, `points_processed`) for better transparency.
+- Improved HA history import by skipping non-positive values (`<= 0W`) to avoid synthetic 0W artifacts.
+- Added import feedback in Web UI showing skipped non-positive sample count.
+
 ## 0.3.1
 
 - Added Web UI action `HA Verlauf importieren` to import recorder history from Home Assistant sensors into local NILM readings.

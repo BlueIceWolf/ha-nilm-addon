@@ -335,7 +335,7 @@ async function runLearningNow() {
       throw new Error(payload.error || `HTTP ${response.status}`);
     }
 
-    alert(`Lernlauf abgeschlossen. Zusammengeführt: ${payload.merged || 0}, Muster geprüft: ${payload.patterns_considered || 0}`);
+    alert(`Lernlauf abgeschlossen. Zyklen gelernt: ${payload.cycles_detected || 0}, Messpunkte: ${payload.points_processed || 0}, Zusammengeführt: ${payload.merged || 0}, Muster geprüft: ${payload.patterns_considered || 0}`);
     await refresh();
   } catch (err) {
     alert(`Lernlauf fehlgeschlagen: ${err}`);
@@ -365,7 +365,7 @@ async function importHistoryFromHA() {
       throw new Error(payload.error || `HTTP ${response.status}`);
     }
 
-    alert(`Import abgeschlossen. Messwerte importiert: ${payload.imported || 0}`);
+    alert(`Import abgeschlossen. Messwerte importiert: ${payload.imported || 0}, übersprungen (<=0W): ${payload.skipped_non_positive || 0}`);
     await refresh();
   } catch (err) {
     alert(`Import fehlgeschlagen: ${err}`);

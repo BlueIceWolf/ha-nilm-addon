@@ -282,13 +282,78 @@ class NILMDetectionSystem:
         if not self.config.learning_enabled:
             return {"ok": False, "error": "learning is disabled"}
 
+        replay_summary = {"cycles_detected": 0, "points_processed": 0}
+        if self.pattern_learner:
+            replay_summary = self._replay_learning_from_storage(hours=24)
+
         result = self.storage.run_nightly_learning_pass(
             merge_tolerance=0.20,
             max_patterns=800,
         )
+        result["cycles_detected"] = int(replay_summary.get("cycles_detected", 0))
+        result["points_processed"] = int(replay_summary.get("points_processed", 0))
         if result.get("ok"):
             self.last_nightly_learning_date = datetime.now().date()
         return result
+
+    def _replay_learning_from_storage(self, hours: int = 24) -> Dict:
+        """Replay recent stored readings through PatternLearner to build cycles on demand."""
+        if not self.storage or not self.pattern_learner:
+            return {"cycles_detected": 0, "points_processed": 0}
+
+        # Approximate sample count from configured polling interval.
+        interval = max(int(self.config.update_interval_seconds), 1)
+        approx_points = max(300, min(int((hours * 3600) / interval) + 120, 50000))
+        points = self.storage.get_power_series(limit=approx_points)
+        if not points:
+            return {"cycles_detected": 0, "points_processed": 0}
+
+        # Use a fresh learner for replay to avoid state contamination with live stream.
+        replay_learner = PatternLearner(
+            on_threshold_w=self.config.learning_on_threshold_w,
+            off_threshold_w=self.config.learning_off_threshold_w,
+            min_cycle_seconds=self.config.learning_min_cycle_seconds,
+        )
+
+        cycles_detected = 0
+        for point in points:
+            ts_raw = str(point.get("timestamp") or "").strip()
+            if not ts_raw:
+                continue
+
+            try:
+                ts = datetime.fromisoformat(ts_raw.replace("Z", "+00:00"))
+            except ValueError:
+                continue
+
+            power_w = float(point.get("power_w") or 0.0)
+            phases = point.get("phases") if isinstance(point.get("phases"), dict) else {}
+            metadata = {"phase_powers_w": phases, "replay_learning": True}
+            reading = PowerReading(timestamp=ts, power_w=power_w, phase="TOTAL", metadata=metadata)
+
+            cycle = replay_learner.ingest(reading)
+            if not cycle:
+                continue
+
+            cycle_payload = {
+                "start_ts": cycle.start_ts.isoformat(),
+                "end_ts": cycle.end_ts.isoformat(),
+                "duration_s": cycle.duration_s,
+                "avg_power_w": cycle.avg_power_w,
+                "peak_power_w": cycle.peak_power_w,
+                "energy_wh": cycle.energy_wh,
+                "operating_modes": cycle.operating_modes,
+                "has_multiple_modes": cycle.has_multiple_modes,
+                "active_phase_count": int(sum(1 for _phase, val in phases.items() if float(val) > 20.0)) if phases else 1,
+                "phase_mode": "multi_phase" if phases and sum(1 for _phase, val in phases.items() if float(val) > 20.0) > 1 else "single_phase",
+            }
+            heuristic_suggestion = replay_learner.suggest_device_type(cycle)
+            model_suggestion = self.storage.suggest_cycle_label(cycle_payload, fallback=heuristic_suggestion)
+            suggestion = str(model_suggestion.get("label") or heuristic_suggestion)
+            self.storage.learn_cycle_pattern(cycle=cycle_payload, suggestion_type=suggestion)
+            cycles_detected += 1
+
+        return {"cycles_detected": cycles_detected, "points_processed": len(points)}
 
     def _import_history_from_ha(self, hours: int = 24) -> Dict:
         """Import historical phase sensor values from HA recorder into local storage."""
@@ -315,6 +380,7 @@ class NILMDetectionSystem:
         # Bucket by second to merge L1/L2/L3 into one total reading.
         buckets: Dict[str, Dict[str, float]] = {}
         source_counts: Dict[str, int] = {}
+        skipped_non_positive = 0
 
         try:
             for phase_name, entity_id in phase_entities.items():
@@ -328,6 +394,11 @@ class NILMDetectionSystem:
                     try:
                         value = float(state_raw)
                     except (TypeError, ValueError):
+                        continue
+
+                    # Ignore non-positive values to avoid synthetic 0W noise in replay graphs.
+                    if value <= 0.0:
+                        skipped_non_positive += 1
                         continue
 
                     # Normalize to second precision to align phases.
@@ -352,6 +423,7 @@ class NILMDetectionSystem:
                 "ok": True,
                 "imported": imported,
                 "sources": source_counts,
+                "skipped_non_positive": skipped_non_positive,
                 "hours": max(1, min(int(hours), 168)),
             }
         except Exception as e:
