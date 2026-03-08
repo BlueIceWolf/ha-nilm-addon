@@ -40,7 +40,14 @@ class NILMDetectionSystem:
         self.config = Config()
         self.config.load(options)
 
-        setup_logging(debug=self.config.debug, name="NILM", log_level=self.config.log_level)
+        # Reconfigure logging with final settings including log file rotation
+        setup_logging(
+            debug=self.config.debug, 
+            name="NILM", 
+            log_level=self.config.log_level,
+            log_file=self.config.log_file,
+            max_backups=self.config.max_log_backups
+        )
         logger.info("Starting NILM Detection System...")
         logger.info(
             "Runtime configuration loaded: "

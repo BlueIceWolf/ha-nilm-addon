@@ -1,4 +1,16 @@
 # Changelog
+## 0.4.3
+
+**Neue Features:**
+- **Log-Rotation**: Log-Datei wird bei jedem Container-Start rotiert (nilm.log → nilm.log.1 → nilm.log.2 → nilm.log.3)
+- Maximal 3 alte Log-Dateien werden behalten, ältere werden gelöscht
+- Jeder Start beginnt mit einer leeren Log-Datei für bessere Übersicht
+- Konfigurierbar über `log_file` und `max_log_backups` in config.yaml
+
+**Konfiguration:**
+- `log_file`: Pfad zur Log-Datei (default: `/addon_configs/ha_nilm_detector/nilm.log`)
+- `max_log_backups`: Maximale Anzahl alter Logs (default: 3)
+
 ## 0.4.2
 
 **Verbesserung:**

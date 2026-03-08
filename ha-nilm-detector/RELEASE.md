@@ -1,3 +1,41 @@
+# Release 0.4.3
+
+## Store Kurztext
+- **Log-Rotation**: Bei jedem Start wird die Log-Datei rotiert, maximal 3 alte Logs werden behalten
+- Jeder Container-Start beginnt mit frischer, leerer Log-Datei
+
+## Highlights
+- **Startup log rotation**: Old logs are rotated automatically on each container start
+- **Configurable retention**: Keep max N old log files (default: 3)
+- Fresh start every time: Begin with empty log file for better readability
+- No more massive accumulated log files
+
+## Technical Details
+**Rotation Logic:**
+1. On startup, if `nilm.log` exists:
+   - `nilm.log.2` → `nilm.log.3`
+   - `nilm.log.1` → `nilm.log.2`
+   - `nilm.log` → `nilm.log.1`
+2. Old logs beyond `max_log_backups` are deleted
+3. New `nilm.log` created fresh
+
+**Configuration (config.yaml):**
+- `log_file: /addon_configs/ha_nilm_detector/nilm.log` - Path to log file
+- `max_log_backups: 3` - Number of old logs to keep (1-10)
+
+**Implementation:**
+- New function: `_rotate_log_file()` in `app/utils/logging.py`
+- FileHandler added alongside StreamHandler (both console and file logging)
+- Rotation happens before first log write
+
+**Benefits:**
+- Easy debugging: Latest run always in `nilm.log`
+- History: Last 3 runs preserved as `.log.1`, `.log.2`, `.log.3`
+- Clean starts: No searching through huge accumulated logs
+- Persistent: Logs survive container restarts
+
+---
+
 # Release 0.4.2
 
 ## Store Kurztext

@@ -55,6 +55,8 @@ class Config:
         self.processing_noise_threshold = 2.0
         self.processing_adaptive_correction = True
         self.confidence_threshold = 0.6
+        self.log_file = "/addon_configs/ha_nilm_detector/nilm.log"  # Log file path (rotated on startup)
+        self.max_log_backups = 3  # Keep max 3 old log files (.log.1, .log.2, .log.3)
         
         if config_path:
             self.load(config_path)
@@ -84,6 +86,8 @@ class Config:
         # Global settings
         self.debug = config_dict.get('debug', False)
         self.log_level = str(config_dict.get('log_level', self.log_level)).lower()
+        self.log_file = str(config_dict.get('log_file', self.log_file))
+        self.max_log_backups = int(config_dict.get('max_log_backups', self.max_log_backups))
         self.update_interval_seconds = config_dict.get('update_interval_seconds', 5)
 
         web_config = config_dict.get('web', {})
