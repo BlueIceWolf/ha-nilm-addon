@@ -3,7 +3,7 @@ import os
 import signal
 import sys
 import time
-from datetime import datetime
+from datetime import datetime, timedelta
 from typing import Dict, List
 
 from app.collector.source import Collector, HARestPowerSource
@@ -12,6 +12,7 @@ from app.confidence.confidence import ConfidenceEvaluator
 from app.detectors import AdaptiveLoadDetector, FridgeDetector, InverterDeviceDetector
 from app.ha_client import HomeAssistantAPIClient
 from app.learning import PatternLearner
+from app.models import PowerReading
 from app.processing.pipeline import ProcessingPipeline
 from app.publishers.mqtt import MQTTPublisher
 from app.state_engine import StateEngine
@@ -121,6 +122,7 @@ class NILMDetectionSystem:
                 set_pattern_label=self._set_pattern_label,
                 flush_debug_data=self._flush_debug_db,
                 run_learning_now=self._run_learning_now,
+                import_history_from_ha=self._import_history_from_ha,
                 create_pattern_from_range=self._create_pattern_from_range,
             )
 
@@ -287,6 +289,76 @@ class NILMDetectionSystem:
         if result.get("ok"):
             self.last_nightly_learning_date = datetime.now().date()
         return result
+
+    def _import_history_from_ha(self, hours: int = 24) -> Dict:
+        """Import historical phase sensor values from HA recorder into local storage."""
+        if not self.storage:
+            return {"ok": False, "error": "storage not enabled"}
+
+        phase_entities = self.config.get_selected_phase_entities()
+        if not phase_entities:
+            return {"ok": False, "error": "no phase entities configured"}
+
+        token = str(self.config.ha_token or "").strip() or str(os.getenv("SUPERVISOR_TOKEN", "")).strip()
+        if token.lower().startswith("bearer "):
+            token = token.split(" ", 1)[1].strip()
+
+        client = HomeAssistantAPIClient(
+            base_url=self.config.ha_url,
+            token=token,
+            timeout_seconds=20,
+        )
+
+        now = datetime.now()
+        start_time = now - timedelta(hours=max(1, min(int(hours), 168)))
+
+        # Bucket by second to merge L1/L2/L3 into one total reading.
+        buckets: Dict[str, Dict[str, float]] = {}
+        source_counts: Dict[str, int] = {}
+
+        try:
+            for phase_name, entity_id in phase_entities.items():
+                events = client.get_entity_history(entity_id, start_time=start_time, end_time=now)
+                source_counts[phase_name] = len(events)
+                for event in events:
+                    ts_raw = event.get("last_changed") or event.get("last_updated")
+                    state_raw = event.get("state")
+                    if not ts_raw:
+                        continue
+                    try:
+                        value = float(state_raw)
+                    except (TypeError, ValueError):
+                        continue
+
+                    # Normalize to second precision to align phases.
+                    ts_key = str(ts_raw).split(".")[0]
+                    phase_map = buckets.setdefault(ts_key, {})
+                    phase_map[phase_name] = value
+
+            imported = 0
+            for ts_key in sorted(buckets.keys()):
+                phase_map = buckets[ts_key]
+                total_power = float(sum(phase_map.values()))
+                metadata = {
+                    "phase_powers_w": phase_map,
+                    "phase_entities": phase_entities,
+                    "imported_from": "ha_history",
+                }
+                ts_norm = datetime.fromisoformat(ts_key)
+                self.storage.store_reading(PowerReading(timestamp=ts_norm, power_w=total_power, phase="TOTAL", metadata=metadata))
+                imported += 1
+
+            return {
+                "ok": True,
+                "imported": imported,
+                "sources": source_counts,
+                "hours": max(1, min(int(hours), 168)),
+            }
+        except Exception as e:
+            logger.error("Failed to import HA history: %s", e, exc_info=True)
+            return {"ok": False, "error": str(e)}
+        finally:
+            client.close()
 
     def _maybe_run_nightly_learning(self, now: datetime) -> None:
         """Run lightweight learning maintenance once per night (off-peak window)."""

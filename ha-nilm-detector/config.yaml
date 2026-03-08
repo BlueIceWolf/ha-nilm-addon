@@ -30,6 +30,7 @@ options:
     off_threshold_w: 25.0
   storage:
     retention_days: 30
+    db_path: /addon_configs/ha_nilm_detector/nilm_live.sqlite3
     patterns_db_path: /addon_configs/ha_nilm_detector/nilm_patterns.sqlite3
 schema:
   log_level: list(debug|info|warning|error)
@@ -47,4 +48,5 @@ schema:
     off_threshold_w: float(5,500)
   storage:
     retention_days: int(1,365)
+    db_path: str?
     patterns_db_path: str?

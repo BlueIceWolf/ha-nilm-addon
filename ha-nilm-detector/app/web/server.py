@@ -180,9 +180,11 @@ def _html_page() -> str:
       <h1>HA NILM Live-Statistik</h1>
       <div id=\"ts\" class=\"muted\">Lädt...</div>
     </div>
-    <div style=\"margin-bottom: 12px;\">
+    <div style=\"margin-bottom: 12px; display: flex; gap: 8px; flex-wrap: wrap; align-items: center;\">
       <button id=\"runLearningBtn\" title=\"Lernlauf sofort starten\">Lernen jetzt ausführen</button>
       <button id=\"flushDbBtn\" title=\"Nur für Debugging\">DB leeren (Debug)</button>
+      <button id=\"importHistoryBtn\" title=\"Verlauf aus Home Assistant importieren\">HA Verlauf importieren</button>
+      <button id=\"darkModeToggle\" title=\"Hell/Dunkel umschalten\">🌙 Nachtmodus</button>
     </div>
 
     <div class=\"grid\">
@@ -226,6 +228,17 @@ def _html_page() -> str:
     </table>
 
     <h2 style=\"margin:14px 0 8px; font-size:1.1rem;\">Gelernte Muster</h2>
+    <div style=\"margin-bottom: 8px; display: flex; gap: 8px; align-items: center; flex-wrap: wrap;\">
+      <input type=\"text\" id=\"patternSearch\" placeholder=\"Muster suchen...\" style=\"padding: 6px 10px; border: 1px solid var(--line); border-radius: 6px; background: var(--card); color: var(--ink); flex: 1; min-width: 200px;\" />
+      <select id=\"patternSort\" style=\"padding: 6px 10px; border: 1px solid var(--line); border-radius: 6px; background: var(--card); color: var(--ink);\">
+        <option value=\"seen_count\">Sortieren: Häufigkeit ↓</option>
+        <option value=\"avg_power_w\">Sortieren: Leistung ↓</option>
+        <option value=\"duration_s\">Sortieren: Dauer ↓</option>
+        <option value=\"stability_score\">Sortieren: Stabilität ↓</option>
+        <option value=\"typical_interval_s\">Sortieren: Intervall ↓</option>
+        <option value=\"id\">Sortieren: ID ↑</option>
+      </select>
+    </div>
     <table>
       <thead>
         <tr><th>ID</th><th>Typ</th><th>Label</th><th style="font-size:0.85rem;">Häufig.</th><th style="font-size:0.85rem;">Intervall</th><th style="font-size:0.85rem;">Uhrzeit</th><th style="font-size:0.85rem;">Stabilit.</th><th>Phasen</th><th style="font-size:0.85rem;">Modi</th><th>Ø (W)</th><th>Spitze (W)</th><th>Dauer (s)</th><th>Anzahl</th><th>Aktion</th></tr>
@@ -327,6 +340,36 @@ async function runLearningNow() {
   } catch (err) {
     alert(`Lernlauf fehlgeschlagen: ${err}`);
     setStatus(`Lernlauf fehlgeschlagen: ${err}`);
+  }
+}
+
+async function importHistoryFromHA() {
+  const raw = prompt('Wie viele Stunden Verlauf importieren? (1-168)', '24');
+  if (raw === null) return;
+
+  const hours = Number(raw);
+  if (!Number.isFinite(hours) || hours < 1 || hours > 168) {
+    alert('Bitte eine Zahl zwischen 1 und 168 eingeben.');
+    return;
+  }
+
+  try {
+    setStatus('Importiere Verlauf aus HA...');
+    const response = await fetch(apiPath('api/debug/import-history'), {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ hours: Math.round(hours) })
+    });
+    const payload = await response.json();
+    if (!response.ok || !payload.ok) {
+      throw new Error(payload.error || `HTTP ${response.status}`);
+    }
+
+    alert(`Import abgeschlossen. Messwerte importiert: ${payload.imported || 0}`);
+    await refresh();
+  } catch (err) {
+    alert(`Import fehlgeschlagen: ${err}`);
+    setStatus(`Import fehlgeschlagen: ${err}`);
   }
 }
 
@@ -751,6 +794,7 @@ refresh();
 setInterval(refresh, 5000);
 document.getElementById('runLearningBtn').addEventListener('click', runLearningNow);
 document.getElementById('flushDbBtn').addEventListener('click', flushDebugDb);
+document.getElementById('importHistoryBtn').addEventListener('click', importHistoryFromHA);
 document.getElementById('darkModeToggle').addEventListener('click', toggleDarkMode);
 document.getElementById('patternSearch').addEventListener('input', filterAndSortPatterns);
 document.getElementById('patternSort').addEventListener('change', (e) => {
@@ -818,6 +862,7 @@ class StatsWebServer:
         set_pattern_label: Optional[Callable[[int, str], bool]] = None,
         flush_debug_data: Optional[Callable[[bool], Dict]] = None,
         run_learning_now: Optional[Callable[[], Dict]] = None,
+        import_history_from_ha: Optional[Callable[[int], Dict]] = None,
         create_pattern_from_range: Optional[Callable[[str, str, str], Dict]] = None,
     ):
         self.host = host
@@ -829,6 +874,7 @@ class StatsWebServer:
         self.set_pattern_label = set_pattern_label
         self.flush_debug_data = flush_debug_data
         self.run_learning_now = run_learning_now
+        self.import_history_from_ha = import_history_from_ha
         self.create_pattern_from_range = create_pattern_from_range
         self._server: Optional[ThreadingHTTPServer] = None
         self._thread: Optional[threading.Thread] = None
@@ -944,6 +990,33 @@ class StatsWebServer:
 
                     reset_patterns = bool(payload.get("reset_patterns", True))
                     result = parent.flush_debug_data(reset_patterns)
+                    if not result.get("ok"):
+                        self._send_json(result, status=500)
+                        return
+
+                    self._send_json(result)
+                    return
+
+                if parsed.path == "/api/debug/import-history":
+                    if not parent.import_history_from_ha:
+                        self._send_json({"error": "history import not enabled"}, status=400)
+                        return
+
+                    length = int(self.headers.get("Content-Length", "0") or 0)
+                    raw = self.rfile.read(length) if length > 0 else b"{}"
+                    try:
+                        payload = json.loads(raw.decode("utf-8")) if raw else {}
+                    except json.JSONDecodeError:
+                        self._send_json({"error": "invalid json"}, status=400)
+                        return
+
+                    try:
+                        hours = max(1, min(int(payload.get("hours", 24)), 168))
+                    except (TypeError, ValueError):
+                        self._send_json({"error": "hours must be an integer between 1 and 168"}, status=400)
+                        return
+
+                    result = parent.import_history_from_ha(hours)
                     if not result.get("ok"):
                         self._send_json(result, status=500)
                         return

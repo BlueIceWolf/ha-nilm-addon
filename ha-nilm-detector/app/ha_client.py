@@ -7,6 +7,7 @@ It uses the supervisor proxy endpoint and the SUPERVISOR_TOKEN environment varia
 from __future__ import annotations
 
 import os
+from datetime import datetime
 from typing import Dict, List, Optional
 
 import requests
@@ -60,6 +61,30 @@ class HomeAssistantAPIClient:
             response = self.session.get(
                 url,
                 headers=self._headers(),
+                timeout=self.timeout_seconds,
+            )
+            response.raise_for_status()
+            return response.json()
+        except requests.Timeout:
+            logger.error("Timeout while requesting Home Assistant API: %s", url)
+        except requests.HTTPError as http_error:
+            status_code = http_error.response.status_code if http_error.response is not None else "unknown"
+            logger.error("HTTP error while requesting Home Assistant API: %s (status=%s)", url, status_code)
+        except requests.RequestException as request_error:
+            logger.error("Request error while requesting Home Assistant API: %s (%s)", url, request_error)
+        except ValueError:
+            logger.error("Invalid JSON response from Home Assistant API: %s", url)
+
+        return None
+
+    def _request_json_with_params(self, path: str, params: Optional[Dict[str, str]] = None):
+        """Execute a GET request with query params and return parsed JSON or None on failure."""
+        url = f"{self.base_url}{path.lstrip('/')}"
+        try:
+            response = self.session.get(
+                url,
+                headers=self._headers(),
+                params=params or {},
                 timeout=self.timeout_seconds,
             )
             response.raise_for_status()
@@ -141,6 +166,47 @@ class HomeAssistantAPIClient:
                 continue
             result[cleaned] = self.get_entity_state(cleaned)
         return result
+
+    def get_entity_history(
+        self,
+        entity_id: str,
+        start_time: datetime,
+        end_time: Optional[datetime] = None,
+    ) -> List[Dict]:
+        """Read history state changes for one entity from Home Assistant Recorder API.
+
+        Returns a flat list of state dictionaries.
+        """
+        cleaned = str(entity_id).strip()
+        if not cleaned:
+            return []
+
+        start_iso = start_time.isoformat()
+        path = f"history/period/{start_iso}"
+        params: Dict[str, str] = {
+            "filter_entity_id": cleaned,
+            "minimal_response": "1",
+            "no_attributes": "1",
+            "significant_changes_only": "0",
+        }
+        if end_time is not None:
+            params["end_time"] = end_time.isoformat()
+
+        payload = self._request_json_with_params(path, params=params)
+        if not isinstance(payload, list) or not payload:
+            return []
+
+        # HA returns list per entity: [[state1, state2, ...]]
+        if isinstance(payload[0], list):
+            entity_events = payload[0]
+        else:
+            entity_events = payload
+
+        out: List[Dict] = []
+        for item in entity_events:
+            if isinstance(item, dict):
+                out.append(item)
+        return out
 
     def close(self) -> None:
         """Close underlying HTTP session."""
