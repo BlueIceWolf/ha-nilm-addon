@@ -344,7 +344,13 @@ async function runLearningNow() {
       headers: { 'Content-Type': 'application/json' },
       body: '{}'
     });
-    const payload = await response.json();
+    const body = await response.text();
+    let payload = null;
+    try {
+      payload = JSON.parse(body);
+    } catch (parseErr) {
+      throw new Error(`Ungültige Serverantwort: ${body.slice(0, 180)}`);
+    }
     if (!response.ok || !payload.ok) {
       throw new Error(payload.error || `HTTP ${response.status}`);
     }
@@ -1007,7 +1013,15 @@ class StatsWebServer:
                         self._send_json({"error": "manual learning trigger not enabled"}, status=400)
                         return
 
-                    result = parent.run_learning_now()
+                    try:
+                        result = parent.run_learning_now()
+                    except Exception as e:
+                        self._send_json({"ok": False, "error": f"learning execution failed: {e}"}, status=500)
+                        return
+
+                    if not isinstance(result, dict):
+                        self._send_json({"ok": False, "error": "invalid learning response"}, status=500)
+                        return
                     if not result.get("ok"):
                         self._send_json(result, status=500)
                         return

@@ -284,7 +284,11 @@ class NILMDetectionSystem:
 
         replay_summary = {"cycles_detected": 0, "points_processed": 0}
         if self.pattern_learner:
-            replay_summary = self._replay_learning_from_storage(hours=24)
+            try:
+                replay_summary = self._replay_learning_from_storage(hours=24)
+            except Exception as e:
+                logger.error("Manual learning replay failed: %s", e, exc_info=True)
+                replay_summary = {"cycles_detected": 0, "points_processed": 0, "error": str(e)}
 
         result = self.storage.run_nightly_learning_pass(
             merge_tolerance=0.20,
@@ -319,41 +323,56 @@ class NILMDetectionSystem:
 
         cycles_detected = 0
         for point in points:
-            ts_raw = str(point.get("timestamp") or "").strip()
-            if not ts_raw:
-                continue
-
             try:
-                ts = datetime.fromisoformat(ts_raw.replace("Z", "+00:00"))
-            except ValueError:
+                ts_raw = str(point.get("timestamp") or "").strip()
+                if not ts_raw:
+                    continue
+
+                try:
+                    ts = datetime.fromisoformat(ts_raw.replace("Z", "+00:00"))
+                except ValueError:
+                    continue
+
+                power_w = float(point.get("power_w") or 0.0)
+                phases = point.get("phases") if isinstance(point.get("phases"), dict) else {}
+                metadata = {"phase_powers_w": phases, "replay_learning": True}
+                reading = PowerReading(timestamp=ts, power_w=power_w, phase="TOTAL", metadata=metadata)
+
+                cycle = replay_learner.ingest(reading)
+                if not cycle:
+                    continue
+
+                active_phase_count = 1
+                if phases:
+                    numeric_phase_values = []
+                    for val in phases.values():
+                        try:
+                            numeric_phase_values.append(float(val))
+                        except (TypeError, ValueError):
+                            continue
+                    if numeric_phase_values:
+                        active_phase_count = max(1, sum(1 for v in numeric_phase_values if v > 20.0))
+
+                cycle_payload = {
+                    "start_ts": cycle.start_ts.isoformat(),
+                    "end_ts": cycle.end_ts.isoformat(),
+                    "duration_s": cycle.duration_s,
+                    "avg_power_w": cycle.avg_power_w,
+                    "peak_power_w": cycle.peak_power_w,
+                    "energy_wh": cycle.energy_wh,
+                    "operating_modes": cycle.operating_modes,
+                    "has_multiple_modes": cycle.has_multiple_modes,
+                    "active_phase_count": int(active_phase_count),
+                    "phase_mode": "multi_phase" if active_phase_count > 1 else "single_phase",
+                }
+                heuristic_suggestion = replay_learner.suggest_device_type(cycle)
+                model_suggestion = self.storage.suggest_cycle_label(cycle_payload, fallback=heuristic_suggestion)
+                suggestion = str(model_suggestion.get("label") or heuristic_suggestion)
+                self.storage.learn_cycle_pattern(cycle=cycle_payload, suggestion_type=suggestion)
+                cycles_detected += 1
+            except Exception as point_error:
+                logger.debug("Skipping replay point due to error: %s", point_error)
                 continue
-
-            power_w = float(point.get("power_w") or 0.0)
-            phases = point.get("phases") if isinstance(point.get("phases"), dict) else {}
-            metadata = {"phase_powers_w": phases, "replay_learning": True}
-            reading = PowerReading(timestamp=ts, power_w=power_w, phase="TOTAL", metadata=metadata)
-
-            cycle = replay_learner.ingest(reading)
-            if not cycle:
-                continue
-
-            cycle_payload = {
-                "start_ts": cycle.start_ts.isoformat(),
-                "end_ts": cycle.end_ts.isoformat(),
-                "duration_s": cycle.duration_s,
-                "avg_power_w": cycle.avg_power_w,
-                "peak_power_w": cycle.peak_power_w,
-                "energy_wh": cycle.energy_wh,
-                "operating_modes": cycle.operating_modes,
-                "has_multiple_modes": cycle.has_multiple_modes,
-                "active_phase_count": int(sum(1 for _phase, val in phases.items() if float(val) > 20.0)) if phases else 1,
-                "phase_mode": "multi_phase" if phases and sum(1 for _phase, val in phases.items() if float(val) > 20.0) > 1 else "single_phase",
-            }
-            heuristic_suggestion = replay_learner.suggest_device_type(cycle)
-            model_suggestion = self.storage.suggest_cycle_label(cycle_payload, fallback=heuristic_suggestion)
-            suggestion = str(model_suggestion.get("label") or heuristic_suggestion)
-            self.storage.learn_cycle_pattern(cycle=cycle_payload, suggestion_type=suggestion)
-            cycles_detected += 1
 
         return {"cycles_detected": cycles_detected, "points_processed": len(points)}
 

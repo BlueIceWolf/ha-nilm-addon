@@ -1,4 +1,10 @@
 # Changelog
+## 0.3.4
+
+- Fixed `Lernen jetzt ausführen` API robustness: endpoint now always returns valid JSON on failures.
+- Hardened learning replay against malformed/non-numeric phase values (skip bad points instead of aborting run).
+- Improved frontend error handling for manual learning with clearer diagnostics on invalid server responses.
+
 ## 0.3.3
 
 - Fixed import reconstruction to reduce artificial downward spikes by carrying forward per-phase values while rebuilding total power timeline.
