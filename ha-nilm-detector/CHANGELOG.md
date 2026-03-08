@@ -1,4 +1,10 @@
 # Changelog
+## 0.3.6
+
+- **Fixed timezone-aware datetime subtraction error**: Normalize all parsed datetimes to naive before calculations in list_patterns().
+- This was preventing patterns from being displayed in UI (list_patterns failed silently with exception).
+- Pattern table is now visible after learning runs complete.
+
 ## 0.3.5
 
 - **Fixed pattern recognition failure**: Manual pattern creation now saves reliably (cursor.lastrowid moved inside transaction).

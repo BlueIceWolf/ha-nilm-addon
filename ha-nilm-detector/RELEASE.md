@@ -1,3 +1,23 @@
+# Release 0.3.6
+
+## Store Kurztext
+- Behoben: Timezone-Fehler verhinderte Anzeige von gelernten Mustern in der UI.
+- Muster-Tabelle wird jetzt korrekt nach Lernläufen angezeigt.
+
+## Highlights
+- **Critical fix for pattern display**: Fixed "can't subtract offset-naive and offset-aware datetimes" error in list_patterns()
+- Datetime objects from database are now normalized to naive before calculations
+- This was causing list_patterns() to fail silently and return empty list, hiding learned patterns from UI
+- After learning runs, pattern table now displays detected cycles correctly
+
+## Technical Details
+- datetime.fromisoformat() may return timezone-aware datetime if ISO string contains timezone info
+- datetime.now() returns naive datetime by default
+- Added normalization step: strip tzinfo if present before subtraction in frequency calculations
+- All storage operations remain local with no cloud dependency
+
+---
+
 # Release 0.3.5
 
 ## Store Kurztext
