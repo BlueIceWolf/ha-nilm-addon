@@ -1,4 +1,12 @@
 # Changelog
+## 0.3.1
+
+- Added Web UI action `HA Verlauf importieren` to import recorder history from Home Assistant sensors into local NILM readings.
+- Added backend endpoint `POST /api/debug/import-history` for controlled history backfill (1-168h).
+- Switched default live DB path to persistent addon config storage: `/addon_configs/ha_nilm_detector/nilm_live.sqlite3`.
+- Added `storage.db_path` to addon options/schema for explicit live DB location control.
+- Improved update resilience so historical data survives addon updates more reliably.
+
 ## 0.3.0
 
 **Große Feature-Verbesserungen**:

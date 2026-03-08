@@ -7,7 +7,7 @@
 Home Assistant Add-on fuer lokale, datenschutzfreundliche NILM-Erkennung
 (Non-Intrusive Load Monitoring).
 
-Aktueller Stand: `v0.3.0` (Beta, aktiv weiterentwickelt).
+Aktueller Stand: `v0.3.1` (Beta, aktiv weiterentwickelt).
 
 ## Features
 
