@@ -1,3 +1,12 @@
+# Release 0.5.2.1
+
+## Bugfix Release
+- Fixed NameError in phase detection when reading power data
+- Variables `active_phases` and `num_active_phases` now properly scoped
+- Addon no longer crashes on power reading
+
+---
+
 # Release 0.5.2
 
 ## Store Kurztext

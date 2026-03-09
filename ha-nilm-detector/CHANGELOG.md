@@ -1,4 +1,10 @@
 # Changelog
+## 0.5.2.1
+
+**Bugfix:**
+- **Phase-Erkennung repariert**: Fehler in der Variablendefinition (active_phases, num_active_phases) behoben. Reader stürzte beim Lesen der Phasendaten ab.
+- NameError bei `active_phases` in source.py Zeile 348 behoben
+
 ## 0.5.2
 
 **Neue Features:**
