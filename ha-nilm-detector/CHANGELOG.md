@@ -1,4 +1,12 @@
 # Changelog
+## 0.5.1
+
+**Verbesserungen:**
+- **Web-UI modernisiert**: Karten/Tabellen/Buttons optisch an aktuelles Home-Assistant-Design angenaehert (hell + dunkel konsistent, modernere Abstaende und Kontraste).
+- **Task-Fortschritt stabilisiert**: Fehlende DOM-Elemente verursachen keinen `classList`-Fehler mehr; Fortschritt wird sauber eingeblendet, wenn vorhanden.
+- **Konfigurations-UI entschlackt**: Add-on Optionen fokussieren auf `home_assistant.phase_entities.l1/l2/l3`; Lernen laeuft weiterhin automatisch ueber Defaultwerte.
+- Doku aktualisiert (`README.md`, `DOCS.md`) und `example_options.json` auf Minimal-Setup reduziert.
+
 ## 0.5.0
 
 **Neue Features:**

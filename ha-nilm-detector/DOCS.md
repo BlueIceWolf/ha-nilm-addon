@@ -19,7 +19,7 @@ Non-Intrusive Load Monitoring (NILM) Add-on for Home Assistant. Automatically de
 
 2. Install the "HA NILM Detector" add-on
 
-3. Configure the add-on with your MQTT broker settings
+3. Configure at least one power phase sensor (`home_assistant.phase_entities.l1/l2/l3`)
 
 4. Start the add-on
 
@@ -27,32 +27,27 @@ Non-Intrusive Load Monitoring (NILM) Add-on for Home Assistant. Automatically de
 
 ### Home Assistant Add-on UI setup
 
-The add-on now exposes core options directly in the Home Assistant add-on UI:
+The add-on UI is intentionally reduced for day-to-day use:
 
-- `debug`, `log_level`, `update_interval_seconds`
-- `web.*` for embedded statistics UI
-- `learning.*` for automatic pattern learning from one power sensor
-- `power_source` and `power_phase`
-- `mqtt.*` (optional output; enable only if needed)
-- `home_assistant.*` (`url`, `sensor_entity_id`, `sensor_name`, `token`, `entity_id_prefix`)
-- `storage.*` for local SQLite persistence and warm-start learning
-- `processing.*` and `confidence.min_confidence`
-- `devices_json` for device definitions
+- Active options focus on `home_assistant.phase_entities` (`l1`, `l2`, `l3`).
+- Learning runs automatically with internal defaults.
+- Advanced tuning options remain available as optional/unused fields in Home Assistant and can be set only when needed.
 
 ### Minimal config (what you really need)
 
 For normal use, only these fields are required:
 
-- `power_source: home_assistant_rest`
-- `home_assistant.sensor_entity_id: sensor.<your_power_sensor>`
-- optional `home_assistant.sensor_name` for easier matching/logging
+- `home_assistant.phase_entities.l1: sensor.<your_l1_power_sensor>`
+- optional `home_assistant.phase_entities.l2`
+- optional `home_assistant.phase_entities.l3`
 
 Everything else can stay at defaults.
 
 Recommended defaults for simple setup:
 
-- `mqtt.enabled: false` (enable later only if you want MQTT output)
-- `web.enabled: true` (use built-in UI for stats and corrections)
+- `home_assistant.url: http://supervisor/core/api`
+- `home_assistant.token: ""` (automatic `SUPERVISOR_TOKEN` is used in normal add-on setups)
+- `learning.*`, `storage.*`, `update_interval_seconds`, `log_level` are optional and use built-in defaults until explicitly set
 
 ### Add-on Web UI (Statistics)
 
@@ -101,11 +96,9 @@ API for advanced usage:
 
 Set the following in add-on options:
 
-- `power_source: home_assistant_rest`
-- `home_assistant.sensor_entity_id: sensor.<your_power_sensor>` (preferred explicit field)
-- `home_assistant.sensor_name: <friendly sensor name>` (optional name-based matching)
-- `home_assistant.power_entity_id` remains as legacy fallback
-- `home_assistant.url: http://supervisor/core/api` (default for HA add-ons)
+- `home_assistant.phase_entities.l1: sensor.<your_power_sensor>`
+- optional `home_assistant.phase_entities.l2` and `home_assistant.phase_entities.l3`
+- `home_assistant.url: http://supervisor/core/api` (default in add-on runtime)
 - `home_assistant.token`: can stay empty in most add-on setups because `SUPERVISOR_TOKEN` is used automatically
 
 If your sensor state is numeric (for example `432.5`), the add-on reads it directly.
@@ -114,8 +107,7 @@ Automatic connection behavior:
 
 - Add-on uses Home Assistant API access (`homeassistant_api: true`).
 - If `home_assistant.token` is empty, the runtime token from `SUPERVISOR_TOKEN` is used.
-- If sensor entity is empty, the add-on auto-discovers a suitable `sensor.*` power entity and logs which one it selected.
-- If `home_assistant.sensor_name` is set, auto-discovery prioritizes matching `friendly_name`/entity names.
+- At least one phase entity (`l1`, `l2`, `l3`) must be configured.
 
 ### Do I need to create a token?
 

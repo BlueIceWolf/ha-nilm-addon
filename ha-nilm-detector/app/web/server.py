@@ -21,68 +21,94 @@ def _html_page() -> str:
   <title>HA NILM Statistics</title>
   <style>
     :root {
-      --bg: #f3f4f6;
+      --bg: #f4f6f8;
+      --bg-elev: #ffffff;
       --card: #ffffff;
-      --ink: #101828;
-      --muted: #667085;
-      --line: #d0d5dd;
-      --accent: #006d77;
-      --accent-soft: #e6f6f8;
+      --ink: #1f2a37;
+      --muted: #6b7280;
+      --line: #d8dee6;
+      --accent: #03a9f4;
+      --accent-strong: #0288d1;
+      --accent-soft: #e3f4fd;
+      --shadow-sm: 0 2px 8px rgba(17, 24, 39, 0.06);
+      --shadow-md: 0 8px 24px rgba(17, 24, 39, 0.1);
+      --radius: 14px;
     }
     :root.dark-mode {
-      --bg: #1a1a1a;
-      --card: #2d2d2d;
-      --ink: #e5e5e5;
-      --muted: #a0a0a0;
-      --line: #404040;
-      --accent: #4db8c4;
-      --accent-soft: #2a4a4e;
+      --bg: #11161c;
+      --bg-elev: #18212c;
+      --card: #1e2935;
+      --ink: #e8eef5;
+      --muted: #9aa7b5;
+      --line: #2d3a47;
+      --accent: #4fc3f7;
+      --accent-strong: #29b6f6;
+      --accent-soft: #19394a;
+      --shadow-sm: 0 2px 10px rgba(0, 0, 0, 0.35);
+      --shadow-md: 0 8px 28px rgba(0, 0, 0, 0.45);
     }
     body {
       margin: 0;
-      font-family: \"Segoe UI\", \"Helvetica Neue\", sans-serif;
-      background: radial-gradient(circle at 20% 20%, #edf8ff 0%, var(--bg) 45%, #eef2f7 100%);
+      font-family: "Roboto", "Noto Sans", "Segoe UI", sans-serif;
+      background:
+        radial-gradient(1200px 600px at -10% -10%, rgba(3, 169, 244, 0.16), transparent 60%),
+        radial-gradient(1000px 500px at 110% -10%, rgba(79, 195, 247, 0.14), transparent 55%),
+        linear-gradient(180deg, var(--bg-elev) 0%, var(--bg) 60%);
       color: var(--ink);
+      -webkit-font-smoothing: antialiased;
     }
     .wrap {
-      max-width: 1080px;
-      margin: 24px auto;
-      padding: 0 16px 24px;
+      max-width: 1160px;
+      margin: 18px auto;
+      padding: 0 16px 20px;
     }
     .head {
       display: flex;
       justify-content: space-between;
-      align-items: baseline;
-      gap: 12px;
-      margin-bottom: 16px;
+      align-items: center;
+      gap: 14px;
+      margin-bottom: 14px;
+      background: var(--card);
+      border: 1px solid var(--line);
+      border-radius: var(--radius);
+      box-shadow: var(--shadow-sm);
+      padding: 12px 14px;
     }
     .head h1 {
       margin: 0;
-      font-size: 1.5rem;
-      letter-spacing: 0.02em;
+      font-size: 1.28rem;
+      letter-spacing: 0.01em;
+      font-weight: 600;
     }
-    .muted { color: var(--muted); font-size: 0.9rem; }
+    .muted { color: var(--muted); font-size: 0.88rem; }
     .grid {
       display: grid;
-      gap: 12px;
+      gap: 10px;
       grid-template-columns: repeat(auto-fit, minmax(210px, 1fr));
-      margin-bottom: 12px;
+      margin-bottom: 10px;
     }
     .card {
       background: var(--card);
       border: 1px solid var(--line);
-      border-radius: 14px;
+      border-radius: var(--radius);
       padding: 12px 14px;
-      box-shadow: 0 1px 2px rgba(16,24,40,0.06);
+      box-shadow: var(--shadow-sm);
     }
-    .label { font-size: 0.82rem; color: var(--muted); margin-bottom: 4px; }
-    .value { font-size: 1.2rem; font-weight: 600; }
+    .label {
+      font-size: 0.78rem;
+      color: var(--muted);
+      margin-bottom: 4px;
+      text-transform: uppercase;
+      letter-spacing: 0.04em;
+    }
+    .value { font-size: 1.15rem; font-weight: 700; }
     .chart-wrap {
       background: var(--card);
       border: 1px solid var(--line);
-      border-radius: 14px;
+      border-radius: var(--radius);
       padding: 10px;
-      margin-bottom: 12px;
+      margin-bottom: 10px;
+      box-shadow: var(--shadow-md);
     }
     canvas { width: 100%; height: 280px; display: block; }
     table {
@@ -90,44 +116,64 @@ def _html_page() -> str:
       border-collapse: collapse;
       background: var(--card);
       border: 1px solid var(--line);
-      border-radius: 14px;
+      border-radius: var(--radius);
       overflow: hidden;
-      margin-bottom: 12px;
+      margin-bottom: 10px;
+      box-shadow: var(--shadow-sm);
     }
     th, td {
       text-align: left;
       padding: 8px 10px;
       border-bottom: 1px solid var(--line);
-      font-size: 0.92rem;
+      font-size: 0.89rem;
     }
-    thead th { background: var(--accent-soft); }
+    thead th {
+      background: var(--accent-soft);
+      color: var(--ink);
+      font-weight: 600;
+    }
+    tbody tr:hover td {
+      background: rgba(3, 169, 244, 0.08);
+    }
     tbody tr:last-child td { border-bottom: 0; }
     button {
-      border: 1px solid var(--accent);
-      background: #fff;
-      color: var(--accent);
-      border-radius: 8px;
-      padding: 4px 8px;
+      border: 1px solid rgba(3, 169, 244, 0.45);
+      background: rgba(3, 169, 244, 0.12);
+      color: var(--accent-strong);
+      border-radius: 10px;
+      padding: 5px 10px;
       cursor: pointer;
-      font-size: 0.9rem;
+      font-size: 0.86rem;
+      font-weight: 500;
+      transition: background 0.18s ease, border-color 0.18s ease, transform 0.08s ease;
     }
-    button:hover { background: var(--accent-soft); }
-    button.active { background: var(--accent); color: #fff; }
+    button:hover {
+      background: var(--accent-soft);
+      border-color: var(--accent);
+    }
+    button:active {
+      transform: translateY(1px);
+    }
+    button.active {
+      background: var(--accent);
+      border-color: var(--accent);
+      color: #fff;
+    }
     button.btn-delete {
-      background: #fee;
-      border-color: #fcc;
-      color: #c33;
+      background: rgba(239, 83, 80, 0.14);
+      border-color: rgba(239, 83, 80, 0.45);
+      color: #c62828;
       padding: 3px 6px;
       font-size: 0.8rem;
     }
     button.btn-delete:hover {
-      background: #fcc;
-      border-color: #c33;
+      background: rgba(239, 83, 80, 0.24);
+      border-color: #c62828;
     }
     .chart-controls {
       display: flex;
       gap: 8px;
-      margin-bottom: 8px;
+      margin-bottom: 10px;
       flex-wrap: wrap;
       align-items: center;
     }
@@ -137,7 +183,7 @@ def _html_page() -> str:
     }
     .chart-selection-overlay {
       position: absolute;
-      background: rgba(0, 109, 119, 0.2);
+      background: rgba(3, 169, 244, 0.2);
       border: 2px solid var(--accent);
       pointer-events: none;
       display: none;
@@ -150,8 +196,8 @@ def _html_page() -> str:
     .tooltip .tooltiptext {
       visibility: hidden;
       width: 200px;
-      background-color: #333;
-      color: #fff;
+      background-color: #0f1720;
+      color: #f9fafb;
       text-align: left;
       border-radius: 6px;
       padding: 8px;
@@ -173,11 +219,59 @@ def _html_page() -> str:
       margin-left: -5px;
       border-width: 5px;
       border-style: solid;
-      border-color: #333 transparent transparent transparent;
+      border-color: #0f1720 transparent transparent transparent;
     }
     .tooltip:hover .tooltiptext {
       visibility: visible;
       opacity: 1;
+    }
+    .task-progress {
+      display: none;
+      background: var(--card);
+      border: 1px solid var(--line);
+      border-radius: var(--radius);
+      padding: 10px 12px;
+      margin-bottom: 10px;
+      box-shadow: var(--shadow-sm);
+    }
+    .task-progress.visible {
+      display: block;
+    }
+    .task-progress-head {
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+      gap: 10px;
+      margin-bottom: 8px;
+      font-size: 0.88rem;
+    }
+    .task-progress-bar {
+      width: 100%;
+      height: 8px;
+      border-radius: 999px;
+      background: rgba(3, 169, 244, 0.18);
+      overflow: hidden;
+    }
+    .task-progress-fill {
+      width: 0%;
+      height: 100%;
+      border-radius: 999px;
+      background: var(--accent);
+      transition: width 0.25s ease;
+    }
+    select,
+    input[type="text"] {
+      border: 1px solid var(--line);
+      border-radius: 10px;
+      background: var(--bg-elev);
+      color: var(--ink);
+      box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.02);
+    }
+    select:focus,
+    input[type="text"]:focus,
+    button:focus-visible {
+      outline: 2px solid rgba(3, 169, 244, 0.55);
+      outline-offset: 2px;
     }
     @media (max-width: 700px) {
       .head { flex-direction: column; align-items: flex-start; }
@@ -197,6 +291,16 @@ def _html_page() -> str:
       <button id=\"clearPatternsBtn\" title=\"Nur gelernte Muster löschen\">🗑️ Muster löschen</button>
       <button id=\"importHistoryBtn\" title=\"Verlauf aus Home Assistant importieren\">HA Verlauf importieren</button>
       <button id=\"darkModeToggle\" title=\"Hell/Dunkel umschalten\">🌙 Nachtmodus</button>
+    </div>
+
+    <div id=\"activeTask\" class=\"task-progress\" aria-live=\"polite\">
+      <div class=\"task-progress-head\">
+        <span id=\"taskName\" class=\"muted\">Aufgabe läuft...</span>
+        <strong id=\"taskPercent\">0%</strong>
+      </div>
+      <div class=\"task-progress-bar\">
+        <div id=\"progressFill\" class=\"task-progress-fill\"></div>
+      </div>
     </div>
 
     <div class=\"grid\">
@@ -331,6 +435,11 @@ function setStatus(message) {
 }
 
 function updateTaskProgress(taskInfo) {
+  // Task progress UI is optional; if markup is missing, skip silently.
+  if (!activeTaskEl || !taskNameEl || !taskPercentEl || !progressFillEl) {
+    return;
+  }
+
   if (!taskInfo || !taskInfo.active) {
     // Hide task progress if no active task
     activeTaskEl.classList.remove('visible');

@@ -1,3 +1,23 @@
+# Release 0.5.1
+
+## Store Kurztext
+- **Modernes HA-nahes Web-UI**: Karten, Tabellen und Controls im aktuellen Home-Assistant-Stil
+- **Einfachere Add-on-Konfiguration**: Fokus auf Leistungs-/Phasen-Sensoren, Rest bleibt optional mit Defaults
+
+## Highlights
+- Visuelles Refresh der Web-UI mit konsistenten hell/dunkel Farben, modernisierten Karten und klareren Interaktionen
+- Task-Progress-Bereich stabil integriert (kein `classList`-Frontend-Fehler bei fehlenden Elementen)
+- Add-on Optionen reduziert auf `home_assistant.phase_entities.l1/l2/l3` fuer den Standardbetrieb
+- Lernen bleibt automatisch aktiv, erweiterte Parameter sind weiterhin optional verfuegbar
+
+## Technical Details
+- Reworked embedded CSS theme in `app/web/server.py` with stable selectors and improved spacing/contrast
+- Added robust guard in `updateTaskProgress(taskInfo)` for optional task progress markup
+- Updated addon manifest schema/options in `config.yaml` to keep advanced settings optional (`?`)
+- Documentation and examples aligned: `README.md`, `DOCS.md`, `example_options.json`
+
+---
+
 # Release 0.5.0
 
 ## Store Kurztext

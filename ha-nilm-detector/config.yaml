@@ -1,6 +1,6 @@
 name: "HA NILM Detector"
 description: "Detect appliances from power consumption patterns"
-version: "0.5.0"
+version: "0.5.1"
 slug: "ha_nilm_detector"
 startup: application
 boot: auto
@@ -15,42 +15,31 @@ arch:
   - armv7
 init: false
 options:
-  log_level: info
-  log_file: /addon_configs/ha_nilm_detector/nilm.log
-  max_log_backups: 3
-  update_interval_seconds: 5
   home_assistant:
-    url: http://supervisor/core/api
     phase_entities:
       l1: ""
       l2: ""
       l3: ""
-    token: ""
-  learning:
-    enabled: true
-    on_threshold_w: 50.0
-    off_threshold_w: 25.0
-  storage:
-    retention_days: 30
-    db_path: /addon_configs/ha_nilm_detector/nilm_live.sqlite3
-    patterns_db_path: /addon_configs/ha_nilm_detector/nilm_patterns.sqlite3
 schema:
-  log_level: list(debug|info|warning|error)
+  log_level: list(debug|info|warning|error)?
   log_file: str?
   max_log_backups: int(1,10)?
-  update_interval_seconds: int(1,60)
+  update_interval_seconds: int(1,60)?
   home_assistant:
-    url: str
+    url: str?
     phase_entities:
       l1: str?
       l2: str?
       l3: str?
     token: password?
   learning:
-    enabled: bool
-    on_threshold_w: float(10,1000)
-    off_threshold_w: float(5,500)
+    enabled: bool?
+    on_threshold_w: float(10,1000)?
+    off_threshold_w: float(5,500)?
+    min_cycle_seconds: int(1,600)?
   storage:
-    retention_days: int(1,365)
+    enabled: bool?
+    retention_days: int(1,365)?
     db_path: str?
     patterns_db_path: str?
+    learning_warmup_minutes: int(1,1440)?

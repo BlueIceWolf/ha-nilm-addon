@@ -7,7 +7,7 @@
 Home Assistant Add-on fuer lokale, datenschutzfreundliche NILM-Erkennung
 (Non-Intrusive Load Monitoring).
 
-Aktueller Stand: `v0.3.4` (Beta, aktiv weiterentwickelt).
+Aktueller Stand: `v0.5.1` (Beta, aktiv weiterentwickelt).
 
 ## Features
 
@@ -72,21 +72,17 @@ Hinweise:
 ## Aktuelle Minimal-Konfiguration
 
 ```yaml
-log_level: info
-update_interval_seconds: 5
 home_assistant:
-   url: http://supervisor/core/api
    phase_entities:
       l1: sensor.dein_l1_sensor
       l2: ""
       l3: ""
-   token: ""
-learning:
-   enabled: true
-   on_threshold_w: 50.0
-   off_threshold_w: 25.0
-storage:
-   retention_days: 30  patterns_db_path: /addon_configs/ha_nilm_detector/nilm_patterns.sqlite3```
+```
+
+Hinweis zur Add-on-Konfigseite in Home Assistant:
+- Standardmaessig sind nur die Leistungs-/Phasen-Sensoren in den aktiven Optionen.
+- Weitere Parameter (Logging, Lernschwellen, Storage, Polling) bleiben als optionale Felder im Schema und nutzen Defaultwerte, solange du sie nicht setzt.
+- Das Lernen laeuft damit weiterhin automatisch mit den internen Defaults.
 
 ## Web-UI Workflows
 
