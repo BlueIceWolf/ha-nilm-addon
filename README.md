@@ -30,6 +30,7 @@
 
 > ℹ️ **v0.6.0 Hinweis**: Fundamentales Architektur-Redesign (Per-Phase Learning). Noch nicht ausführlich getestet - bitte Patterns nach Update überprüfen.
 
+<a id="features"></a>
 ## ✨ Features
 
 **Was funktioniert (mit Einschränkungen):**
@@ -61,6 +62,7 @@
 - **🎯 Phase-Attribution** – UI zeigt eindeutig, auf welcher Phase ein Gerät läuft
 
 
+<a id="quick-start"></a>
 ## 🚀 Quick Start
 
 ### Installation (Home Assistant Add-on)
@@ -106,6 +108,7 @@
    - **Bereich markieren** – Im Chart einen Leistungsspitzenzeitraum ziehen
    - Label eingeben und speichern – Pattern unmittelbar verfügbar
 
+<a id="wie-es-funktioniert"></a>
 ## 🔧 Wie es funktioniert
 
 ### NILM Concept
@@ -156,6 +159,7 @@ Phasen-Leistungsdaten (REST API von HA)
 
 ---
 
+<a id="konfiguration"></a>
 ## ⚙️ Konfiguration
 
 ### Minimal (Recommended)
@@ -188,6 +192,7 @@ logging:
 
 ---
 
+<a id="datenschutz"></a>
 ## 🔒 Datenschutz
 
 - **100% Local** – Alle Daten auf deinem HA-System
