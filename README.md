@@ -19,9 +19,9 @@
 <p align="center">
   <a href="#features">Features</a> •
   <a href="#quick-start">Quick Start</a> •
-  <a href="#how-it-works">Wie es funktioniert</a> •
-  <a href="#configuration">Konfiguration</a> •
-  <a href="#privacy">Datenschutz</a>
+  <a href="#wie-es-funktioniert">Wie es funktioniert</a> •
+  <a href="#konfiguration">Konfiguration</a> •
+  <a href="#datenschutz">Datenschutz</a>
 </p>
 
 ---
@@ -106,7 +106,7 @@
    - **Bereich markieren** – Im Chart einen Leistungsspitzenzeitraum ziehen
    - Label eingeben und speichern – Pattern unmittelbar verfügbar
 
-## 🔧 How It Works
+## 🔧 Wie es funktioniert
 
 ### NILM Concept
 **Non-Intrusive Load Monitoring** nutzt die Gesamtleistung einer oder mehrerer Phasen, um einzelne Geräte zu identifizieren – ohne dass jedes Gerät separat gemessen werden muss.
@@ -156,7 +156,7 @@ Phasen-Leistungsdaten (REST API von HA)
 
 ---
 
-## ⚙️ Configuration
+## ⚙️ Konfiguration
 
 ### Minimal (Recommended)
 ```yaml
@@ -188,7 +188,7 @@ logging:
 
 ---
 
-## 🔒 Privacy & Data
+## 🔒 Datenschutz
 
 - **100% Local** – Alle Daten auf deinem HA-System
 - **No Cloud** – Kein Upload zu externen Servern
