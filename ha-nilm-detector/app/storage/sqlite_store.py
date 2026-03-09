@@ -1194,6 +1194,9 @@ class SQLiteStore:
             for row in rows:
                 try:
                     ts = datetime.fromisoformat(row[0])
+                    # Remove timezone info if present (convert to naive)
+                    if ts.tzinfo is not None:
+                        ts = ts.replace(tzinfo=None)
                     power_w = float(row[1])
                     phase = row[2] if len(row) > 2 else "L1"
                     power_readings.append(PowerReading(timestamp=ts, power_w=power_w, phase=phase))
