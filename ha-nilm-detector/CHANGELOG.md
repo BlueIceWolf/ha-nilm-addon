@@ -1,4 +1,16 @@
 # Changelog
+## 0.5.2
+
+**Neue Features:**
+- **Muster-Visualisierung**: Klick auf ein Muster zeigt die rekonstruierte Leistungskurve (Anstieg, Plateau, Abfall) in Modal-Dialog
+- Zeigt alle Pattern-Eigenschaften: Durchschnittsleistung, Peak, Duration, Rise/Fall-Rate
+- Kurve wird aus gespeicherten Pattern-Metriken rekonstruiert für visuellen Überblick
+
+**Verbesserungen:**
+- **Phasen-Erkennung verfeinert**: Echte 3-Phasen-Geräte werden jetzt nur erkannt wenn ALLE 3 Phasen gleich starke Leistung haben (>15-60% Balance), nicht wenn beliebige mehrere Phasen aktiv sind
+- Verhindert Falschklassifikation: Einzelne Geräte auf verschiedenen Phasen (z.B. Kühlschrank L1 + Waschmaschine L2) sind jetzt korrekt als Single-Phase klassifiziert
+- Leistungsverteilung statt absolute Wattgrenze als Erkennungskriterium
+
 ## 0.5.1
 
 **Verbesserungen:**

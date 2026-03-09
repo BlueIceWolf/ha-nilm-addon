@@ -1,121 +1,249 @@
-# HA NILM Detector
+# 🏠 HA NILM Detector
 
 <p align="center">
-   <img src="ha-nilm-detector/logo.png" alt="HA NILM Detector Logo" width="180" />
+   <img src="ha-nilm-detector/logo.png" alt="HA NILM Detector Logo" width="200" />
 </p>
 
-Home Assistant Add-on fuer lokale, datenschutzfreundliche NILM-Erkennung
-(Non-Intrusive Load Monitoring).
+<p align="center">
+  <strong>Intelligente, lokale Geräte-Erkennung aus Leistungssignalen für Home Assistant</strong><br/>
+  <em>NILM = Non-Intrusive Load Monitoring – Energie-Lastaufteilung ohne separate Sensoren</em>
+</p>
 
-Aktueller Stand: `v0.5.1` (Beta, aktiv weiterentwickelt).
+<p align="center">
+  <a href="#features">Features</a> •
+  <a href="#quick-start">Quick Start</a> •
+  <a href="#how-it-works">Wie es funktioniert</a> •
+  <a href="#configuration">Konfiguration</a> •
+  <a href="#privacy">Datenschutz</a>
+</p>
 
-## Features
+---
 
-- 100% lokale Verarbeitung in Home Assistant (keine Cloud, kein externer Dienst).
-- Lernt Lastmuster aus `l1/l2/l3` Leistungsphasen und verbessert Zuordnungen ueber Zeit.
-- Ingress Web-UI mit Live-Status, Verlauf, Phasenkarten und Musterliste.
-- Multi-Phasen-Chart mit ein-/ausblendbaren Linien: `Gesamt`, `L1`, `L2`, `L3`.
-- Manuelles Lernen in der UI:
-   - `Lernen jetzt ausfuehren`
-   - `Bereich markieren` im Verlauf und direkt als Muster speichern
-   - `DB leeren (Debug)` fuer Testphasen
-- SQLite Persistenz (`/data/nilm.sqlite3`) fuer Messwerte, Muster und robuste Neustarts.
+**Aktuell:** `v0.5.2` — Pattern-Visualisierung + verbesserte 3-Phasen-Erkennung
 
+## ✨ Features
 
-## Neue Features in v0.3.0 🎉
+### Core
+- **🏠 100% Lokal** – Alle Daten bleiben auf deinem Home Assistant System (kein Cloud-Upload)
+- **⚡ Multi-Phasen** – Nutzt L1/L2/L3 Leistungssensoren zur intelligenten Geräte-Zuweisung
+- **🧠 Selbstlernend** – Passt sich automatisch an wechselnde Grundlasten an, verbessert Präzision über Zeit
+- **📊 Live-Dashboard** – Übersicht über erkannte Geräte, Leistung und Betriebsmuster
 
-### 🎯 Intelligente Pattern-Erkennung
-- **Adaptive Schwellwerte**: Automatische Anpassung an wechselnde Grundlasten (z.B. 10W → 50W)
-- **Rauschfilterung**: Median-Filter eliminiert transiente Störungen (500W Spikes werden ignoriert)
-- **Debouncing**: 2-Sample-Bestätigung verhindert Falsch-Trigger bei oszillierenden Signalen
+### Pattern Learning & Recognition
+- **🎯 Intelligente Mustererkennung** – Adaptive Schwellwerte mit automatischer Rauschfilterung
+- **📈 Power Curve Visualization** – Klick auf ein Muster zeigt die rekonstruierte Leistungskurve
+- **⏰ Temporale Muster** – Lernt typische Betriebszeiten und Intervalle zwischen Zyklen
+- **🔀 Multi-Modal Detection** – Unterscheidet verschiedene Betriebsmodi desselben Geräts (z.B. Kühlschrank Normal/Eco)
 
-### ⏰ Temporale Muster-Verfolgung
-- Lernt **typische Intervalle** zwischen Zyklen (Kühlschrank: alle 30min)
-- Erkennt **durchschnittliche Tageszeiten** (Waschmaschine: normalerweise 18:00)
-- Speichert Verlauf für zukünftige **Anomalie-Erkennung**
+### Web-UI
+- **🌙 Dark Mode** – Durchgehend hell/dunkel Modus mit modernem Home-Assistant-Design
+- **🔍 Schnelle Suche & Filter** – Muster nach Label, Typ, ID oder Häufigkeit durchsuchen
+- **📊 Flexible Sortierung** – Nach Häufigkeit, Leistung, Dauer, Stabilität oder Zeitintervall
+- **✏️ Bereich-Markierung** – Zeitraum ziehen im Chart und direkt als Muster speichern
+- **📋 Detaillierte Analytics** – Häufigkeit, Betriebszeiten, typische Tageszeiten, stability scores
 
-### 🌙 Verbesserte Web UI
-- **Dark Mode** - Nachtmodus-Toggle für angenehmes Arbeiten
-- **Muster-Suche** - Schnelles Filtern nach Label, Typ oder ID
-- **Flexible Sortierung** - Nach Häufigkeit, Leistung, Dauer, Stabilität, Intervall
-- **Interactive Tooltips** - Detaillierte Informationen bei Hover (Intervall-Historie, Stunden-Verteilung)
-- **Temporale Spalten** - Zeigt wann und wie oft Geräte normalerweise laufen
-
-### 🔧 Technische Verbesserungen
-- Kürzere Zyklen erkannt (5s statt 20s) → Mikrowelle, Toaster jetzt sichtbar
-- Optimierter Noise-Filter (Window 3 statt 5) → Schnellere Response
-- Erweiterte SQLite-Schema → Temporale Daten persistent gespeichert
+### Phase Detection (v0.5.2+)
+- **⚖️ Intelligente 3-Phasen-Erkennung** – Echte 3-Phasen-Geräte (Motor, großer Herd) vs. einzelne Geräte auf verschiedenen Phasen
+- **📊 Power Distribution Ratio** – Nutzt Leistungsverteilung statt absoluter Grenzen (verhindert Fehlklassifikation)
 
 
-## Schnellstart
+## 🚀 Quick Start
 
-1. Home Assistant -> Add-on Store -> Repositories.
-2. Repository hinzufuegen:
-    `https://github.com/BlueIceWolf/ha-nilm-addon`
-3. Add-on **HA NILM Detector** installieren.
-4. In den Add-on-Optionen mindestens eine Phase setzen:
+### Installation (Home Assistant Add-on)
+
+1. **Repository hinzufügen:**
+   - Home Assistant → Add-ons → Add-on Store (⋮ → Repositories)
+   - Repository URL eingeben: `https://github.com/BlueIceWolf/ha-nilm-addon`
+   - **HA NILM Detector** installieren
+
+2. **Konfigurieren (Minimal):**
+   - Add-on Optionen öffnen
+   - Mindestens eine Phase eingeben (L1, L2 oder L3):
+   ```yaml
+   home_assistant:
+     phase_entities:
+       l1: sensor.dein_l1_leistung
+       l2: sensor.dein_l2_leistung
+       l3: sensor.dein_l3_leistung
+   ```
+
+3. **Starten:**
+   - Add-on starten
+   - Auf „Webseite öffnen" klicken
+   - Live zu beobachten: Leistungsmessung sollte im Chart sichtbar sein
+
+### Erste Schritte in der UI
+
+1. **Live-Daten verstehen:**
+   - Chart zeigt: Gesamtleistung + optional L1/L2/L3 einzeln
+   - Status oben rechts: aktueller Zustand (Laden, aktiv, Fehler)
+
+2. **Lernphase starten:**
+   - Ein paar Minuten Geräte normal nutzen (Kühlschrank läuft, TV anschalten, etc.)
+   - Auf **„Lernen jetzt ausführen"** klicken
+   - Add-on analysiert die Leistungsmuster
+
+3. **Muster korrigieren:**
+   - Erkannte Muster unter „Gelernte Muster" anschauen
+   - Auf **„Label"** klicken und Gerätnamen eintragen (z.B. „Kühlschrank")
+   - Beim nächsten Lernen nutzt der Add-on diese Informationen
+
+4. **Manuelles Lernen (optional):**
+   - **Bereich markieren** – Im Chart einen Leistungsspitzenzeitraum ziehen
+   - Label eingeben und speichern – Pattern unmittelbar verfügbar
+
+## 🔧 How It Works
+
+### NILM Concept
+**Non-Intrusive Load Monitoring** nutzt die Gesamtleistung einer oder mehrerer Phasen, um einzelne Geräte zu identifizieren – ohne dass jedes Gerät separat gemessen werden muss.
+
+```
+Phasen-Leistungsdaten (REST API von HA)
+         ↓
+[Live Power Reading]
+   L1: 520W, L2: 180W, L3: 10W
+         ↓
+[Cycle Detection] (Adaptive Schwellwerte)
+   - Erkennt An/Aus Übergänge
+   - Filtert Rauschen (Median)
+   - Debouncing (2 Sample Bestätigung)
+         ↓
+[Feature Extraction]
+   - Ermittelt: Peak, Duration, Shape (Rise/Fall Rate)
+   - Phasen-Modi (Mono- vs. Multi-Phase)
+   - Betriebsmodi
+         ↓
+[Pattern Matching/Learning]
+   - Vergleicht mit gespeicherten Mustern
+   - Findet beste Übereinstimmung (Distance-Metrik)
+   - MATCH: Update existierendes Pattern (EMA)
+   - NOMATCH: Pattern neu erstellen
+         ↓
+[Nightly Merge]
+   - Ähnliche Muster zusammenfügen
+   - Duplikate entfernen
+   - Temporale Daten verfeinern
+         ↓
+[Web-UI Darstellung]
+   - Erkannte Geräte, Power Curves, Statistiken
+```
+
+### Algorithms & Thresholds
+
+| Komponente | Methode | Details |
+|------------|---------|----------|
+| **Cycle Detection** | Adaptive Schwellwert | ±30% von gleitendem Mittelwert |
+| **Noise Filter** | Median (Window=3) | Eliminiert transiente Störungen |
+| **Pattern Matching** | Multi-dimensional Distance | ~15 Features, Toleranz=0.38 (Echtzeit), 0.20 (Nacht) |
+| **Feature Update** | EMA (Exponential Moving Avg) | α = 1/seen_count |
+| **3-Phase Detection** | Power Distribution Ratio | ALL 3 phases: min>15%, max<60% → multi_phase |
+
+---
+
+## ⚙️ Configuration
+
+### Minimal (Recommended)
+```yaml
+home_assistant:
+  phase_entities:
+    l1: sensor.dein_l1_leistung
+    l2: sensor.dein_l2_leistung
+    l3: sensor.dein_l3_leistung
+```
+**Das ist alles was du brauchst!** Lernen läuft automatisch mit Defaults.
+
+### Optional: Advanced Settings
+Weitere Optionen als optionale Schema-Felder verfügbar:
 
 ```yaml
 home_assistant:
-   phase_entities:
-      l1: sensor.dein_l1_sensor
-      l2: ""
-      l3: ""
+  phase_entities:
+    l1: sensor.dein_l1_leistung
+    l2: sensor.dein_l2_leistung
+    l3: sensor.dein_l3_leistung
+
+learning:
+  enabled: true
+  check_interval_minutes: 30
+
+logging:
+  level: INFO
 ```
 
-5. Add-on starten und via **Open Web UI** pruefen.
+---
 
-Hinweise:
-- Es muss mindestens eine Phase (`l1`, `l2` oder `l3`) gesetzt sein.
-- `home_assistant.token` kann in der Regel leer bleiben. Das Add-on nutzt automatisch `SUPERVISOR_TOKEN`.
+## 🔒 Privacy & Data
 
-## Aktuelle Minimal-Konfiguration
+- **100% Local** – Alle Daten auf deinem HA-System
+- **No Cloud** – Kein Upload zu externen Servern
+- **Transparent** – Open-Source Code, dokumentierte Algorithmen
 
-```yaml
-home_assistant:
-   phase_entities:
-      l1: sensor.dein_l1_sensor
-      l2: ""
-      l3: ""
-```
+**Storage:**
+- Live-Daten: `/data/nilm_readings.sqlite3` (Auto-Rotation nach 30 Tagen)
+- Patterns: `/addon_configs/ha_nilm_detector/nilm_patterns.sqlite3` (Persistent)
 
-Hinweis zur Add-on-Konfigseite in Home Assistant:
-- Standardmaessig sind nur die Leistungs-/Phasen-Sensoren in den aktiven Optionen.
-- Weitere Parameter (Logging, Lernschwellen, Storage, Polling) bleiben als optionale Felder im Schema und nutzen Defaultwerte, solange du sie nicht setzt.
-- Das Lernen laeuft damit weiterhin automatisch mit den internen Defaults.
+---
 
-## Web-UI Workflows
+## 📊 Web-UI Guide
 
-- Status oben rechts zeigt live Lade-/Fehler-/Aktivzustand.
-- Im Verlauf kannst du Phasen separat ein-/ausblenden.
-- Mit `Bereich markieren` einen Zeitbereich ziehen, Label vergeben und als Muster speichern.
-- In `Gelernte Muster` kannst du Labels korrigieren, damit spaetere Erkennung praeziser wird.
+### Erkannte Geräte
+- Status, Leistung, Konfidenz, tägl. Zyklen
 
-## Lokaler Datenschutz
+### Gelernte Muster
+- Klick auf Reihe → Power Curve Modal
+- Zeigt: Peak, Duration, Rise/Fall Rate, Häufigkeit, Phase-Modus
+- Label bearbeiten, Muster löschen
 
-- Daten bleiben auf deinem HA-System.
-- Live-Rotationsdaten liegen standardmäßig in `/data/nilm.sqlite3`.
-- Geraete-/Musterdaten liegen standardmäßig in `/addon_configs/ha_nilm_detector/nilm_patterns.sqlite3` (empfohlener HA Add-on Speicherort für persistente Daten).
-- Kein Upload von Messwerten in externe Services.
-- Keine schweren Cloud/Deep-Learning Abhaengigkeiten im Add-on Runtime-Pfad.
+---
 
-## Troubleshooting
+## 🐛 Troubleshooting
 
-- `HTTP 401` beim Start:
-   `homeassistant_api: true` im Add-on sowie Token-Verfuegbarkeit pruefen.
-- Web-UI ohne Werte:
-   `home_assistant.phase_entities.l1/l2/l3` pruefen (mindestens eine numerische Quelle).
-- Nach Update keine Aenderung sichtbar:
-   Add-on neu starten, Browser Hard-Reload (`Ctrl+F5`) und ggf. Add-on neu installieren.
+### Keine Daten im Chart
+- Phase-Sensoren in Optionen gesetzt?
+- Sensor in HA vorhanden? (Developer Tools → States prüfen)
+- Add-on Logs checken
 
-## Projektstruktur
+### Patterns werden nicht erkannt
+- **2-5 Min warten** mit normaler Nutzung
+- **„Lernen jetzt"** Button klicken
+- Geräte mehrfach an/aus schalten
 
-- Add-on Ordner: `ha-nilm-detector/`
+### Nach Update: Browser Hard-Reload (`Ctrl+Shift+R`)
+
+---
+
+## 📁 Project Structure
+
+- Add-on: `ha-nilm-detector/`
 - Manifest: `ha-nilm-detector/config.yaml`
-- Add-on Doku: `ha-nilm-detector/DOCS.md`
+- Docs: `ha-nilm-detector/DOCS.md`
 - Changelog: `ha-nilm-detector/CHANGELOG.md`
 - Release Notes: `ha-nilm-detector/RELEASE.md`
 
-## Mitarbeit
+---
 
-Issues und Pull Requests sind willkommen.
+## 🤝 Contributing
+
+Issues, feature requests und PRs sind willkommen!
+
+**Lokale Entwicklung:**
+```bash
+git clone https://github.com/BlueIceWolf/ha-nilm-addon.git
+cd ha-nilm-addon
+python -m venv venv
+source venv/bin/activate  # Windows: venv\Scripts\activate
+pip install -r ha-nilm-detector/requirements.txt
+```
+
+---
+
+## 📄 License
+
+MIT License – siehe [LICENSE](LICENSE) Datei
+
+---
+
+<p align="center">
+  Made with ❤️ for Home Assistant enthusiasts<br/>
+  <a href="https://github.com/BlueIceWolf/ha-nilm-addon">⭐ Star us on GitHub</a>
+</p>

@@ -1,3 +1,28 @@
+# Release 0.5.2
+
+## Store Kurztext
+- **Muster-Kurven anzeigen**: Klick auf ein Muster zeigt Leistungsprofil (Anstieg/Plateau/Abfall)
+- **Phasen-Erkennung genauer**: Echte 3-Phasen-Geräte vs. mehrere Single-Phase-Geräte besser unterschieden
+
+## Highlights
+- **Interactive Pattern Visualization**: Click any learned pattern row for power curve (rise/plateau/fall) in modal
+- Curve reconstruction from pattern metrics: rise_rate, peak_power, fall_rate, duration
+- **Improved 3-Phase Detection**: Power distribution ratio (15-60% balance) instead of absolute watts
+- Better accuracy: Single-phase devices on different phases no longer misclassified as 3-phase
+
+## Technical Details
+**UI Changes (server.py):**
+- Added pattern modal with canvas curve visualization
+- `renderPatternChart()` reconstructs power profile from pattern properties
+- Stats panel displays avg/peak power, duration, rates, phase mode, frequency
+
+**Phase Detection Logic (source.py):**
+- Calculates phase contribution percentages (power % per phase)
+- Multi-phase only if: all 3 phases active AND max% < 60% AND min% > 15%
+- Single-phase default prevents false positives
+
+---
+
 # Release 0.5.1
 
 ## Store Kurztext
