@@ -369,10 +369,26 @@ def _html_page() -> str:
     </div>
     <table>
       <thead>
-        <tr><th>ID</th><th>Typ</th><th>Label</th><th style="font-size:0.85rem;">Häufig.</th><th style="font-size:0.85rem;">Intervall</th><th style="font-size:0.85rem;">Uhrzeit</th><th style="font-size:0.85rem;">Stabilit.</th><th>Phasen</th><th style="font-size:0.85rem;">Modi</th><th>Ø (W)</th><th>Spitze (W)</th><th>Dauer (s)</th><th>Anzahl</th><th>Aktion</th></tr>
+        <tr><th>ID</th><th>Typ</th><th>Label</th><th style="font-size:0.85rem;">Häufig.</th><th style="font-size:0.85rem;">Intervall</th><th style="font-size:0.85rem;">Uhrzeit</th><th style="font-size:0.85rem;">Stabilit.</th><th>Phasen</th><th>Ø (W)</th><th>Spitze (W)</th><th>Dauer (s)</th><th>Anzahl</th><th>Aktion</th></tr>
       </thead>
       <tbody id=\"patternRows\"></tbody>
     </table>
+
+    <!-- Pattern Visualization Modal -->
+    <div id=\"patternModal\" style=\"display:none;position:fixed;top:0;left:0;width:100%;height:100%;background:rgba(0,0,0,0.5);z-index:1000;justify-content:center;align-items:center;flex-direction:column;padding:20px;box-sizing:border-box;\">
+      <div style=\"background:var(--card);border:1px solid var(--line);border-radius:var(--radius);padding:16px;max-width:900px;width:100%;box-shadow:var(--shadow-md);max-height:90vh;overflow-y:auto;\">
+        <div style=\"display:flex;justify-content:space-between;align-items:center;margin-bottom:12px;\">
+          <h2 style=\"margin:0;font-size:1.2rem;\" id=\"patternModalTitle\">Muster-Profil</h2>
+          <button onclick=\"document.getElementById('patternModal').style.display='none'\" style=\"background:none;border:none;font-size:1.5rem;cursor:pointer;color:var(--muted);\">✕</button>
+        </div>
+        <div style=\"margin-bottom:12px;\">
+          <canvas id=\"patternChart\" width=\"800\" height=\"300\" style=\"border:1px solid var(--line);border-radius:6px;background:var(--bg-elev);width:100%;\"></canvas>
+        </div>
+        <div id=\"patternStats\" style=\"display:grid;grid-template-columns:repeat(auto-fit,minmax(150px,1fr));gap:8px;font-size:0.85rem;\">
+          <!-- Stats werden eingefüllt -->
+        </div>
+      </div>
+    </div>
   </div>
 
 <script>
@@ -839,23 +855,22 @@ function renderPatterns(patterns) {
     
     // Multi-Mode Info (intelligent!)
     const modes = p.operating_modes || [];
-    const modeLabels = modes.map(m => {
-      const modeIcon = m.type === 'startup' ? '↑' : (m.type === 'shutdown' ? '↓' : (m.type === 'standby' ? '◯' : '●'));
-      return `${modeIcon}${m.type.slice(0,3).toUpperCase()}(${m.avg_power_w.toFixed(0)}W)`;
-    }).join(' ');
-    const modeInfo = p.has_multiple_modes ? `<span style="font-size:0.8rem;color:#666;">${modeLabels}</span>` : '<span style="font-size:0.8rem;color:#999;">-</span>';
-    
     // Intervall-Zelle mit Tooltip
     const intervalCell = intervalTooltip 
-      ? `<td><div class="tooltip" style="font-size:0.85rem;color:#006d77;font-weight:600;">${intervalText}<span class="tooltiptext">${intervalTooltip}</span></div></td>`
-      : `<td style="font-size:0.85rem;color:#006d77;font-weight:600;">${intervalText}</td>`;
+      ? `<td><div class="tooltip" style="font-size:0.85rem;color:#03a9f4;font-weight:600;">${intervalText}<span class="tooltiptext">${intervalTooltip}</span></div></td>`
+      : `<td style="font-size:0.85rem;color:#03a9f4;font-weight:600;">${intervalText}</td>`;
     
     // Uhrzeit-Zelle mit Tooltip
     const timeCell = timeTooltip
       ? `<td><div class="tooltip" style="font-size:0.85rem;color:#666;">${timeText}<span class="tooltiptext">${timeTooltip}</span></div></td>`
       : `<td style="font-size:0.85rem;color:#666;">${timeText}</td>`;
     
-    tr.innerHTML = `<td>${p.id}</td><td>${typeText}</td><td>${label}</td><td style="font-size:0.85rem;color:#666;">${frequency}</td>${intervalCell}${timeCell}<td style="padding:4px 2px;">${stabilityBar}</td><td>${phaseMode}</td><td>${modeInfo}</td><td>${fmt(p.avg_power_w)}</td><td>${fmt(p.peak_power_w)}</td><td>${fmt(p.duration_s)}</td><td>${p.seen_count ?? 0}</td><td><button data-id="${p.id}" class="btn-label">Label</button> <button data-id="${p.id}" class="btn-delete">Löschen</button></td>`;
+    tr.innerHTML = `<td>${p.id}</td><td>${typeText}</td><td>${label}</td><td style="font-size:0.85rem;color:#666;">${frequency}</td>${intervalCell}${timeCell}<td style="padding:4px 2px;">${stabilityBar}</td><td>${phaseMode}</td><td>${fmt(p.avg_power_w)}</td><td>${fmt(p.peak_power_w)}</td><td>${fmt(p.duration_s)}</td><td>${p.seen_count ?? 0}</td><td><button data-id="${p.id}" class="btn-label">Label</button> <button data-id="${p.id}" class="btn-delete">Löschen</button></td>`;
+    tr.style.cursor = 'pointer';
+    tr.addEventListener('click', (e) => {
+      if (e.target.tagName === 'BUTTON') return;
+      showPatternChart(p);
+    });
     tbody.appendChild(tr);
   });
 
@@ -1078,6 +1093,171 @@ async function createPatternFromRange(startIdx, endIdx) {
     alert(`Muster-Erstellung fehlgeschlagen: ${err}`);
     setStatus(`Muster-Erstellung fehlgeschlagen: ${err}`);
   }
+}
+
+function showPatternChart(pattern) {
+  const modal = document.getElementById('patternModal');
+  modal.style.display = 'flex';
+  document.getElementById('patternModalTitle').textContent = 
+    `Muster-Profil: ${pattern.user_label || pattern.suggestion_type || 'Unbekannt'} (ID: ${pattern.id})`;
+  
+  renderPatternChart(pattern);
+  renderPatternStats(pattern);
+}
+
+function renderPatternChart(pattern) {
+  const canvas = document.getElementById('patternChart');
+  const ctx = canvas.getContext('2d');
+  const width = canvas.width;
+  const height = canvas.height;
+  const padding = 40;
+  
+  // Farben von CSS Variablen auslesen
+  const styles = getComputedStyle(document.documentElement);
+  const bgColor = styles.getPropertyValue('--bg-elev').trim() || '#ffffff';
+  const lineColor = styles.getPropertyValue('--line').trim() || '#cccccc';
+  const inkColor = styles.getPropertyValue('--ink').trim() || '#000000';
+  const accentColor = '#03a9f4';
+  
+  ctx.clearRect(0, 0, width, height);
+  ctx.fillStyle = bgColor;
+  ctx.fillRect(0, 0, width, height);
+  
+  const peak = pattern.peak_power_w || 1000;
+  const duration = pattern.duration_s || 60;
+  const riseRate = pattern.rise_rate_w_per_s || peak / 5;
+  const fallRate = pattern.fall_rate_w_per_s || peak / 5;
+  
+  // Achsen zeichnen
+  ctx.strokeStyle = lineColor;
+  ctx.lineWidth = 1;
+  ctx.beginPath();
+  ctx.moveTo(padding, height - padding);
+  ctx.lineTo(width - 20, height - padding);
+  ctx.stroke();
+  ctx.beginPath();
+  ctx.moveTo(padding, height - padding);
+  ctx.lineTo(padding, 20);
+  ctx.stroke();
+  
+  // Gitter
+  ctx.strokeStyle = 'rgba(128, 128, 128, 0.15)';
+  ctx.lineWidth = 0.5;
+  for (let i = 0; i <= 5; i++) {
+    const y = height - padding - (i * (height - padding - 20) / 5);
+    ctx.beginPath();
+    ctx.moveTo(padding, y);
+    ctx.lineTo(width - 20, y);
+    ctx.stroke();
+  }
+  
+  // Legende Watt
+  ctx.fillStyle = inkColor;
+  ctx.font = '10px sans-serif';
+  ctx.textAlign = 'right';
+  for (let i = 0; i <= 5; i++) {
+    const watts = Math.round(i * peak / 5);
+    const y = height - padding - (i * (height - padding - 20) / 5);
+    ctx.fillText(watts + 'W', padding - 5, y + 4);
+  }
+  
+  // Legende Zeit
+  ctx.textAlign = 'center';
+  for (let i = 0; i <= 4; i++) {
+    const timeS = Math.round(i * duration / 4);
+    const x = padding + (i * (width - padding - 20) / 4);
+    ctx.fillText(timeS + 's', x, height - padding + 15);
+  }
+  
+  // Kurve rekonstruieren: 0 → peak (riseRate) → peak (plateau) → 0 (fallRate)
+  const riseTime = riseRate > 0 ? peak / riseRate : duration / 3;
+  const fallTime = fallRate > 0 ? peak / fallRate : duration / 3;
+  const plateauTime = Math.max(0, duration - riseTime - fallTime);
+  
+  const points = [];
+  const samples = 200;
+  
+  for (let i = 0; i <= samples; i++) {
+    const t = (i / samples) * duration;
+    let power;
+    
+    if (t < riseTime) {
+      power = (t / riseTime) * peak;
+    } else if (t < riseTime + plateauTime) {
+      power = peak;
+    } else {
+      const fallProgress = (t - riseTime - plateauTime) / fallTime;
+      power = peak * Math.max(0, 1 - fallProgress);
+    }
+    
+    const x = padding + (t / duration) * (width - padding - 20);
+    const y = height - padding - (power / peak) * (height - padding - 20);
+    points.push({ x, y });
+  }
+  
+  // Kurve zeichnen
+  ctx.strokeStyle = accentColor;
+  ctx.lineWidth = 3;
+  ctx.beginPath();
+  points.forEach((p, idx) => {
+    if (idx === 0) ctx.moveTo(p.x, p.y);
+    else ctx.lineTo(p.x, p.y);
+  });
+  ctx.stroke();
+  
+  // Fläche unter der Kurve
+  ctx.fillStyle = 'rgba(3, 169, 244, 0.15)';
+  ctx.beginPath();
+  points.forEach((p, idx) => {
+    if (idx === 0) ctx.moveTo(p.x, p.y);
+    else ctx.lineTo(p.x, p.y);
+  });
+  ctx.lineTo(points[points.length - 1].x, height - padding);
+  ctx.lineTo(points[0].x, height - padding);
+  ctx.fill();
+  
+  // Eckige Punkte für wichtige Ereignisse
+  ctx.fillStyle = '#0288d1';
+  const riseEndX = padding + (riseTime / duration) * (width - padding - 20);
+  const peakY = height - padding - (peak / peak) * (height - padding - 20);
+  ctx.fillRect(riseEndX - 3, peakY - 3, 6, 6);
+  
+  const fallStartX = padding + ((riseTime + plateauTime) / duration) * (width - padding - 20);
+  ctx.fillRect(fallStartX - 3, peakY - 3, 6, 6);
+}
+
+function renderPatternStats(pattern) {
+  const statsDiv = document.getElementById('patternStats');
+  statsDiv.innerHTML = `
+    <div style="padding:8px;background:var(--bg-elev);border-radius:6px;">
+      <div style="color:var(--muted);font-size:0.75rem;">Durchschn. Leistung</div>
+      <div style="font-weight:600;font-size:1rem;">${fmt(pattern.avg_power_w)}</div>
+    </div>
+    <div style="padding:8px;background:var(--bg-elev);border-radius:6px;">
+      <div style="color:var(--muted);font-size:0.75rem;">Peak-Leistung</div>
+      <div style="font-weight:600;font-size:1rem;">${fmt(pattern.peak_power_w)}</div>
+    </div>
+    <div style="padding:8px;background:var(--bg-elev);border-radius:6px;">
+      <div style="color:var(--muted);font-size:0.75rem;">Dauer</div>
+      <div style="font-weight:600;font-size:1rem;">${fmt(pattern.duration_s)}s</div>
+    </div>
+    <div style="padding:8px;background:var(--bg-elev);border-radius:6px;">
+      <div style="color:var(--muted);font-size:0.75rem;">Anstiegsrate</div>
+      <div style="font-weight:600;font-size:1rem;">${fmt(pattern.rise_rate_w_per_s || 0)}W/s</div>
+    </div>
+    <div style="padding:8px;background:var(--bg-elev);border-radius:6px;">
+      <div style="color:var(--muted);font-size:0.75rem;">Fallrate</div>
+      <div style="font-weight:600;font-size:1rem;">${fmt(pattern.fall_rate_w_per_s || 0)}W/s</div>
+    </div>
+    <div style="padding:8px;background:var(--bg-elev);border-radius:6px;">
+      <div style="color:var(--muted);font-size:0.75rem;">Erkannt</div>
+      <div style="font-weight:600;font-size:1rem;">${pattern.seen_count || 0}x</div>
+    </div>
+    <div style="padding:8px;background:var(--bg-elev);border-radius:6px;">
+      <div style="color:var(--muted);font-size:0.75rem;">Phase</div>
+      <div style="font-weight:600;font-size:1rem;">${String(pattern.phase_mode || 'unknown') === 'single_phase' ? '1-ph' : (String(pattern.phase_mode || 'unknown') === 'multi_phase' ? '3-ph' : '?')}</div>
+    </div>
+  `;
 }
 
 refresh();

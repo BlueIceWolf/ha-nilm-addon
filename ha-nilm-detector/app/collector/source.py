@@ -302,14 +302,38 @@ class HARestPowerSource(PowerSource):
                 return None
 
             total_power_w = float(sum(phase_powers_w.values()))
-            active_phases = [name for name, value in phase_powers_w.items() if value >= self._active_phase_threshold_w]
-            phase_active_count = len(active_phases)
-            if phase_active_count <= 0:
+            
+            # Classify as multi_phase only if power is balanced across all 3 phases
+            # (indicates a true 3-phase device, not multiple single-phase devices on different phases)
+            if total_power_w < self._active_phase_threshold_w:
                 phase_mode = "idle"
-            elif phase_active_count == 1:
-                phase_mode = "single_phase"
             else:
-                phase_mode = "multi_phase"
+                # Check if power distribution is balanced across phases
+                # For true 3-phase: each phase contributes roughly equally
+                # For single-phase on different phases: one phase dominates
+                phase_percentages = {
+                    name: (value / total_power_w) if total_power_w > 0 else 0
+                    for name, value in phase_powers_w.items()
+                }
+                
+                # A true 3-phase device has no single phase dominating (max < 60% of total)
+                # and all phases contributing meaningfully (min > 15% of total)
+                max_percentage = max(phase_percentages.values()) if phase_percentages else 0
+                min_percentage = min(phase_percentages.values()) if phase_percentages else 0
+                
+                num_active_phases = sum(1 for v in phase_powers_w.values() if v >= self._active_phase_threshold_w)
+                
+                # Multi-phase only if: all 3 phases active AND power is balanced
+                if (num_active_phases == 3 and 
+                    max_percentage < 0.60 and 
+                    min_percentage > 0.15):
+                    phase_mode = "multi_phase"
+                elif num_active_phases == 0:
+                    phase_mode = "idle"
+                else:
+                    phase_mode = "single_phase"
+            
+            phase_active_count = num_active_phases
 
             return PowerReading(
                 timestamp=datetime.now(),
