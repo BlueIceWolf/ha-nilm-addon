@@ -1,5 +1,5 @@
 name: "HA NILM Detector"
-description: "Detect appliances from power consumption patterns"
+description: "Detect appliances from power consumption patterns (v0.6.0 BETA - Per-Phase Learning)"
 version: "0.6.0"
 slug: "ha_nilm_detector"
 startup: application

@@ -1,3 +1,46 @@
+# Release 0.6.0 (BETA)
+
+> ⚠️ **BETA-VERSION**: Fundamentales Architektur-Redesign - noch nicht ausführlich in Produktionsumgebung getestet.
+> Bei unerwarteten Problemen bitte auf v0.5.2.1 zurückrollen und Issue auf GitHub melden.
+
+## Store Kurztext
+- **Per-Phase Pattern Learning**: Jede Phase (L1/L2/L3) trackt Muster unabhängig - keine Interferenz mehr!
+- **Intelligente Phase-Attribution**: Kühlschrank (L1, 150W) + Waschmaschine (L2, 800W) = 2 Patterns, nicht 950W-Gerät
+- **Ressourcen-Optimierung**: Learner nur für konfigurierte Phasen aktiv
+
+## Highlights
+- **Architektur-Redesign**: Separate `PatternLearner` Instanzen pro Phase (L1/L2/L3)
+- **Interferenz-Schutz**: Geräte auf verschiedenen Phasen beeinflussen sich nicht mehr
+- **Phase-basiertes Pattern Matching**: Patterns werden nur mit Cycles der gleichen Phase verglichen
+- **UI-Verbesserung**: Phase-Spalte zeigt explizit L1/L2/L3 (statt nur "1-ph")
+- **Conditional Initialization**: Nur Phasen mit Entity-ID bekommen Learner (spart RAM bei 1-Phasen-Systemen)
+- **Bugfix**: DateTime timezone-aware/naive Konflikt in manueller Pattern-Erstellung behoben
+
+## Technical Details
+**Main Loop (app/main.py):**
+- Changed from single `self.pattern_learner` to `self.phase_learners: Dict[str, PatternLearner]`
+- Conditional creation: `if entity_id and entity_id.strip()` before learner initialization
+- Iterator over phase_learners processes each phase with isolated `PowerReading(power_w=phase_power, phase=phase_name)`
+- Explicit phase attribution in cycle payload: `"phase": phase_name`
+
+**Database Schema (app/storage/sqlite_store.py):**
+- New column: `phase TEXT DEFAULT 'L1'` in learned_patterns table
+- INSERT statement includes phase field from cycle
+- SELECT in `list_patterns()` includes `COALESCE(phase, 'L1')`
+- Pattern matching filters candidates by phase before distance calculation
+
+**Web UI (app/web/server.py):**
+- Phase column displays: `L1<br><span>1-ph</span>` (explicit phase + mode)
+- Pattern table shows clear phase attribution for each learned device
+
+## Migration Notes
+- Existing patterns in DB get default `phase='L1'` via COALESCE
+- No data loss - patterns remain functional
+- Consider reviewing patterns after upgrade to verify correct phase attribution
+- Multi-phase devices (e.g., 3-phase motors) will be detected on all active phases
+
+---
+
 # Release 0.5.2.1
 
 ## Bugfix Release

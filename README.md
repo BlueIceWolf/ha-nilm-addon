@@ -21,6 +21,8 @@
 
 **Aktuell:** `v0.6.0` — Per-Phase Pattern Learning (verhindert Geräte-Interferenz zwischen Phasen)
 
+> ⚠️ **BETA-Version**: v0.6.0 enthält fundamentales Architektur-Redesign (Per-Phase Learning). Die Implementation ist syntaktisch validiert, aber noch nicht ausführlich in Produktionsumgebung getestet. Bitte Patterns nach Update überprüfen und bei Problemen auf v0.5.2.1 zurückrollen.
+
 ## ✨ Features
 
 ### Core

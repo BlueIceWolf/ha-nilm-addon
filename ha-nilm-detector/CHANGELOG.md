@@ -1,5 +1,7 @@
 # Changelog
-## 0.6.0
+## 0.6.0 (BETA)
+
+> ⚠️ **BETA-STATUS**: Fundamentales Architektur-Redesign - noch nicht ausführlich in Produktion getestet. Bei Problemen auf v0.5.2.1 zurückrollen.
 
 **Architektur-Redesign: Per-Phase Pattern Learning**
 - **Separate Pattern-Learner pro Phase**: Jede Phase (L1/L2/L3) hat nun eigenen Pattern-Tracker
