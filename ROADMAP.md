@@ -1,169 +1,127 @@
-# 🗺️ HA NILM Detector - Roadmap
+# 🗺️ Roadmap
 
-Status der Features und geplante Entwicklung für das experimentelle NILM-Projekt.
-
----
-
-## ✅ Implemented & Working
-
-**Stabile Features die zuverlässig funktionieren:**
-
-### Core NILM
-- ✅ Live Power Reading (REST API Integration)
-- ✅ Adaptive Cycle Detection mit Noise-Filtering
-- ✅ Feature Extraction (peak, duration, rise/fall rate)
-- ✅ Pattern Matching mit Multi-Dimensional Distance
-- ✅ EMA-basiertes Pattern Learning/Updating
-
-### Phase Detection
-- ✅ Multi-Phase Power Distribution Ratio
-- ✅ 3-Phase vs. Single-Phase Classifications
-- ✅ Per-Phase Pattern Learning (v0.6.0)
-- ✅ Phase-based Pattern Filtering
-
-### Web UI
-- ✅ Live Power Chart mit Canvas-Rendering
-- ✅ Pattern-Visualisierung (Power Curves)
-- ✅ Dark Mode
-- ✅ Pattern-Tabelle mit Sorting
-- ✅ Manual Pattern Creation via Chart-Bereich-Markierung
-- ✅ Pattern Labeling & Description
-
-### Data Storage
-- ✅ SQLite Pattern Database
-- ✅ SQLite Reading Log
-- ✅ Pattern Persistence
-- ✅ Temporal Patterns (intervals, hour distribution)
+Was funktioniert bereits, was ist noch in Arbeit und wo soll das Projekt hin.
 
 ---
 
-## ⚠️ Partially Working / Experimental
+## ✅ Läuft Bereits
 
-**Features die funktionieren, aber nicht optimal:**
+**Was zuverlässig funktioniert und genutzt werden kann:**
 
-### Pattern Learning
-- ⚠️ **Multi-Modal Detection** - Unterscheidet Betriebsmodi, aber nicht immer zuverlässig
-- ⚠️ **Variable Load Recognition** - Geräte mit schwankender Leistung werden oft zu fragmented
-- ⚠️ **Small Load Detection** - Geräte <20W können von Grundlast überlagert werden
-- ⚠️ **Nightly Merge** - Kann zu aggressive Duplikate entfernen
-
-### Phase Detection
-- ⚠️ **Inverter Devices** - Modern Wärmepumpen/Klimaanlage mit Inverter-Kompressor sind schwierig
-- ⚠️ **Simultaneous Events** - Wenn 2+ Geräte exakt gleichzeitig starten/stoppen kann Zuweisung fehlschlagen
-
-### UI
-- ⚠️ **Chart Performance** - Bei sehr langen Zeiträumen (>7 Tage) kann Live-Update langsam werden
-- ⚠️ **Pattern Filtering** - Search/Filter können manchmal keine Ergebnisse finden obwohl Patterns existieren
+- **Live Leistungsdaten**: REST API von Home Assistant auslesen funktioniert stabil
+- **Zykluserkennung**: Erkennt zuverlässig Geräte-An/Aus Übergänge
+- **Mustervergleich**: Findet ähnliche Zyklen im Muster-Speicher
+- **Phasen-Handling**: L1/L2/L3 richtig unterscheiden (v0.6.0+)
+- **Daten speichern**: Patterns persistent in SQLite ablegen
+- **Web-UI**: Chart, Muster-Tabelle, Pattern-Visualisierung funktioniert
+- **Manuelles Lernen**: Bereich im Chart markieren → Muster speichern
+- **Zeitliche Muster**: Lernt typische Tageszeiten und Intervalle zwischen Zyklen
 
 ---
 
-## 🔄 In Progress / Planned Next
+## ⚠️ Funktioniert, aber nicht Perfekt
 
-**Werden derzeit entwickelt oder sind nächste Priorität:**
+**Features die grundsätzlich funktionieren, aber bei bestimmten Geräten Probleme machen:**
 
-### v0.7.0 (Geplant)
-- 🔄 **Improved Variable Load Handling** - Bessere Erkennung für Induktionsherd, Staubsauger mit Stufen
-- 🔄 **Pattern Confidence Scoring** - Jedes Pattern erhält Confidence-Score basierend auf Konsistenz
-- 🔄 **Device Groups** - Manual grouping von Patterns zu Devices (z.B. "Wohnzimmer" = mehrere Patterns)
-- 🔄 **Nightly Report** - Täglicher Summary: Top Devices, Trends, Anomalien
-
-### v0.8.0 (Geplant)
-- 📋 **MQTT Discovery** - Automatische Integration mit Home Assistant MQTT Discovery
-- 📋 **Appliance Library** - Vordefinierte Pattern für Standard-Geräte (Kühlschrank, Waschmaschine, etc.)
-- 📋 **Anomaly Detection** - Warnt wenn Gerät ungewöhnliches Verhalten zeigt
-- 📋 **Energy Cost Estimation** - Kostenanalyse basierend auf Energiepreisen
-
-### v0.9.0+ (Langfristig)
-- 🎯 **Home Assistant Integration** - Native HA Services & Automations
-- 🎯 **Notifications** - HA Notifications für erkannte Geräte
-- 🎯 **Machine Learning** - Optional: TensorFlow-basiertes Pattern Learning (für erfahrene User)
-- 🎯 **Export/Import** - Patterns zwischen Instanzen austauschen
-- 🎯 **Appliance Database** - Community-geteilte Pattern-Библиотека
+- **Variable Lasten**: Dinge wie Induktionsherd oder Staubsauger mit Stufenschalter werden oft zu viele Patterns
+- **Kleine Geräte**: Unter ~20W kann die Grundlast zu laut werden → Muster gehen unter
+- **Gleichzeitige Events**: Wenn 2 Geräte genau zur gleichen Zeit starten/stoppen, weiß das System nicht wem es zuordnen soll
+- **Inverter-Geräte**: Moderne Wärmepumpen und Klimaanlagen mit variablem Kompressor sind schwierig
+- **Pattern aufräumen**: Die nächtliche Automatik kann manchmal zu aggressive ähnliche Patterns zusammenfassen
 
 ---
 
-## ❌ Known Issues & Limitations
+## 🔄 In Arbeit / Geplant
 
-**Bugs die bekannt/geplant sind für Fix:**
+**Was demnächst kommt oder schon angedacht ist:**
 
-### High Priority (Sollten baldfix)
-- 🐛 **Chart Flicker** - Bei sehr schnellem Phasenwechsel kann Chart "springen"
-- 🐛 **Pattern Merge Bug** - Manchmal werden unterschiedliche Geräte versehentlich gemergt
-- 🐛 **Manual Pattern Slow** - Pattern-Creation via UI kann bei >1h Zeitraum sehr langsam werden
+### Kurzfristig (nächste Versionen)
+- Bessere Erkennung für variable Lasten (Induktionsherd, Staubsauger)
+- Confidence-Score für jedes Pattern (wie sicher ist die Erkennung?)
+- Device-Gruppen: Mehrere Patterns unter einem Gerätenamen zusammenfassen
+- Täglicher Summary: Top Geräte, Trends, Anomalien
 
-### Medium Priority (Sollten mittelfristig fix)
-- 🐛 **Search Not Finding Patterns** - Filter-Funktion übersieht manchmal Patterns
-- 🐛 **Memory Leak** - Bei sehr langen Runtimes (>30 Tage) kann RAM leicht wachsen
-- 🐛 **Timezone Issues** - Manchmal Probleme bei Datumsumrechnung über Zeitzonen hinweg
+### Mittelfristig
+- MQTT Integration für Home Assistant
+- Vordefinierte Muster für Standard-Geräte (damit nicht jeder neu lernen muss)
+- Warnung wenn Gerät ungewöhnlich läuft
+- Kostenberechnung basierend auf Strompreisen
 
-### Low Priority / By Design
-- 🚫 **Cross-Phase Pattern Matching** - Absichtlich deaktiviert um Interferenz zu verhindern (kann in Config aktiviert werden)
-- 🚫 **Very Low Power Detection** - <10W Geräte sind physikal schwierig (zu nah an Grundlast-Rauschen)
-
----
-
-## 📊 Feature Matrix
-
-| Feature | Status | Zuverlässigkeit | Anmerkung |
-|---------|--------|-----------------|-----------|
-| **Kühlschrank Pattern** | ✅ | 95% | Sehr stabil, funktioniert fastest immer |
-| **Waschmaschine Pattern** | ✅ | 85% | Gute Phasen-Struktur, funktioniert gut |
-| **Wasserkocher Detection** | ✅ | 90% | Einfaches On/Off, sehr zuverlässig |
-| **Induktionsherd** | ⚠️ | 40% | Variable Leistung -> fragmented Patterns |
-| **Staubsauger (variabel)** | ⚠️ | 35% | Stufen-basierte Leistung ist schwierig |
-| **TV/Computer** | ⚠️ | 50% | Standby + variable Last schwierig |
-| **Wärmepumpe (Inverter)** | ⚠️ | 30% | Moderne Inverter-Kompressoren komplex |
-| **LED-Leuchte** | ❌ | 5% | <10W ist unter Rausch-Schwelle |
-| **PV-Wechselrichter** | ❌ | 0% | Erzeugt Energie statt zu verbrauchen |
+### Langfristig (Nice to Have)
+- Natives Home Assistant Integration (Services, Automations)
+- Benachrichtigungen wenn interessante Dinge passieren
+- Export/Import von Patterns zwischen Systemen
+- Community-Muster teilen (wer hat einen guten Waschmaschinen-Pattern?)
 
 ---
 
-## 🤔 Design Decisions
+## 🐛 Bekannte Probleme
 
-### Warum kein Cross-Phase Matching?
-- If Kühlschrank manchmal L1 manchmal L2 nutzt → würde als ein Pattern gemacht
-- Aber besser: 2 separate Patterns, User kann manuell labeln als "Kühlschrank"
-- Verhindert Interferenz bei geteiltem Gerät zwischen Phasen
+**Was manchmal nicht läuft wie es sollte:**
 
-### Warum EMA statt vollständiger Retraining?
-- EMA (Exponential Moving Average) ist speichereffizient
-- Älteren Patterns weniger Gewicht → neue Geräte lernt schnell
-- Alternative (Full Re-Train) würde exponentiell länger dauern
+### Sollte dringend fix sein
+- Chart "springt" manchmal bei schnellen Phasenwechseln
+- Pattern-Merge kann manchmal unterschiedliche Geräte versehentlich zusammenfassen
+- Manuelle Pattern-Erstellung kann durchhängen wenn der Zeitraum größer als 1h ist
 
-### Warum SQLite statt anderen DB?
-- Keine externe Abhängigkeit ("Batteries included")
-- ACID-Garantien für Pattern Persistence
-- Easy Backup (einfach DB-Dateien kopieren)
+### Sollte mittelfristig fix sein
+- Suche findet manchmal Patterns nicht wenn sie da sein sollten
+- Bei sehr langen Runtimes (>30 Tage) kann RAM ein bisschen wachsen
+- Datumsumrechnung bei Zeitzonen-Wechsel ist manchmal komisch
 
----
-
-## 🎯 Success Criteria für "Production Ready"
-
-Für v1.0.0 (Production) sollten diese Bedingungen erfüllt sein:
-
-- ✅ Mindestens 90% Zuverlässigkeit für Standard-Geräte (Kühlschrank, Waschmaschine, Wasserkocher)
-- ✅ Keine Memory-Leaks über 30+ Tage Betrieb
-- ✅ MQTT Discovery Integration funktioniert
-- ✅ Home Assistant native Integration
-- ✅ Umfangreiche Test-Suite mit bekannten Betriebsmittel-Patterns
-- ✅ Community-getestete Appliance Library (50+ Geräte)
-- ✅ Dokumentation: DOCS.md + TROUBLESHOOTING + Video-Guides
-
-**Aktueller Status (v0.6.0):** 🚧 BETA - Etwa 40% von Production-Ready
+### Ist so beabsichtigt / Hard Problem
+- Cross-Phase Matching: Absichtlich ausgeschaltet um zu verhindern dass Geräte auf verschiedenen Phasen als Interferenz wirken
+- Sehr kleine Geräte (<10W) sind physikalisch schwierig - das ist unter den NILM-Grundlagen einfach eine Grenze
 
 ---
 
-## 📞 Contributing to Roadmap
+## 📊 Wie Gut's bei Verschiedenen Geräten Funktioniert
 
-Du hast Ideen was prioritär sein sollte?
-
-1. **Feature Request** - GitHub Issue mit `[feature-request]` Tag
-2. **Bug Report** - GitHub Issue mit `[bug]` Tag und Logs
-3. **Pull Request** - Direkt Code beitragen (siehe CONTRIBUTING.md)
-
-**Bitte:** Sei realistisch - wenn etwas variable Leistung hat (z.B. Induktionsherd) ist das ein Hard Problem in NILM. Ein PR der 100% Zuverlässigkeit verspricht ist unrealistisch.
+| Gerät | Funktioniert? | Anmerkung |
+|-------|---------------|----------|
+| Kühlschrank | ✅ Super | Sehr stabile Muster, funktioniert immer |
+| Gefrierschrank | ✅ Super | Genauso stabil wie Kühlschrank |
+| Waschmaschine | ✅ Gut | Hat klare Phasen, lässt sich gut lernen |
+| Geschirrspüler | ✅ Gut | Ähnlich wie Waschmaschine |
+| Wasserkocher | ✅ Super | Einfaches An/Aus, sehr zuverlässig |
+| Kaffeemaschine | ✅ Gut | Kurz und deutlich |
+| Backofen | ⚠️ Mittelmäßig | Heizelement ist relativ konstant, aber Rauschen |
+| Induktionsherd | ⚠️ Schwierig | Variable Leistung je nach Einstellung → zu viele Patterns |
+| Staubsauger | ⚠️ Schwierig | Stufenschalter macht viele verschiedene Lasten |
+| Wärmepumpe | ⚠️ Schwierig | Inverter-Kompressor ist variabel und komplex |
+| TV/Computer | ⚠️ Schwierig | Standby + variable Last schwer zu unterscheiden |
+| LED-Leuchte | ❌ Geht nicht | Zu kleine Last - unter dem Rausch |
+| PV-Wechselrichter | ❌ Geht nicht | Erzeugt Energie statt zu verbrauchen (anderes Vorzeichen) |
 
 ---
 
-Last Updated: März 2026  
-Next Review: Nach v0.7.0 Release
+## 🎯 Milestones bis Produktiv
+
+Damit das Projekt irgendwann "produktiv-ready" ist sollte gelten:
+
+- Mindestens 90% Zuverlässigkeit bei Standard-Geräten (Kühlschrank, Waschmaschine, Wasserkocher)
+- Keine RAM-Leaks auch nach Wochen durchgehend laufen
+- Home Assistant Integration so dass man Devices in Automations nutzen kann
+- Eine Liste von Geräten die definitiv funktionieren vs. welche nicht
+- Gute Dokumentation damit neue User nicht völlig verloren sind
+- Ein paar Video-Guides zum Einrichten
+
+**Aktuell (v0.6.0):** Etwa 40-50% davon erreicht. Der Core läuft, aber viel Polish und Edge-Case-Handling fehlt noch.
+
+---
+
+## 💭 Warum so und nicht anders?
+
+**Warum benutzen wir EMA (Exponential Moving Average) statt Neutraining?**  
+EMA passt Patterns schnell an neue Geräte/Änderungen an ohne viel Speicher zu verbrauchen. Komplett neutraining würde länger dauern.
+
+**Warum SQLite statt PostgreSQL oder NoSQL?**  
+SQLite hat keine externen Abhängigkeiten. Backup ist einfach: DB-Datei kopieren. Reicht für die Datenmengen die wir haben.
+
+**Warum blockiert ihr Cross-Phase Pattern Matching?**  
+Wenn ein Gerät manchmal L1 manchmal L2 benutzt, würde es als *ein* Pattern gelernt. Das ist aber schlecht wenn verschiedene Geräte auf verschiedenen Phasen sind - die würden sich dann gegenseitig stören. Besser: Zwei getrennte Pattern, User labelt beide manuell als "Kühlschrank".
+
+---
+
+Ganz Kurz: Das Projekt funktioniert für "normale" Geräte mit stabiler Leistung sehr gut. Für alles andere ist NILM ein Hard Problem wo niemand ne vollkommene Lösung hat. Realistische Erwartungen setzen und nicht entmutigen lassen wenn Induktionsherd nicht perfekt erkannt wird 😄
+
