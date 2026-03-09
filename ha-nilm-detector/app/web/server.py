@@ -792,7 +792,9 @@ function renderPatterns(patterns) {
     const candidate = p.candidate_name || p.suggestion_type || 'unbekannt';
     const typeText = p.is_confirmed ? candidate : `evtl. ${candidate}`;
     const phaseModeRaw = String(p.phase_mode || 'unknown');
-    const phaseMode = phaseModeRaw === 'single_phase' ? '1-ph' : (phaseModeRaw === 'multi_phase' ? '3-ph' : '?');
+    const phaseModeShort = phaseModeRaw === 'single_phase' ? '1-ph' : (phaseModeRaw === 'multi_phase' ? '3-ph' : '?');
+    const phaseLabel = String(p.phase || 'L1');
+    const phaseDisplay = `${phaseLabel}<br><span style="font-size:0.75rem;color:#999;">${phaseModeShort}</span>`;
     
     // Häufigkeits- und Stabilitäts-Indikatoren
     const frequency = p.frequency_label || 'unbekannt';
@@ -865,7 +867,7 @@ function renderPatterns(patterns) {
       ? `<td><div class="tooltip" style="font-size:0.85rem;color:#666;">${timeText}<span class="tooltiptext">${timeTooltip}</span></div></td>`
       : `<td style="font-size:0.85rem;color:#666;">${timeText}</td>`;
     
-    tr.innerHTML = `<td>${p.id}</td><td>${typeText}</td><td>${label}</td><td style="font-size:0.85rem;color:#666;">${frequency}</td>${intervalCell}${timeCell}<td style="padding:4px 2px;">${stabilityBar}</td><td>${phaseMode}</td><td>${fmt(p.avg_power_w)}</td><td>${fmt(p.peak_power_w)}</td><td>${fmt(p.duration_s)}</td><td>${p.seen_count ?? 0}</td><td><button data-id="${p.id}" class="btn-label">Label</button> <button data-id="${p.id}" class="btn-delete">Löschen</button></td>`;
+    tr.innerHTML = `<td>${p.id}</td><td>${typeText}</td><td>${label}</td><td style="font-size:0.85rem;color:#666;">${frequency}</td>${intervalCell}${timeCell}<td style="padding:4px 2px;">${stabilityBar}</td><td>${phaseDisplay}</td><td>${fmt(p.avg_power_w)}</td><td>${fmt(p.peak_power_w)}</td><td>${fmt(p.duration_s)}</td><td>${p.seen_count ?? 0}</td><td><button data-id="${p.id}" class="btn-label">Label</button> <button data-id="${p.id}" class="btn-delete">Löschen</button></td>`;
     tr.style.cursor = 'pointer';
     tr.addEventListener('click', (e) => {
       if (e.target.tagName === 'BUTTON') return;

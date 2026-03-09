@@ -239,6 +239,7 @@ class SQLiteStore:
 
             self._ensure_column(self._patterns_conn, "learned_patterns", "avg_active_phases", "REAL DEFAULT 1.0")
             self._ensure_column(self._patterns_conn, "learned_patterns", "phase_mode", "TEXT DEFAULT 'unknown'")
+            self._ensure_column(self._patterns_conn, "learned_patterns", "phase", "TEXT DEFAULT 'L1'")  # Explicit phase attribution (L1/L2/L3)
             
             # Advanced features inspired by NILM research (Torch-NILM concepts)
             self._ensure_column(self._patterns_conn, "learned_patterns", "power_variance", "REAL DEFAULT 0.0")
@@ -778,7 +779,7 @@ class SQLiteStore:
                 SELECT id, created_at, updated_at, first_seen, last_seen, seen_count,
                        avg_power_w, peak_power_w, duration_s, energy_wh,
                       suggestion_type, user_label, status,
-                      COALESCE(avg_active_phases, 1.0), COALESCE(phase_mode, 'unknown'),
+                      COALESCE(avg_active_phases, 1.0), COALESCE(phase_mode, 'unknown'), COALESCE(phase, 'L1'),
                       COALESCE(power_variance, 0.0), COALESCE(duty_cycle, 0.0),
                       COALESCE(peak_to_avg_ratio, 1.0),
                       COALESCE(operating_modes, '[]'), COALESCE(has_multiple_modes, 0),
@@ -814,14 +815,14 @@ class SQLiteStore:
                 
                 # Berechne Stabilität (Varianz normiert)
                 avg_power = float(row[6])
-                power_variance = float(row[15] or 0.0)
+                power_variance = float(row[16] or 0.0)
                 if avg_power > 10:
                     stability_score = max(0, 100 - (power_variance * 100))  # 100 = sehr stabil
                 else:
                     stability_score = 50
                 
                 # Berechne Spitzenwert/Durchschnitt Verhältnis
-                peak_to_avg = float(row[17] or 1.0)
+                peak_to_avg = float(row[18] or 1.0)
                 
                 # Berechne Häufigkeitsmuster
                 days_since_created = max(1, (last_seen_ts - created_ts).days)
@@ -842,12 +843,12 @@ class SQLiteStore:
                 # Parse operating modes (multi-mode learning!)
                 operating_modes = []
                 try:
-                    modes_json = str(row[18] or "[]")
+                    modes_json = str(row[19] or "[]")
                     operating_modes = json.loads(modes_json) if modes_json else []
                 except Exception:
                     operating_modes = []
                 
-                has_multiple_modes = bool(int(row[19] or 0))
+                has_multiple_modes = bool(int(row[20] or 0))
                 
                 out.append(
                     {
@@ -866,23 +867,24 @@ class SQLiteStore:
                         "status": row[12],
                         "avg_active_phases": float(row[13] or 1.0),
                         "phase_mode": row[14] or "unknown",
+                        "phase": str(row[15] or "L1"),
                         "power_variance": power_variance,
-                        "duty_cycle": float(row[16] or 0.0),
+                        "duty_cycle": float(row[17] or 0.0),
                         "peak_to_avg_ratio": peak_to_avg,
                         "stability_score": int(stability_score),
                         "frequency_label": frequency_label,
                         "frequency_per_day": round(frequency_per_day, 2),
                         "operating_modes": operating_modes,  # Multi-mode learning!
                         "has_multiple_modes": has_multiple_modes,
-                        "typical_interval_s": float(row[20] or 0.0),
-                        "avg_hour_of_day": float(row[21] or 12.0),
-                        "last_intervals_json": row[22] or "[]",
-                        "hour_distribution_json": row[23] or "{}",
-                        "rise_rate_w_per_s": float(row[24] or 0.0),
-                        "fall_rate_w_per_s": float(row[25] or 0.0),
-                        "num_substates": int(row[26] or 0),
-                        "has_heating_pattern": int(row[27] or 0),
-                        "has_motor_pattern": int(row[28] or 0),
+                        "typical_interval_s": float(row[21] or 0.0),
+                        "avg_hour_of_day": float(row[22] or 12.0),
+                        "last_intervals_json": row[23] or "[]",
+                        "hour_distribution_json": row[24] or "{}",
+                        "rise_rate_w_per_s": float(row[25] or 0.0),
+                        "fall_rate_w_per_s": float(row[26] or 0.0),
+                        "num_substates": int(row[27] or 0),
+                        "has_heating_pattern": int(row[28] or 0),
+                        "has_motor_pattern": int(row[29] or 0),
                         "candidate_name": self._normalize_pattern_name(row[11] or row[10]),
                         "is_confirmed": bool(str(row[11] or "").strip()),
                     }
@@ -900,10 +902,16 @@ class SQLiteStore:
         now = datetime.now().isoformat()
         patterns = self.list_patterns(limit=500)
 
+        # Get phase from cycle (default to L1 if not specified)
+        cycle_phase = str(cycle.get("phase", "L1"))
+
         best = None
         best_distance = 999.0
         for item in patterns:
             if item.get("status") != "active":
+                continue
+            # Only match patterns on the same phase
+            if item.get("phase", "L1") != cycle_phase:
                 continue
             distance = self._pattern_distance(item, cycle)
             if distance < best_distance:
@@ -1042,13 +1050,13 @@ class SQLiteStore:
                         created_at, updated_at, first_seen, last_seen, seen_count,
                         avg_power_w, peak_power_w, duration_s, energy_wh,
                         suggestion_type, user_label, status,
-                        avg_active_phases, phase_mode,
+                        avg_active_phases, phase_mode, phase,
                         power_variance, rise_rate_w_per_s, fall_rate_w_per_s,
                         duty_cycle, peak_to_avg_ratio, num_substates,
                         has_heating_pattern, has_motor_pattern,
                         operating_modes, has_multiple_modes,
                         typical_interval_s, avg_hour_of_day, last_intervals_json, hour_distribution_json
-                    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                     """,
                     (
                         now,
@@ -1065,6 +1073,7 @@ class SQLiteStore:
                         "active",
                         float(cycle.get("active_phase_count", 1.0)),
                         str(cycle.get("phase_mode", "unknown")),
+                        str(cycle.get("phase", "L1")),  # Explicit phase
                         power_variance,
                         rise_rate,
                         fall_rate,

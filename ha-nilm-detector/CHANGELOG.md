@@ -1,4 +1,17 @@
 # Changelog
+## 0.6.0
+
+**Architektur-Redesign: Per-Phase Pattern Learning**
+- **Separate Pattern-Learner pro Phase**: Jede Phase (L1/L2/L3) hat nun eigenen Pattern-Tracker
+- **Verhindert Interferenz**: Kühlschrank (L1, 150W) + Waschmaschine (L2, 800W) werden als 2 separate Patterns erkannt, nicht als 950W-Gerät
+- **Phase-Attribution**: Patterns werden explizit L1/L2/L3 zugeordnet, UI zeigt Phase deutlich an
+- **Conditional Initialization**: Pattern-Learner werden nur für konfigurierte Phasen erstellt (spart Ressourcen bei 1-Phasen-Systemen)
+- **Phase-basiertes Matching**: Patterns werden nur mit Cycles der gleichen Phase verglichen
+- Datenbank-Schema erweitert: Neue `phase` Spalte für eindeutige Zuordnung
+
+**Bugfixes:**
+- DateTime timezone-aware/naive Konflikt in manueller Pattern-Erstellung behoben (UI "Bereich markieren" funktioniert jetzt zuverlässig)
+
 ## 0.5.2.1
 
 **Bugfix:**

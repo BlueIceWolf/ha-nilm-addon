@@ -84,13 +84,26 @@ class NILMDetectionSystem:
             adaptive_correction=self.config.processing_adaptive_correction,
         )
 
-        self.pattern_learner: PatternLearner | None = None
+        # Phase-based pattern learning: separate tracker per phase
+        self.phase_learners: Dict[str, PatternLearner] = {}
         if self.config.learning_enabled and self.storage:
-            self.pattern_learner = PatternLearner(
-                on_threshold_w=self.config.learning_on_threshold_w,
-                off_threshold_w=self.config.learning_off_threshold_w,
-                min_cycle_seconds=self.config.learning_min_cycle_seconds,
-            )
+            phase_entities = self.config.get_selected_phase_entities()
+            for phase_name, entity_id in phase_entities.items():
+                if entity_id and entity_id.strip():  # Only create learner if phase is configured
+                    self.phase_learners[phase_name] = PatternLearner(
+                        on_threshold_w=self.config.learning_on_threshold_w,
+                        off_threshold_w=self.config.learning_off_threshold_w,
+                        min_cycle_seconds=self.config.learning_min_cycle_seconds,
+                    )
+                    logger.info(f"Pattern learner initialized for phase {phase_name}")
+            
+            if not self.phase_learners:
+                logger.warning("No phase learners initialized - no phase entities configured")
+
+        # Legacy: keep reference for backwards compatibility (uses first available learner)
+        self.pattern_learner: PatternLearner | None = None
+        if self.phase_learners:
+            self.pattern_learner = next(iter(self.phase_learners.values()))
 
         self.confidence_evaluator = ConfidenceEvaluator(
             min_confidence=self.config.confidence_threshold
@@ -577,44 +590,65 @@ class NILMDetectionSystem:
                 if self.storage:
                     self.storage.store_reading(reading)
 
-                if self.pattern_learner and self.storage:
-                    cycle = self.pattern_learner.ingest(processed)
-                    if cycle:
-                        cycle_payload = {
-                            "start_ts": cycle.start_ts.isoformat(),
-                            "end_ts": cycle.end_ts.isoformat(),
-                            "duration_s": cycle.duration_s,
-                            "avg_power_w": cycle.avg_power_w,
-                            "peak_power_w": cycle.peak_power_w,
-                            "energy_wh": cycle.energy_wh,
-                            "operating_modes": cycle.operating_modes,  # Multi-mode learning!
-                            "has_multiple_modes": cycle.has_multiple_modes,
-                            "active_phase_count": int(processed.metadata.get("phase_active_count", 1)),
-                            "phase_mode": str(processed.metadata.get("phase_mode", "single_phase")),
-                        }
-                        heuristic_suggestion = self.pattern_learner.suggest_device_type(cycle)
-                        model_suggestion = self.storage.suggest_cycle_label(
-                            cycle_payload,
-                            fallback=heuristic_suggestion,
+                # Phase-based pattern learning: process each phase separately
+                if self.phase_learners and self.storage:
+                    phase_powers_w = processed.metadata.get("phase_powers_w", {})
+                    
+                    for phase_name, learner in self.phase_learners.items():
+                        # Get power for this specific phase
+                        phase_power = phase_powers_w.get(phase_name, 0.0)
+                        
+                        # Create a reading for just this phase
+                        phase_reading = PowerReading(
+                            timestamp=processed.timestamp,
+                            power_w=phase_power,
+                            phase=phase_name,
+                            metadata={
+                                "phase": phase_name,
+                                "original_total": processed.power_w,
+                                "phase_powers_w": {phase_name: phase_power}
+                            }
                         )
-                        suggestion = str(model_suggestion.get("label") or heuristic_suggestion)
-                        learn_result = self.storage.learn_cycle_pattern(
-                            cycle=cycle_payload,
-                            suggestion_type=suggestion,
-                        )
-                        pattern = learn_result.get("pattern") if isinstance(learn_result, dict) else None
-                        if pattern:
-                            candidate_name = pattern.get("candidate_name") or pattern.get("user_label") or pattern.get("suggestion_type")
-                            is_confirmed = bool(pattern.get("is_confirmed") or pattern.get("user_label"))
-                            guess_prefix = "bestaetigt" if is_confirmed else "evtl."
-                            logger.info(
-                                "Pattern learned/updated: "
-                                f"id={pattern.get('id')} suggestion={pattern.get('suggestion_type')} "
-                                f"label={pattern.get('user_label') or '-'} seen={pattern.get('seen_count')} "
-                                f"model_source={model_suggestion.get('source')} "
-                                f"model_conf={float(model_suggestion.get('confidence', 0.0)):.2f} "
-                                f"-> {guess_prefix} {candidate_name}"
+                        
+                        # Ingest into phase-specific learner
+                        cycle = learner.ingest(phase_reading)
+                        if cycle:
+                            cycle_payload = {
+                                "start_ts": cycle.start_ts.isoformat(),
+                                "end_ts": cycle.end_ts.isoformat(),
+                                "duration_s": cycle.duration_s,
+                                "avg_power_w": cycle.avg_power_w,
+                                "peak_power_w": cycle.peak_power_w,
+                                "energy_wh": cycle.energy_wh,
+                                "operating_modes": cycle.operating_modes,
+                                "has_multiple_modes": cycle.has_multiple_modes,
+                                "active_phase_count": 1,  # Single phase per learner
+                                "phase_mode": "single_phase",
+                                "phase": phase_name,  # Explicit phase attribution
+                            }
+                            heuristic_suggestion = learner.suggest_device_type(cycle)
+                            model_suggestion = self.storage.suggest_cycle_label(
+                                cycle_payload,
+                                fallback=heuristic_suggestion,
                             )
+                            suggestion = str(model_suggestion.get("label") or heuristic_suggestion)
+                            learn_result = self.storage.learn_cycle_pattern(
+                                cycle=cycle_payload,
+                                suggestion_type=suggestion,
+                            )
+                            pattern = learn_result.get("pattern") if isinstance(learn_result, dict) else None
+                            if pattern:
+                                candidate_name = pattern.get("candidate_name") or pattern.get("user_label") or pattern.get("suggestion_type")
+                                is_confirmed = bool(pattern.get("is_confirmed") or pattern.get("user_label"))
+                                guess_prefix = "bestaetigt" if is_confirmed else "evtl."
+                                logger.info(
+                                    f"[{phase_name}] Pattern learned/updated: "
+                                    f"id={pattern.get('id')} suggestion={pattern.get('suggestion_type')} "
+                                    f"label={pattern.get('user_label') or '-'} seen={pattern.get('seen_count')} "
+                                    f"model_source={model_suggestion.get('source')} "
+                                    f"model_conf={float(model_suggestion.get('confidence', 0.0)):.2f} "
+                                    f"-> {guess_prefix} {candidate_name}"
+                                )
 
                 for device_name, detector_group in self.detectors.items():
                     detection_candidates = []
