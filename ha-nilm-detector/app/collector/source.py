@@ -303,6 +303,10 @@ class HARestPowerSource(PowerSource):
 
             total_power_w = float(sum(phase_powers_w.values()))
             
+            # Pre-calculate active phases and counts
+            num_active_phases = sum(1 for v in phase_powers_w.values() if v >= self._active_phase_threshold_w)
+            active_phases = [name for name, value in phase_powers_w.items() if value >= self._active_phase_threshold_w]
+            
             # Classify as multi_phase only if power is balanced across all 3 phases
             # (indicates a true 3-phase device, not multiple single-phase devices on different phases)
             if total_power_w < self._active_phase_threshold_w:
@@ -320,8 +324,6 @@ class HARestPowerSource(PowerSource):
                 # and all phases contributing meaningfully (min > 15% of total)
                 max_percentage = max(phase_percentages.values()) if phase_percentages else 0
                 min_percentage = min(phase_percentages.values()) if phase_percentages else 0
-                
-                num_active_phases = sum(1 for v in phase_powers_w.values() if v >= self._active_phase_threshold_w)
                 
                 # Multi-phase only if: all 3 phases active AND power is balanced
                 if (num_active_phases == 3 and 
