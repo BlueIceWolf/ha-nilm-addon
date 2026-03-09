@@ -21,8 +21,8 @@
   <a href="#quick-start">Quick Start</a> •
   <a href="#wie-es-funktioniert">Wie es funktioniert</a> •
   <a href="#konfiguration">Konfiguration</a> •
-  <a href=\"#datenschutz\">Datenschutz</a> •
-  <a href=\"ROADMAP.md\">Roadmap</a>
+  <a href="#datenschutz">Datenschutz</a> •
+  <a href="ROADMAP.md">🗺️ Roadmap</a>
 </p>
 
 ---
