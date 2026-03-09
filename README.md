@@ -19,7 +19,7 @@
 
 ---
 
-**Aktuell:** `v0.5.2` — Pattern-Visualisierung + verbesserte 3-Phasen-Erkennung
+**Aktuell:** `v0.6.0` — Per-Phase Pattern Learning (verhindert Geräte-Interferenz zwischen Phasen)
 
 ## ✨ Features
 
@@ -42,9 +42,12 @@
 - **✏️ Bereich-Markierung** – Zeitraum ziehen im Chart und direkt als Muster speichern
 - **📋 Detaillierte Analytics** – Häufigkeit, Betriebszeiten, typische Tageszeiten, stability scores
 
-### Phase Detection (v0.5.2+)
+### Phase Detection & Learning
 - **⚖️ Intelligente 3-Phasen-Erkennung** – Echte 3-Phasen-Geräte (Motor, großer Herd) vs. einzelne Geräte auf verschiedenen Phasen
 - **📊 Power Distribution Ratio** – Nutzt Leistungsverteilung statt absoluter Grenzen (verhindert Fehlklassifikation)
+- **🔌 Per-Phase Pattern Learning (v0.6.0+)** – Jede Phase (L1/L2/L3) trackt Muster unabhängig
+- **🚫 Interferenz-Schutz** – Kühlschrank (L1, 150W) + Waschmaschine (L2, 800W) = 2 separate Patterns, nicht 950W-Gerät
+- **🎯 Phase-Attribution** – UI zeigt eindeutig, auf welcher Phase ein Gerät läuft
 
 
 ## 🚀 Quick Start
@@ -113,11 +116,12 @@ Phasen-Leistungsdaten (REST API von HA)
    - Phasen-Modi (Mono- vs. Multi-Phase)
    - Betriebsmodi
          ↓
-[Pattern Matching/Learning]
-   - Vergleicht mit gespeicherten Mustern
+[Pattern Matching/Learning] (Per-Phase seit v0.6.0)
+   - Separate Learner für L1/L2/L3 (conditional activation)
+   - Vergleicht nur mit Mustern der gleichen Phase
    - Findet beste Übereinstimmung (Distance-Metrik)
    - MATCH: Update existierendes Pattern (EMA)
-   - NOMATCH: Pattern neu erstellen
+   - NOMATCH: Pattern neu erstellen mit Phase-Attribution
          ↓
 [Nightly Merge]
    - Ähnliche Muster zusammenfügen
@@ -135,6 +139,7 @@ Phasen-Leistungsdaten (REST API von HA)
 | **Cycle Detection** | Adaptive Schwellwert | ±30% von gleitendem Mittelwert |
 | **Noise Filter** | Median (Window=3) | Eliminiert transiente Störungen |
 | **Pattern Matching** | Multi-dimensional Distance | ~15 Features, Toleranz=0.38 (Echtzeit), 0.20 (Nacht) |
+| **Pattern Learning** | Per-Phase Tracking (v0.6.0+) | Separate learners für L1/L2/L3, phase-based filtering |
 | **Feature Update** | EMA (Exponential Moving Avg) | α = 1/seen_count |
 | **3-Phase Detection** | Power Distribution Ratio | ALL 3 phases: min>15%, max<60% → multi_phase |
 
