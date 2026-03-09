@@ -1,6 +1,12 @@
+# Release Notes
+
+> ⚠️ **EXPERIMENTELLES PROJEKT**: Dieses Add-on ist in aktiver Entwicklung (BETA-Status). Features können unvollständig sein, Breaking Changes auftreten. Nutze es zum Experimentieren und Testen, nicht für kritische Produktionsumgebungen.
+
+---
+
 # Release 0.6.0 (BETA)
 
-> ⚠️ **BETA-VERSION**: Fundamentales Architektur-Redesign - noch nicht ausführlich in Produktionsumgebung getestet.
+> ℹ️ **Version-Hinweis**: Fundamentales Architektur-Redesign - noch nicht ausführlich getestet.
 > Bei unerwarteten Problemen bitte auf v0.5.2.1 zurückrollen und Issue auf GitHub melden.
 
 ## Store Kurztext

@@ -2,7 +2,9 @@
 
 Non-Intrusive Load Monitoring (NILM) Add-on for Home Assistant. Automatically detects and monitors appliances based on their power consumption patterns.
 
-> ⚠️ **v0.6.0 BETA**: Diese Version enthält fundamentales Architektur-Redesign (Per-Phase Pattern Learning). Syntaktisch validiert, aber noch nicht ausführlich in Produktionsumgebung getestet. Bei Problemen bitte auf v0.5.2.1 zurückrollen.
+> ⚠️ **EXPERIMENTELLES PROJEKT (BETA)**: Dieses Add-on befindet sich in aktiver Entwicklung und ist **nicht production-ready**. Features können unvollständig sein, Bugs auftreten und Breaking Changes zwischen Versions passieren. Nutze es zum Experimentieren, aber nicht für kritische Systeme.
+>
+> **v0.6.0 Spezifisch**: Diese Version enthält fundamentales Architektur-Redesign (Per-Phase Pattern Learning). Noch nicht ausführlich getestet - bei Problemen bitte auf v0.5.2.1 zurückrollen.
 
 ## Features
 

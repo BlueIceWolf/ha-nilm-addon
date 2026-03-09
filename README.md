@@ -10,6 +10,13 @@
 </p>
 
 <p align="center">
+  <img src="https://img.shields.io/badge/Status-BETA-orange" alt="BETA" />
+  <img src="https://img.shields.io/badge/Version-0.6.0-blue" alt="Version" />
+</p>
+
+> ⚠️ **EXPERIMENTELLES PROJEKT (BETA)**: Dieses Add-on befindet sich in aktiver Entwicklung. Viele Features funktionieren bereits gut, aber es ist **nicht production-ready**. Erwarte Bugs, unvollständige Features und Breaking Changes zwischen Versionen. Nutze es zum Experimentieren und Testen, aber nicht für kritische Automatisierungen.
+
+<p align="center">
   <a href="#features">Features</a> •
   <a href="#quick-start">Quick Start</a> •
   <a href="#how-it-works">Wie es funktioniert</a> •
@@ -21,21 +28,23 @@
 
 **Aktuell:** `v0.6.0` — Per-Phase Pattern Learning (verhindert Geräte-Interferenz zwischen Phasen)
 
-> ⚠️ **BETA-Version**: v0.6.0 enthält fundamentales Architektur-Redesign (Per-Phase Learning). Die Implementation ist syntaktisch validiert, aber noch nicht ausführlich in Produktionsumgebung getestet. Bitte Patterns nach Update überprüfen und bei Problemen auf v0.5.2.1 zurückrollen.
+> ℹ️ **v0.6.0 Hinweis**: Fundamentales Architektur-Redesign (Per-Phase Learning). Noch nicht ausführlich getestet - bitte Patterns nach Update überprüfen.
 
 ## ✨ Features
+
+**Was funktioniert (mit Einschränkungen):**
 
 ### Core
 - **🏠 100% Lokal** – Alle Daten bleiben auf deinem Home Assistant System (kein Cloud-Upload)
 - **⚡ Multi-Phasen** – Nutzt L1/L2/L3 Leistungssensoren zur intelligenten Geräte-Zuweisung
-- **🧠 Selbstlernend** – Passt sich automatisch an wechselnde Grundlasten an, verbessert Präzision über Zeit
+- **🧠 Selbstlernend** – Passt sich an wechselnde Grundlasten an (Präzision variiert je nach Gerät)
 - **📊 Live-Dashboard** – Übersicht über erkannte Geräte, Leistung und Betriebsmuster
 
 ### Pattern Learning & Recognition
-- **🎯 Intelligente Mustererkennung** – Adaptive Schwellwerte mit automatischer Rauschfilterung
+- **🎯 Intelligente Mustererkennung** – Adaptive Schwellwerte mit automatischer Rauschfilterung (funktioniert gut bei stabilen Geräten wie Kühlschrank, weniger gut bei variablen Lasten)
 - **📈 Power Curve Visualization** – Klick auf ein Muster zeigt die rekonstruierte Leistungskurve
 - **⏰ Temporale Muster** – Lernt typische Betriebszeiten und Intervalle zwischen Zyklen
-- **🔀 Multi-Modal Detection** – Unterscheidet verschiedene Betriebsmodi desselben Geräts (z.B. Kühlschrank Normal/Eco)
+- **🔀 Multi-Modal Detection** – Unterscheidet verschiedene Betriebsmodi desselben Geräts (experimentell)
 
 ### Web-UI
 - **🌙 Dark Mode** – Durchgehend hell/dunkel Modus mit modernem Home-Assistant-Design
@@ -216,6 +225,31 @@ logging:
 - Geräte mehrfach an/aus schalten
 
 ### Nach Update: Browser Hard-Reload (`Ctrl+Shift+R`)
+
+---
+
+## ⚠️ Known Limitations (BETA)
+
+**Was noch nicht gut funktioniert:**
+- **Variable Lasten**: Geräte mit stark schwankender Leistung (z.B. Induktionsherd, Staubsauger mit variabler Stufe) werden oft als mehrere Geräte erkannt
+- **Kleine Lasten**: Geräte unter ~20W können von Grundlast-Schwankungen überdeckt werden
+- **Gleichzeitige Events**: Wenn 2+ Geräte exakt gleichzeitig starten/stoppen, kann die Zuordnung fehlschlagen
+- **Inverter-Geräte**: Moderne Inverter-Kompressoren (Klimaanlage, Wärmepumpe) haben komplexe Muster - Erkennung experimentell
+- **MQTT Discovery**: Noch nicht implementiert (geplant für spätere Version)
+- **Automatische Benachrichtigungen**: Home Assistant Notifications noch nicht integriert
+
+**Bekannte Bugs:**
+- Bei sehr schnellem Phasenwechsel kann Chart kurz "springen"
+- Pattern-Merge-Funktion kann manchmal zu aggressive Duplikate entfernen
+- Manual pattern creation via UI kann bei sehr langen Zeiträumen (>1h) langsam sein
+
+**Empfohlene Geräte zum Testen:**
+- ✅ Kühlschrank, Gefrierschrank (sehr stabile Patterns)
+- ✅ Waschmaschine, Geschirrspüler (klare Phasen)
+- ✅ Wasserkocher, Kaffeemaschine (einfache On/Off)
+- ⚠️ TV, Computer (variable Leistung)
+- ❌ LED-Leuchten (zu geringe Leistung)
+- ❌ Photovoltaik-Wechselrichter (invers - erzeugt statt verbraucht)
 
 ---
 
