@@ -1063,6 +1063,9 @@ class SQLiteStore:
                 except Exception:
                     profile_points = []
                 quality_score_avg = max(0.0, min(1.0, float(row[31] or 0.5)))
+                # Confidence combines quality with pattern maturity (seen_count saturation).
+                maturity = 1.0 - math.exp(-max(seen_count, 0) / 8.0)
+                confidence_score = max(0.0, min(100.0, ((quality_score_avg * 0.7) + (maturity * 0.3)) * 100.0))
                 raw_phase_mode = str(row[14] or "unknown")
                 phase_label = str(row[15] or "L1")
                 avg_active_phases = float(row[13] or 1.0)
@@ -1107,6 +1110,7 @@ class SQLiteStore:
                         "has_motor_pattern": int(row[29] or 0),
                         "profile_points": profile_points,
                         "quality_score_avg": quality_score_avg,
+                        "confidence_score": round(confidence_score, 1),
                         "candidate_name": self._normalize_pattern_name(row[11] or row[10]),
                         "is_confirmed": bool(str(row[11] or "").strip()),
                     }

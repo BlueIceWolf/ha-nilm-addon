@@ -2,6 +2,16 @@
 
 > ⚠️ **Hinweis**: Dieses Projekt ist experimentell (BETA) - Breaking Changes und Bugs können auftreten.
 
+## 0.6.6 (BETA)
+
+**Confidence-Score jetzt sichtbar**
+- Muster-Tabelle zeigt jetzt einen klaren Confidence-Wert (0-100%) pro Pattern.
+- Neue Sortieroption `Confidence ↓` in der Web-UI.
+- Confidence wird aus Pattern-Qualitaet (`quality_score_avg`) und Pattern-Reife (`seen_count`) abgeleitet.
+
+**Roadmap-Punkt abgeschlossen**
+- Geplanter Punkt "sichtbarer Confidence-Score" wurde umgesetzt und in README/Roadmap dokumentiert.
+
 ## 0.6.5 (BETA)
 
 **Musterbenennung und Erkennung verbessert**

@@ -4,6 +4,20 @@
 
 ---
 
+# Release 0.6.6 (BETA)
+
+## Store Kurztext
+- **Confidence sichtbar**: Die Muster-Tabelle zeigt jetzt pro Pattern einen klaren Confidence-Wert (0-100%).
+- **Direkt sortierbar**: Neue Sortierung `Confidence ↓` fuer schnelle Qualitaetspruefung.
+- **Plausible Berechnung**: Score kombiniert Pattern-Qualitaet und Pattern-Reife (`seen_count`).
+
+## Highlights
+- Backend liefert neuen Wert `confidence_score` in `/api/patterns`
+- Web-UI zeigt Confidence als farbigen Prozent-Indicator
+- Roadmap-Task "sichtbarer Confidence-Score" als umgesetzt markiert
+
+---
+
 # Release 0.6.5 (BETA)
 
 ## Store Kurztext

@@ -11,7 +11,7 @@
 
 <p align="center">
   <img src="https://img.shields.io/badge/Status-BETA-orange" alt="BETA" />
-   <img src="https://img.shields.io/badge/Version-0.6.5-blue" alt="Version" />
+   <img src="https://img.shields.io/badge/Version-0.6.6-blue" alt="Version" />
 </p>
 
 > ⚠️ **EXPERIMENTELLES PROJEKT (BETA)**: Dieses Add-on befindet sich in aktiver Entwicklung. Viele Features funktionieren bereits gut, aber es ist **nicht production-ready**. Erwarte Bugs, unvollständige Features und Breaking Changes zwischen Versionen. Nutze es zum Experimentieren und Testen, aber nicht für kritische Automatisierungen.
@@ -27,9 +27,9 @@
 
 ---
 
-**Aktuell:** `v0.6.5` — Bessere Musterbenennung durch Delta-/Spitzen-/Laufzeit-Bewertung + Dashboard-Sprache DE/EN
+**Aktuell:** `v0.6.6` — Sichtbarer Pattern-Confidence-Score in der Tabelle + verbesserte Benennung bleibt aktiv
 
-> ℹ️ **v0.6.5 Hinweis**: Pattern-Vorschlaege nutzen jetzt zusaetzlich inkrementellen Lastanstieg, Peak-Zeitpunkt und Laufzeit-/Spike-Konsistenz. Das reduziert unplausible Benennungen bei aehnlichen Lasten.
+> ℹ️ **v0.6.6 Hinweis**: Die Muster-Tabelle zeigt jetzt einen Confidence-Score (0-100%) aus Pattern-Qualitaet und Reife (`seen_count`), inklusive Sortierung.
 
 <a id="features"></a>
 ## ✨ Features
@@ -48,6 +48,7 @@
 - **⏰ Temporale Muster** – Lernt typische Betriebszeiten und Intervalle zwischen Zyklen
 - **🔀 Multi-Modal Detection** – Unterscheidet verschiedene Betriebsmodi desselben Geräts (experimentell)
 - **🏷️ Plausiblere Musterbenennung (v0.6.5+)** – Bewertet Delta zur Basis, typische Spikes und Laufzeit-Konsistenz zusätzlich
+- **📉 Sichtbarer Confidence-Score (v0.6.6+)** – Zeigt pro Pattern die Erkennungssicherheit (Qualitaet + Reife)
 
 ### Web-UI
 - **🌙 Dark Mode** – Durchgehend hell/dunkel Modus mit modernem Home-Assistant-Design

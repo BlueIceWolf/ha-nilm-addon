@@ -17,6 +17,7 @@ Was funktioniert bereits, was ist noch in Arbeit und wo soll das Projekt hin.
 - **Manuelles Lernen**: Bereich im Chart markieren → Muster speichern
 - **Zeitliche Muster**: Lernt typische Tageszeiten und Intervalle zwischen Zyklen
 - **Dashboard Sprache DE/EN**: UI kann zwischen Deutsch und Englisch umgeschaltet werden
+- **Sichtbarer Pattern-Confidence-Score**: Tabelle zeigt Erkennungssicherheit pro Muster
 
 ---
 
@@ -38,7 +39,6 @@ Was funktioniert bereits, was ist noch in Arbeit und wo soll das Projekt hin.
 
 ### Kurzfristig (nächste Versionen)
 - Bessere Erkennung für stark variable Lasten (Induktionsherd, Staubsauger) weiter ausbauen
-- Sichtbarer Confidence-Score pro Pattern in der Tabelle (zusätzlich zu internem quality scoring)
 - Device-Gruppen: Mehrere Patterns unter einem Gerätenamen zusammenfassen
 - Täglicher Summary: Top Geräte, Trends, Anomalien
 
@@ -107,7 +107,7 @@ Damit das Projekt irgendwann "produktiv-ready" ist sollte gelten:
 - Gute Dokumentation damit neue User nicht völlig verloren sind
 - Ein paar Video-Guides zum Einrichten
 
-**Aktuell (v0.6.5):** Etwa 55-65% davon erreicht. Der Core läuft stabil, Erkennung ist plausibler geworden, aber bei variablen Lasten fehlt weiter Feintuning.
+**Aktuell (v0.6.6):** Etwa 60-70% davon erreicht. Core + UI sind deutlich reifer, Fokus bleibt variable Lasten und Device-Gruppierung.
 
 ---
 
