@@ -219,6 +219,11 @@ class Config:
     def ensure_storage_path(self) -> None:
         """Ensure configured storage directories exist."""
         os.makedirs(self.storage_path, exist_ok=True)
+        # Compatibility: keep legacy addon config folder available for users/tools.
+        try:
+            os.makedirs("/addon_configs/ha_nilm_detector", exist_ok=True)
+        except Exception as legacy_dir_error:
+            logger.debug(f"Legacy addon_configs directory not available: {legacy_dir_error}")
         self._migrate_legacy_storage_files()
         for db_path in [self.storage_db_path, self.storage_patterns_db_path]:
             db_dir = os.path.dirname(str(db_path or "").strip())

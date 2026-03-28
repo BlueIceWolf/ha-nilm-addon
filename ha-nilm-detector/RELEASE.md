@@ -4,6 +4,19 @@
 
 ---
 
+# Release 0.6.9 (BETA)
+
+## Store Kurztext
+- **DE/EN UI sauberer**: Weitere Dialoge, Tooltips und Pattern-Details sind jetzt korrekt sprachumschaltbar.
+- **Legacy-Pfad kompatibel**: `/addon_configs/ha_nilm_detector` wird beim Start best-effort bereitgestellt.
+
+## Highlights
+- i18n erweitert fuer Pattern-Aktionen, Statusmeldungen, Import/Lernlauf-Dialogs und Modal-Statistiken
+- Tooltip-Titel der Aktionsbuttons werden zur Laufzeit nach Sprache gesetzt
+- Verbesserte Legacy-Ordner-Kompatibilitaet fuer DB-Recovery-Workflows
+
+---
+
 # Release 0.6.8 (BETA)
 
 ## Store Kurztext

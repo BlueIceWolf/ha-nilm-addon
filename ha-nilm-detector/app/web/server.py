@@ -490,7 +490,48 @@ const I18N = {
     promptHours: 'Wie viele Stunden Verlauf importieren? (1-168)',
     invalidHours: 'Bitte eine Zahl zwischen 1 und 168 eingeben.',
     createPatternSuccess: 'Muster erfolgreich erstellt! ID: {id}',
-    createPatternFailed: 'Muster-Erstellung fehlgeschlagen: {err}'
+    createPatternFailed: 'Muster-Erstellung fehlgeschlagen: {err}',
+    clearReadingsConfirm: 'Nur Live-Daten (Readings) löschen? Muster bleiben erhalten!',
+    clearReadingsStatus: 'Lösche Live-Daten...',
+    clearReadingsSuccess: 'Live-Daten gelöscht. Muster bleiben erhalten.',
+    clearPatternsConfirm: 'Nur gelernte Muster löschen? Live-Daten bleiben erhalten!',
+    clearPatternsStatus: 'Lösche Muster...',
+    clearPatternsSuccess: 'Muster gelöscht. Live-Daten bleiben erhalten.',
+    deleteFailed: 'Konnte Muster nicht löschen: {err}',
+    labelSaveFailed: 'Konnte Label nicht speichern: {err}',
+    runLearningStatus: 'Starte Lernlauf...',
+    runLearningSuccess: 'Lernlauf abgeschlossen. Zyklen gelernt: {cycles}, Messpunkte: {points}, Zusammengeführt: {merged}, Muster geprüft: {considered}',
+    runLearningFailed: 'Lernlauf fehlgeschlagen: {err}',
+    importStatus: 'Importiere Verlauf aus HA...',
+    importSuccess: 'Import abgeschlossen. Messwerte importiert: {imported}, übersprungen (<=0W): {skipped}',
+    importFailed: 'Import fehlgeschlagen: {err}',
+    invalidRange: 'Ungültiger Zeitbereich ausgewählt.',
+    patternModalTitle: 'Muster-Profil: {name} (ID: {id})',
+    unknownPattern: 'Unbekannt',
+    statsAvgPower: 'Durchschn. Leistung',
+    statsPeakPower: 'Peak-Leistung',
+    statsDuration: 'Dauer',
+    statsRiseRate: 'Anstiegsrate',
+    statsFallRate: 'Fallrate',
+    statsDetected: 'Erkannt',
+    statsPhase: 'Phase',
+    modeSingle: '1-ph',
+    modeMulti: '3-ph',
+    modeUnknown: '?',
+    intervalsTooltip: 'Letzte Intervalle:',
+    hoursTooltip: 'Häufigste Stunden:',
+    frequencyUnknown: 'unbekannt',
+    patternCountLabel: '{total} ({confirmed} bestätigt)'
+    ,btnLabel: 'Label'
+    ,btnDelete: 'Löschen'
+    ,titleRunLearning: 'Lernlauf sofort starten'
+    ,titleClearReadings: 'Nur Live-Daten (Readings) löschen'
+    ,titleClearPatterns: 'Nur gelernte Muster löschen'
+    ,titleImportHistory: 'Verlauf aus Home Assistant importieren'
+    ,titleDarkMode: 'Hell/Dunkel umschalten'
+    ,titleOlder: 'Ältere Messpunkte anzeigen'
+    ,titleNewer: 'Neuere Messpunkte anzeigen'
+    ,titleSelectRange: 'Bereich im Graphen markieren und als Muster speichern'
   },
   en: {
     pageTitle: 'HA NILM Live Statistics',
@@ -557,7 +598,48 @@ const I18N = {
     promptHours: 'How many hours of history to import? (1-168)',
     invalidHours: 'Please enter a number between 1 and 168.',
     createPatternSuccess: 'Pattern created successfully! ID: {id}',
-    createPatternFailed: 'Pattern creation failed: {err}'
+    createPatternFailed: 'Pattern creation failed: {err}',
+    clearReadingsConfirm: 'Clear only live readings? Learned patterns will be kept.',
+    clearReadingsStatus: 'Clearing live data...',
+    clearReadingsSuccess: 'Live data cleared. Patterns were kept.',
+    clearPatternsConfirm: 'Clear only learned patterns? Live data will be kept.',
+    clearPatternsStatus: 'Clearing patterns...',
+    clearPatternsSuccess: 'Patterns cleared. Live data was kept.',
+    deleteFailed: 'Could not delete pattern: {err}',
+    labelSaveFailed: 'Could not save label: {err}',
+    runLearningStatus: 'Starting learning run...',
+    runLearningSuccess: 'Learning completed. Cycles learned: {cycles}, points: {points}, merged: {merged}, patterns reviewed: {considered}',
+    runLearningFailed: 'Learning failed: {err}',
+    importStatus: 'Importing history from HA...',
+    importSuccess: 'Import completed. Imported points: {imported}, skipped (<=0W): {skipped}',
+    importFailed: 'Import failed: {err}',
+    invalidRange: 'Invalid time range selected.',
+    patternModalTitle: 'Pattern profile: {name} (ID: {id})',
+    unknownPattern: 'Unknown',
+    statsAvgPower: 'Avg power',
+    statsPeakPower: 'Peak power',
+    statsDuration: 'Duration',
+    statsRiseRate: 'Rise rate',
+    statsFallRate: 'Fall rate',
+    statsDetected: 'Detected',
+    statsPhase: 'Phase',
+    modeSingle: '1-ph',
+    modeMulti: '3-ph',
+    modeUnknown: '?',
+    intervalsTooltip: 'Recent intervals:',
+    hoursTooltip: 'Most common hours:',
+    frequencyUnknown: 'unknown',
+    patternCountLabel: '{total} ({confirmed} confirmed)'
+    ,btnLabel: 'Label'
+    ,btnDelete: 'Delete'
+    ,titleRunLearning: 'Start learning run now'
+    ,titleClearReadings: 'Delete live readings only'
+    ,titleClearPatterns: 'Delete learned patterns only'
+    ,titleImportHistory: 'Import history from Home Assistant'
+    ,titleDarkMode: 'Toggle light/dark mode'
+    ,titleOlder: 'Show older measurement points'
+    ,titleNewer: 'Show newer measurement points'
+    ,titleSelectRange: 'Mark a chart range and save as pattern'
   }
 };
 
@@ -583,6 +665,10 @@ function applyLanguage() {
   const assignText = (id, key) => {
     const el = document.getElementById(id);
     if (el) el.textContent = t(key);
+  };
+  const assignTitle = (id, key) => {
+    const el = document.getElementById(id);
+    if (el) el.title = t(key);
   };
 
   assignText('pageTitle', 'pageTitle');
@@ -624,6 +710,14 @@ function applyLanguage() {
   assignText('sortStability', 'sortStability');
   assignText('sortInterval', 'sortInterval');
   assignText('sortId', 'sortId');
+  assignTitle('runLearningBtn', 'titleRunLearning');
+  assignTitle('clearReadingsBtn', 'titleClearReadings');
+  assignTitle('clearPatternsBtn', 'titleClearPatterns');
+  assignTitle('importHistoryBtn', 'titleImportHistory');
+  assignTitle('darkModeToggle', 'titleDarkMode');
+  assignTitle('olderBtn', 'titleOlder');
+  assignTitle('newerBtn', 'titleNewer');
+  assignTitle('selectRangeBtn', 'titleSelectRange');
 
   const search = document.getElementById('patternSearch');
   if (search) {
@@ -699,11 +793,11 @@ function updateTaskProgress(taskInfo) {
 }
 
 async function clearReadingsOnly() {
-  const sure = confirm('Nur Live-Daten (Readings) löschen? Muster bleiben erhalten!');
+  const sure = confirm(t('clearReadingsConfirm'));
   if (!sure) return;
 
   try {
-    setStatus('Lösche Live-Daten...');
+    setStatus(t('clearReadingsStatus'));
     const response = await fetch(apiPath('api/debug/clear-readings'), {
       method: 'POST'
     });
@@ -711,20 +805,20 @@ async function clearReadingsOnly() {
     if (!response.ok || !payload.ok) {
       throw new Error(payload.error || `HTTP ${response.status}`);
     }
-    alert('Live-Daten gelöscht. Muster bleiben erhalten.');
+    alert(t('clearReadingsSuccess'));
     await refresh();
   } catch (err) {
-    alert(`Löschen fehlgeschlagen: ${err}`);
-    setStatus(`Löschen fehlgeschlagen: ${err}`);
+    alert(t('createPatternFailed', { err }));
+    setStatus(t('createPatternFailed', { err }));
   }
 }
 
 async function clearPatternsOnly() {
-  const sure = confirm('Nur gelernte Muster löschen? Live-Daten bleiben erhalten!');
+  const sure = confirm(t('clearPatternsConfirm'));
   if (!sure) return;
 
   try {
-    setStatus('Lösche Muster...');
+    setStatus(t('clearPatternsStatus'));
     const response = await fetch(apiPath('api/debug/clear-patterns'), {
       method: 'POST'
     });
@@ -732,17 +826,17 @@ async function clearPatternsOnly() {
     if (!response.ok || !payload.ok) {
       throw new Error(payload.error || `HTTP ${response.status}`);
     }
-    alert('Muster gelöscht. Live-Daten bleiben erhalten.');
+    alert(t('clearPatternsSuccess'));
     await refresh();
   } catch (err) {
-    alert(`Löschen fehlgeschlagen: ${err}`);
-    setStatus(`Löschen fehlgeschlagen: ${err}`);
+    alert(t('createPatternFailed', { err }));
+    setStatus(t('createPatternFailed', { err }));
   }
 }
 
 async function runLearningNow() {
   try {
-    setStatus('Starte Lernlauf...');
+    setStatus(t('runLearningStatus'));
     const response = await fetch(apiPath('api/debug/run-learning-now'), {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
@@ -759,11 +853,18 @@ async function runLearningNow() {
       throw new Error(payload.error || `HTTP ${response.status}`);
     }
 
-    alert(`Lernlauf abgeschlossen. Zyklen gelernt: ${payload.cycles_detected || 0}, Messpunkte: ${payload.points_processed || 0}, Zusammengeführt: ${payload.merged || 0}, Muster geprüft: ${payload.patterns_considered || 0}`);
+    alert(
+      t('runLearningSuccess', {
+        cycles: payload.cycles_detected || 0,
+        points: payload.points_processed || 0,
+        merged: payload.merged || 0,
+        considered: payload.patterns_considered || 0,
+      })
+    );
     await refresh();
   } catch (err) {
-    alert(`Lernlauf fehlgeschlagen: ${err}`);
-    setStatus(`Lernlauf fehlgeschlagen: ${err}`);
+    alert(t('runLearningFailed', { err }));
+    setStatus(t('runLearningFailed', { err }));
   }
 }
 
@@ -778,7 +879,7 @@ async function importHistoryFromHA() {
   }
 
   try {
-    setStatus('Importiere Verlauf aus HA...');
+    setStatus(t('importStatus'));
     const response = await fetch(apiPath('api/debug/import-history'), {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
@@ -789,11 +890,11 @@ async function importHistoryFromHA() {
       throw new Error(payload.error || `HTTP ${response.status}`);
     }
 
-    alert(`Import abgeschlossen. Messwerte importiert: ${payload.imported || 0}, übersprungen (<=0W): ${payload.skipped_non_positive || 0}`);
+    alert(t('importSuccess', { imported: payload.imported || 0, skipped: payload.skipped_non_positive || 0 }));
     await refresh();
   } catch (err) {
-    alert(`Import fehlgeschlagen: ${err}`);
-    setStatus(`Import fehlgeschlagen: ${err}`);
+    alert(t('importFailed', { err }));
+    setStatus(t('importFailed', { err }));
   }
 }
 
@@ -1030,7 +1131,7 @@ function renderPatterns(patterns) {
     const phaseDisplay = `${phaseLabel}<br><span style="font-size:0.75rem;color:#999;">${phaseModeShort}</span>`;
     
     // Häufigkeits- und Stabilitäts-Indikatoren
-    const frequency = p.frequency_label || 'unbekannt';
+    const frequency = p.frequency_label || t('frequencyUnknown');
     const stability = p.stability_score ?? 50;
     const stabilityColor = stability >= 80 ? '#28a745' : (stability >= 60 ? '#ffc107' : '#dc3545');
     const stabilityBar = `<div style="background:#e9ecef;border-radius:3px;height:16px;overflow:hidden;position:relative;"><div style="background:${stabilityColor};width:${stability}%;height:100%;">&nbsp;</div><span style="position:absolute;top:0;left:2px;font-size:0.75rem;color:#000;line-height:16px;font-weight:bold;">${stability}%</span></div>`;
@@ -1066,7 +1167,7 @@ function renderPatterns(patterns) {
             if (iv < 86400) return `${(iv / 3600).toFixed(1)}h`;
             return `${(iv / 86400).toFixed(1)}d`;
           }).join(', ');
-          intervalTooltip = `Letzte Intervalle:<br>${intervalList}`;
+          intervalTooltip = `${t('intervalsTooltip')}<br>${intervalList}`;
         }
       } catch (e) {}
     }
@@ -1089,7 +1190,7 @@ function renderPatterns(patterns) {
             const hNum = parseInt(h);
             return `${hNum}:00 (${hourDist[h]}x)`;
           }).join('<br>');
-          timeTooltip = `Häufigste Stunden:<br>${top3}`;
+          timeTooltip = `${t('hoursTooltip')}<br>${top3}`;
         }
       } catch (e) {}
     }
@@ -1106,7 +1207,7 @@ function renderPatterns(patterns) {
       ? `<td><div class="tooltip" style="font-size:0.85rem;color:#666;">${timeText}<span class="tooltiptext">${timeTooltip}</span></div></td>`
       : `<td style="font-size:0.85rem;color:#666;">${timeText}</td>`;
     
-    tr.innerHTML = `<td>${p.id}</td><td>${typeText}</td><td>${label}</td><td>${groupChip}</td><td style="font-size:0.85rem;color:#666;">${frequency}</td>${intervalCell}${timeCell}<td style="padding:4px 2px;">${stabilityBar}</td><td>${confidenceChip}</td><td>${phaseDisplay}</td><td>${fmt(p.avg_power_w)}</td><td>${fmt(p.peak_power_w)}</td><td>${fmt(p.duration_s)}</td><td>${p.seen_count ?? 0}</td><td><button data-id="${p.id}" class="btn-label">Label</button> <button data-id="${p.id}" class="btn-delete">Löschen</button></td>`;
+    tr.innerHTML = `<td>${p.id}</td><td>${typeText}</td><td>${label}</td><td>${groupChip}</td><td style="font-size:0.85rem;color:#666;">${frequency}</td>${intervalCell}${timeCell}<td style="padding:4px 2px;">${stabilityBar}</td><td>${confidenceChip}</td><td>${phaseDisplay}</td><td>${fmt(p.avg_power_w)}</td><td>${fmt(p.peak_power_w)}</td><td>${fmt(p.duration_s)}</td><td>${p.seen_count ?? 0}</td><td><button data-id="${p.id}" class="btn-label">${t('btnLabel')}</button> <button data-id="${p.id}" class="btn-delete">${t('btnDelete')}</button></td>`;
     tr.style.cursor = 'pointer';
     tr.addEventListener('click', (e) => {
       if (e.target.tagName === 'BUTTON') return;
@@ -1129,7 +1230,7 @@ function renderPatterns(patterns) {
         if (!res.ok) throw new Error(`HTTP ${res.status}`);
         await refresh();
       } catch (err) {
-        alert(`Konnte Label nicht speichern: ${err}`);
+        alert(t('labelSaveFailed', { err }));
       }
     });
   });
@@ -1145,7 +1246,7 @@ function renderPatterns(patterns) {
         if (!res.ok) throw new Error(`HTTP ${res.status}`);
         await refresh();
       } catch (err) {
-        alert(`Konnte Muster nicht löschen: ${err}`);
+        alert(t('deleteFailed', { err }));
       }
     });
   });
@@ -1183,7 +1284,7 @@ async function refresh() {
     const confirmedCount = patternArray.filter(p => p.is_confirmed).length;
     const totalCount = patternArray.length;
     document.getElementById('pattern_count').textContent = totalCount > 0 
-      ? `${totalCount} (${confirmedCount} best\u00e4tigt)` 
+      ? t('patternCountLabel', { total: totalCount, confirmed: confirmedCount })
       : '0';
     
     // Zeige Phaseninformationen und aktualisiere verfügbare Phasen
@@ -1304,12 +1405,12 @@ async function createPatternFromRange(startIdx, endIdx) {
   const endPoint = currentSeriesData[endIdx];
   
   if (!startPoint || !endPoint || !startPoint.timestamp || !endPoint.timestamp) {
-    alert('Ungültiger Zeitbereich ausgewählt.');
+    alert(t('invalidRange'));
     return;
   }
   
   try {
-    setStatus('Erstelle Muster aus Bereich...');
+    setStatus(t('drawing'));
     const response = await fetch(apiPath('api/patterns/create-from-range'), {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
@@ -1341,7 +1442,7 @@ function showPatternChart(pattern) {
   const modal = document.getElementById('patternModal');
   modal.style.display = 'flex';
   document.getElementById('patternModalTitle').textContent = 
-    `Muster-Profil: ${pattern.user_label || pattern.suggestion_type || 'Unbekannt'} (ID: ${pattern.id})`;
+    t('patternModalTitle', { name: pattern.user_label || pattern.suggestion_type || t('unknownPattern'), id: pattern.id });
   
   renderPatternChart(pattern);
   renderPatternStats(pattern);
@@ -1503,34 +1604,37 @@ function renderPatternChart(pattern) {
 
 function renderPatternStats(pattern) {
   const statsDiv = document.getElementById('patternStats');
+  const phaseText = String(pattern.phase_mode || 'unknown') === 'single_phase'
+    ? t('modeSingle')
+    : (String(pattern.phase_mode || 'unknown') === 'multi_phase' ? t('modeMulti') : t('modeUnknown'));
   statsDiv.innerHTML = `
     <div style="padding:8px;background:var(--bg-elev);border-radius:6px;">
-      <div style="color:var(--muted);font-size:0.75rem;">Durchschn. Leistung</div>
+      <div style="color:var(--muted);font-size:0.75rem;">${t('statsAvgPower')}</div>
       <div style="font-weight:600;font-size:1rem;">${fmt(pattern.avg_power_w)}</div>
     </div>
     <div style="padding:8px;background:var(--bg-elev);border-radius:6px;">
-      <div style="color:var(--muted);font-size:0.75rem;">Peak-Leistung</div>
+      <div style="color:var(--muted);font-size:0.75rem;">${t('statsPeakPower')}</div>
       <div style="font-weight:600;font-size:1rem;">${fmt(pattern.peak_power_w)}</div>
     </div>
     <div style="padding:8px;background:var(--bg-elev);border-radius:6px;">
-      <div style="color:var(--muted);font-size:0.75rem;">Dauer</div>
+      <div style="color:var(--muted);font-size:0.75rem;">${t('statsDuration')}</div>
       <div style="font-weight:600;font-size:1rem;">${fmt(pattern.duration_s)}s</div>
     </div>
     <div style="padding:8px;background:var(--bg-elev);border-radius:6px;">
-      <div style="color:var(--muted);font-size:0.75rem;">Anstiegsrate</div>
+      <div style="color:var(--muted);font-size:0.75rem;">${t('statsRiseRate')}</div>
       <div style="font-weight:600;font-size:1rem;">${fmt(pattern.rise_rate_w_per_s || 0)}W/s</div>
     </div>
     <div style="padding:8px;background:var(--bg-elev);border-radius:6px;">
-      <div style="color:var(--muted);font-size:0.75rem;">Fallrate</div>
+      <div style="color:var(--muted);font-size:0.75rem;">${t('statsFallRate')}</div>
       <div style="font-weight:600;font-size:1rem;">${fmt(pattern.fall_rate_w_per_s || 0)}W/s</div>
     </div>
     <div style="padding:8px;background:var(--bg-elev);border-radius:6px;">
-      <div style="color:var(--muted);font-size:0.75rem;">Erkannt</div>
+      <div style="color:var(--muted);font-size:0.75rem;">${t('statsDetected')}</div>
       <div style="font-weight:600;font-size:1rem;">${pattern.seen_count || 0}x</div>
     </div>
     <div style="padding:8px;background:var(--bg-elev);border-radius:6px;">
-      <div style="color:var(--muted);font-size:0.75rem;">Phase</div>
-      <div style="font-weight:600;font-size:1rem;">${String(pattern.phase_mode || 'unknown') === 'single_phase' ? '1-ph' : (String(pattern.phase_mode || 'unknown') === 'multi_phase' ? '3-ph' : '?')}</div>
+      <div style="color:var(--muted);font-size:0.75rem;">${t('statsPhase')}</div>
+      <div style="font-weight:600;font-size:1rem;">${phaseText}</div>
     </div>
   `;
 }

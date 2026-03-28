@@ -2,6 +2,16 @@
 
 > ⚠️ **Hinweis**: Dieses Projekt ist experimentell (BETA) - Breaking Changes und Bugs können auftreten.
 
+## 0.6.9 (BETA)
+
+**UI Sprache DE/EN weiter vervollstaendigt**
+- Weitere bisher harte DE-Texte in der Web-UI wurden auf echte i18n-Keys umgestellt (Dialoge, Meldungen, Tooltips, Modal-Statistik, Pattern-Aktionen).
+- Button-Tooltips werden jetzt ebenfalls je nach Sprache gesetzt.
+
+**Kompatibilitaet mit `/addon_configs` verbessert**
+- Legacy-Ordner `/addon_configs/ha_nilm_detector` wird beim Start best-effort angelegt.
+- Erleichtert Migration und manuelles Bereitstellen alter DB-Dateien fuer Recovery.
+
 ## 0.6.8 (BETA)
 
 **Hotfix: gelernte Muster nach Update wiederherstellen**

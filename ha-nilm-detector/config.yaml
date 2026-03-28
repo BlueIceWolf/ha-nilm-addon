@@ -1,6 +1,6 @@
 name: "HA NILM Detector"
 description: "Detect appliances from power consumption patterns (BETA - Experimental project in active development)"
-version: "0.6.8"
+version: "0.6.9"
 slug: "ha_nilm_detector"
 startup: application
 boot: auto
