@@ -4,7 +4,7 @@ import signal
 import sys
 import time
 from datetime import datetime, timedelta, timezone
-from typing import Dict, List
+from typing import Dict, List, Optional
 
 from app.collector.source import Collector, HARestPowerSource
 from app.config import Config, load_options_from_file
@@ -129,6 +129,7 @@ class NILMDetectionSystem:
         self.running = False
         self.last_daily_reset = datetime.now()
         self.last_nightly_learning_date = None
+        self.last_periodic_learning_run: Optional[datetime] = None
         self.web_server: StatsWebServer | None = None
 
         if self.config.web_enabled:
@@ -475,8 +476,8 @@ class NILMDetectionSystem:
             return {"ok": False, "error": "storage not enabled"}
         return self.storage.flush_debug_data(reset_patterns=reset_patterns)
 
-    def _run_learning_now(self) -> Dict:
-        """Manual trigger for testing the nightly learning pass from Web UI."""
+    def _run_pipeline_now(self, source: str = "manual") -> Dict:
+        """Run replay + merge pipeline to actively learn from newly stored readings."""
         if not self.storage:
             return {"ok": False, "error": "storage not enabled"}
         if not self.config.learning_enabled:
@@ -496,9 +497,14 @@ class NILMDetectionSystem:
         )
         result["cycles_detected"] = int(replay_summary.get("cycles_detected", 0))
         result["points_processed"] = int(replay_summary.get("points_processed", 0))
+        result["source"] = source
         if result.get("ok"):
-            self.last_nightly_learning_date = datetime.now().date()
+            self.last_periodic_learning_run = datetime.now()
         return result
+
+    def _run_learning_now(self) -> Dict:
+        """Manual trigger for immediate pipeline execution from Web UI."""
+        return self._run_pipeline_now(source="manual_web")
 
     def _replay_learning_from_storage(self, hours: int = 24) -> Dict:
         """Replay recent stored readings through PatternLearner to build cycles on demand."""
@@ -751,15 +757,33 @@ class NILMDetectionSystem:
         if self.last_nightly_learning_date == now.date():
             return
 
-        result = self.storage.run_nightly_learning_pass(
-            merge_tolerance=0.20,
-            max_patterns=800,
-        )
-        self.last_nightly_learning_date = now.date()
+        result = self._run_pipeline_now(source="nightly")
+        if result.get("ok"):
+            self.last_nightly_learning_date = now.date()
         logger.info(
             "Nightly learning pass completed: "
             f"ok={result.get('ok')} merged={result.get('merged', 0)} "
             f"patterns={result.get('patterns_considered', 0)}"
+        )
+
+    def _maybe_run_periodic_learning(self, now: datetime) -> None:
+        """Run automatic learning pipeline at a configured interval throughout the day."""
+        if not self.storage or not self.config.learning_enabled:
+            return
+        if not self.config.learning_auto_pipeline_enabled:
+            return
+
+        interval_minutes = max(5, int(self.config.learning_auto_pipeline_interval_minutes))
+        if self.last_periodic_learning_run is not None:
+            elapsed = (now - self.last_periodic_learning_run).total_seconds()
+            if elapsed < (interval_minutes * 60):
+                return
+
+        result = self._run_pipeline_now(source="auto_periodic")
+        logger.info(
+            "Periodic learning pass completed: "
+            f"ok={result.get('ok')} cycles={result.get('cycles_detected', 0)} "
+            f"merged={result.get('merged', 0)} patterns={result.get('patterns_considered', 0)}"
         )
 
     def start(self) -> None:
@@ -921,6 +945,9 @@ class NILMDetectionSystem:
 
                 if iteration % 120 == 0:
                     self._maybe_run_nightly_learning(now)
+
+                if iteration % 60 == 0:
+                    self._maybe_run_periodic_learning(now)
 
                 time.sleep(self.config.update_interval_seconds)
             except Exception as e:

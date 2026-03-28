@@ -33,6 +33,8 @@ class Config:
         self.learning_on_threshold_w = 50.0
         self.learning_off_threshold_w = 25.0
         self.learning_min_cycle_seconds = 20
+        self.learning_auto_pipeline_enabled = True
+        self.learning_auto_pipeline_interval_minutes = 30
         self.power_source = "home_assistant_rest"
         self.mqtt_enabled = False
         self.mqtt_broker = "localhost"
@@ -110,6 +112,17 @@ class Config:
         self.learning_min_cycle_seconds = int(
             learning_config.get('min_cycle_seconds', self.learning_min_cycle_seconds)
         )
+        self.learning_auto_pipeline_enabled = bool(
+            learning_config.get('auto_pipeline_enabled', self.learning_auto_pipeline_enabled)
+        )
+        self.learning_auto_pipeline_interval_minutes = int(
+            learning_config.get(
+                'auto_pipeline_interval_minutes',
+                self.learning_auto_pipeline_interval_minutes,
+            )
+        )
+        if self.learning_auto_pipeline_interval_minutes < 5:
+            self.learning_auto_pipeline_interval_minutes = 5
 
         self.power_source = "home_assistant_rest"
         self.storage_path = config_dict.get('storage_path', '/addon_configs/ha_nilm_detector')

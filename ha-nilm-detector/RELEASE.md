@@ -4,6 +4,19 @@
 
 ---
 
+# Release 0.6.16 (BETA)
+
+## Store Kurztext
+- **Jetzt automatisch + manuell**: Die Lernpipeline laeuft zyklisch im Hintergrund und kann weiterhin jederzeit manuell gestartet werden.
+
+## Highlights
+- Auto-Lernen: periodischer Pipeline-Lauf mit konfigurierbarem Intervall
+- Manuell: Dashboard-Trigger startet denselben Lernpfad sofort
+- Konsistenter Lernfluss: Nachtlauf verwendet dieselbe aktive Pipeline
+- Neue Optionen in `learning`: `auto_pipeline_enabled`, `auto_pipeline_interval_minutes`
+
+---
+
 # Release 0.6.15 (BETA)
 
 ## Store Kurztext

@@ -2,6 +2,14 @@
 
 > ⚠️ **Hinweis**: Dieses Projekt ist experimentell (BETA) - Breaking Changes und Bugs können auftreten.
 
+## 0.6.16 (BETA)
+
+**Lernpipeline jetzt automatisch und manuell triggerbar**
+- Neuer periodischer Auto-Lernlauf: Replay + Pattern-Merge wird zyklisch ausgefuehrt
+- Manueller Trigger bleibt aktiv (Dashboard-Button), startet dieselbe Pipeline sofort
+- Neue Optionen unter `learning`: `auto_pipeline_enabled` und `auto_pipeline_interval_minutes`
+- Nightly-Lernlauf nutzt jetzt ebenfalls die gleiche aktive Pipeline statt nur statischer Merge-Pass
+
 ## 0.6.15 (BETA)
 
 **Lernpipeline fuer echte Neuauswertung von Exportdaten**
