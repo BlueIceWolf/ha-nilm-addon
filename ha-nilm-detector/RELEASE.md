@@ -4,6 +4,19 @@
 
 ---
 
+# Release 0.6.18 (BETA)
+
+## Store Kurztext
+- **Hybrid-AI sichtbar gemacht**: Neues Debug-Panel zeigt die letzte Modellentscheidung mit Explain-Scores und ML-Kandidaten direkt im Dashboard.
+
+## Highlights
+- Dashboard-Panel fuer Hybrid-AI Diagnose (`source`, `label`, `confidence`, `distance`)
+- Explain-Scores live sichtbar: Prototype, Shape, Repeatability
+- ML-Block zeigt Top-Kandidaten bei aktivem lokalem ML
+- Neuer Endpoint `/api/debug/hybrid-status`
+
+---
+
 # Release 0.6.17 (BETA)
 
 ## Store Kurztext

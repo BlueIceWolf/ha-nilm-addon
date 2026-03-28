@@ -45,6 +45,13 @@ class SQLiteStore:
             match_threshold=self.pattern_match_threshold,
             shape_matching_enabled=self.shape_matching_enabled,
         )
+        self._last_hybrid_decision: Dict[str, Any] = {
+            "label": "unknown",
+            "confidence": 0.0,
+            "source": "not_run_yet",
+            "timestamp": None,
+            "explain": None,
+        }
 
     def configure_hybrid_ai(
         self,
@@ -66,6 +73,10 @@ class SQLiteStore:
             match_threshold=self.pattern_match_threshold,
             shape_matching_enabled=self.shape_matching_enabled,
         )
+
+    def get_hybrid_debug_status(self) -> Dict[str, Any]:
+        """Return latest hybrid AI decision snapshot for dashboard debug panel."""
+        return dict(self._last_hybrid_decision)
 
     def _open_connection(self, path: str) -> sqlite3.Connection:
         conn = sqlite3.connect(
@@ -1104,15 +1115,25 @@ class SQLiteStore:
         Combines prototype similarity, shape similarity, and optional local ML.
         Returns an explainable decision payload with score components.
         """
+        def _remember(decision: Dict[str, Any]) -> Dict[str, Any]:
+            self._last_hybrid_decision = {
+                "timestamp": datetime.now(timezone.utc).isoformat(),
+                "label": decision.get("label", fallback),
+                "confidence": float(decision.get("confidence", 0.0) or 0.0),
+                "source": str(decision.get("source", "unknown")),
+                "explain": decision.get("explain"),
+            }
+            return decision
+
         if not self._patterns_conn:
-            return {"label": fallback, "confidence": 0.0, "source": "fallback"}
+            return _remember({"label": fallback, "confidence": 0.0, "source": "fallback"})
 
         if not self.ai_enabled:
-            return {"label": fallback, "confidence": 0.0, "source": "ai_disabled"}
+            return _remember({"label": fallback, "confidence": 0.0, "source": "ai_disabled"})
 
         patterns = self.list_patterns(limit=500)
         if not patterns:
-            return {"label": fallback, "confidence": 0.0, "source": "fallback"}
+            return _remember({"label": fallback, "confidence": 0.0, "source": "fallback"})
 
         # Enrich cycle with substate-derived features if missing.
         substate = analyze_profile_substates(cycle.get("profile_points", []))
@@ -1130,7 +1151,7 @@ class SQLiteStore:
             group_key_fn=self._device_group_key,
         )
         if matcher_result is None:
-            return {"label": fallback, "confidence": 0.0, "source": "fallback"}
+            return _remember({"label": fallback, "confidence": 0.0, "source": "fallback"})
 
         best_group = matcher_result.best_group
         best_label = matcher_result.best_label
@@ -1176,23 +1197,23 @@ class SQLiteStore:
         # trust the heuristic fallback even if relative vote confidence is high.
         match_threshold = max(0.10, min(float(self.pattern_match_threshold), 0.95))
         if best_distance_overall is None or best_distance_overall > match_threshold:
-            return {
+            return _remember({
                 "label": fallback,
                 "confidence": confidence,
                 "source": "fallback_distance_gate",
                 "explain": dict(matcher_result.explain),
-            }
+            })
 
         # Keep fallback if confidence is too low.
         if confidence < 0.45:
-            return {
+            return _remember({
                 "label": fallback,
                 "confidence": confidence,
                 "source": "fallback_low_confidence",
                 "explain": dict(matcher_result.explain),
-            }
+            })
 
-        return {
+        return _remember({
             "label": final_label,
             "confidence": confidence,
             "source": source,
@@ -1209,7 +1230,7 @@ class SQLiteStore:
                     else None
                 ),
             },
-        }
+        })
 
     def run_nightly_learning_pass(self, merge_tolerance: float = 0.20, max_patterns: int = 800) -> Dict:
         """Run a lightweight nightly pattern consolidation pass.

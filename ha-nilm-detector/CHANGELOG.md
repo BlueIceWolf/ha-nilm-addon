@@ -2,6 +2,14 @@
 
 > ⚠️ **Hinweis**: Dieses Projekt ist experimentell (BETA) - Breaking Changes und Bugs können auftreten.
 
+## 0.6.18 (BETA)
+
+**Hybrid-AI Debug Panel im Dashboard**
+- Neues Dashboard-Panel mit letzter Hybrid-Entscheidung: Quelle, Label, Confidence, Distanz, Prototype-/Shape-/Repeatability-Score
+- Anzeige von ML-Ergebnissen inklusive Top-Kandidaten (falls ML aktiv/verfuegbar)
+- Neuer API-Endpunkt: `/api/debug/hybrid-status`
+- Storage speichert jetzt den letzten Hybrid-Entscheid inklusive Explain-Payload fuer UI-Debugging
+
 ## 0.6.17 (BETA)
 
 **Hybrid-AI Architektur modular erweitert**

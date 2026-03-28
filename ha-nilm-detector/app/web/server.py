@@ -312,6 +312,20 @@ def _html_page(default_language: str = "de") -> str:
       </div>
     </div>
 
+    <div id=\"hybridDebugPanel\" class=\"card\" style=\"margin-bottom: 10px;\">
+      <div id=\"hybridDebugTitle\" class=\"label\">Hybrid AI Debug</div>
+      <div style=\"display:grid;grid-template-columns:repeat(auto-fit,minmax(170px,1fr));gap:8px;\">
+        <div><span class=\"muted\" id=\"hybridSourceLabel\">Quelle</span><div id=\"hybridSourceValue\">-</div></div>
+        <div><span class=\"muted\" id=\"hybridLabelLabel\">Label</span><div id=\"hybridLabelValue\">-</div></div>
+        <div><span class=\"muted\" id=\"hybridConfidenceLabel\">Konfidenz</span><div id=\"hybridConfidenceValue\">-</div></div>
+        <div><span class=\"muted\" id=\"hybridDistanceLabel\">Distanz</span><div id=\"hybridDistanceValue\">-</div></div>
+        <div><span class=\"muted\" id=\"hybridProtoLabel\">Prototype-Score</span><div id=\"hybridProtoValue\">-</div></div>
+        <div><span class=\"muted\" id=\"hybridShapeLabel\">Shape-Score</span><div id=\"hybridShapeValue\">-</div></div>
+        <div><span class=\"muted\" id=\"hybridRepeatLabel\">Repeatability</span><div id=\"hybridRepeatValue\">-</div></div>
+        <div><span class=\"muted\" id=\"hybridMlLabel\">ML</span><div id=\"hybridMlValue\">-</div></div>
+      </div>
+    </div>
+
     <div class=\"grid\">
       <div class=\"card\"><div id=\"lblCurrentPower\" class=\"label\">Gesamtleistung</div><div id=\"current_power\" class=\"value\">-</div></div>
       <div class=\"card\" id=\"phaseL1\" style=\"display:none;\"><div id=\"lblPhaseL1\" class=\"label\">Phase L1</div><div id=\"power_l1\" class=\"value\">-</div></div>
@@ -534,7 +548,17 @@ const I18N = {
     intervalsTooltip: 'Letzte Intervalle:',
     hoursTooltip: 'Häufigste Stunden:',
     frequencyUnknown: 'unbekannt',
-    patternCountLabel: '{total} ({confirmed} bestätigt)'
+    patternCountLabel: '{total} ({confirmed} bestätigt)',
+    hybridDebugTitle: 'Hybrid AI Debug',
+    hybridSourceLabel: 'Quelle',
+    hybridLabelLabel: 'Label',
+    hybridConfidenceLabel: 'Konfidenz',
+    hybridDistanceLabel: 'Distanz',
+    hybridProtoLabel: 'Prototype-Score',
+    hybridShapeLabel: 'Shape-Score',
+    hybridRepeatLabel: 'Repeatability',
+    hybridMlLabel: 'ML',
+    hybridNoData: 'Noch keine Hybrid-Entscheidung'
     ,btnLabel: 'Label'
     ,btnDelete: 'Löschen'
     ,titleRunLearning: 'Lernlauf sofort starten'
@@ -652,7 +676,17 @@ const I18N = {
     intervalsTooltip: 'Recent intervals:',
     hoursTooltip: 'Most common hours:',
     frequencyUnknown: 'unknown',
-    patternCountLabel: '{total} ({confirmed} confirmed)'
+    patternCountLabel: '{total} ({confirmed} confirmed)',
+    hybridDebugTitle: 'Hybrid AI Debug',
+    hybridSourceLabel: 'Source',
+    hybridLabelLabel: 'Label',
+    hybridConfidenceLabel: 'Confidence',
+    hybridDistanceLabel: 'Distance',
+    hybridProtoLabel: 'Prototype score',
+    hybridShapeLabel: 'Shape score',
+    hybridRepeatLabel: 'Repeatability',
+    hybridMlLabel: 'ML',
+    hybridNoData: 'No hybrid decision yet'
     ,btnLabel: 'Label'
     ,btnDelete: 'Delete'
     ,titleRunLearning: 'Start learning run now'
@@ -710,6 +744,15 @@ function applyLanguage() {
   assignText('lblPeakPower', 'lblPeakPower');
   assignText('lblReadingCount', 'lblReadingCount');
   assignText('lblPatternCount', 'lblPatternCount');
+  assignText('hybridDebugTitle', 'hybridDebugTitle');
+  assignText('hybridSourceLabel', 'hybridSourceLabel');
+  assignText('hybridLabelLabel', 'hybridLabelLabel');
+  assignText('hybridConfidenceLabel', 'hybridConfidenceLabel');
+  assignText('hybridDistanceLabel', 'hybridDistanceLabel');
+  assignText('hybridProtoLabel', 'hybridProtoLabel');
+  assignText('hybridShapeLabel', 'hybridShapeLabel');
+  assignText('hybridRepeatLabel', 'hybridRepeatLabel');
+  assignText('hybridMlLabel', 'hybridMlLabel');
   assignText('thDevice', 'thDevice');
   assignText('thStatus', 'thStatus');
   assignText('thPower', 'thPower');
@@ -1348,11 +1391,12 @@ function renderPatterns(patterns) {
 async function refresh() {
   try {
     setStatus(t('loading'));
-    const [summaryRes, seriesRes, liveRes, patternsRes] = await Promise.all([
+    const [summaryRes, seriesRes, liveRes, patternsRes, hybridRes] = await Promise.all([
       fetchJson('api/summary'),
       fetchJson(`api/series?limit=${seriesWindow}&offset=${seriesOffset}`),
       fetchJson('api/live'),
-      fetchJson('api/patterns')
+      fetchJson('api/patterns'),
+      fetchJson('api/debug/hybrid-status').catch(() => null)
     ]);
 
     const summary = summaryRes;
@@ -1366,6 +1410,8 @@ async function refresh() {
     } else {
       updateTaskProgress(null); // Hide if no task
     }
+
+    renderHybridDebug(hybridRes);
 
     document.getElementById('current_power').textContent = fmt(live.current_power_w, ' W');
     document.getElementById('avg_power').textContent = fmt(summary.avg_power_w, ' W');
@@ -1414,6 +1460,55 @@ async function refresh() {
     setStatus(buildLiveStatusMessage(live));
   } catch (err) {
     setStatus(`${t('waitingApi')}: ${err}`);
+  }
+}
+
+function renderHybridDebug(info) {
+  const sourceEl = document.getElementById('hybridSourceValue');
+  const labelEl = document.getElementById('hybridLabelValue');
+  const confEl = document.getElementById('hybridConfidenceValue');
+  const distEl = document.getElementById('hybridDistanceValue');
+  const protoEl = document.getElementById('hybridProtoValue');
+  const shapeEl = document.getElementById('hybridShapeValue');
+  const repeatEl = document.getElementById('hybridRepeatValue');
+  const mlEl = document.getElementById('hybridMlValue');
+  if (!sourceEl || !labelEl || !confEl || !distEl || !protoEl || !shapeEl || !repeatEl || !mlEl) return;
+
+  if (!info || typeof info !== 'object') {
+    sourceEl.textContent = t('hybridNoData');
+    labelEl.textContent = '-';
+    confEl.textContent = '-';
+    distEl.textContent = '-';
+    protoEl.textContent = '-';
+    shapeEl.textContent = '-';
+    repeatEl.textContent = '-';
+    mlEl.textContent = '-';
+    return;
+  }
+
+  const explain = (info.explain && typeof info.explain === 'object') ? info.explain : {};
+  sourceEl.textContent = String(info.source || '-');
+  labelEl.textContent = String(info.label || '-');
+  confEl.textContent = fmt(info.confidence, '');
+  distEl.textContent = explain.best_distance != null ? fmt(explain.best_distance, '') : '-';
+  protoEl.textContent = explain.prototype_confidence != null ? fmt(explain.prototype_confidence, '') : '-';
+  shapeEl.textContent = explain.shape_confidence != null ? fmt(explain.shape_confidence, '') : '-';
+  repeatEl.textContent = explain.repeatability != null ? fmt(explain.repeatability, '') : '-';
+
+  if (explain.ml && typeof explain.ml === 'object') {
+    const mlLabel = String(explain.ml.label || 'unknown');
+    const mlConf = explain.ml.confidence != null ? fmt(explain.ml.confidence, '') : '-';
+    let mlText = `${mlLabel} (${mlConf})`;
+    if (Array.isArray(explain.ml.top_n) && explain.ml.top_n.length > 0) {
+      const compact = explain.ml.top_n
+        .slice(0, 3)
+        .map(item => `${item.label}:${fmt(item.score, '')}`)
+        .join(', ');
+      mlText += ` | ${compact}`;
+    }
+    mlEl.textContent = mlText;
+  } else {
+    mlEl.textContent = '-';
   }
 }
 
@@ -1962,6 +2057,20 @@ class StatsWebServer:
                         logger.error(f"Export failed: {e}", exc_info=True)
                         self._send_json({"error": str(e)}, status=500)
                     return
+
+                    if parsed.path == "/api/debug/hybrid-status":
+                      if not parent.storage:
+                        self._send_json({"label": "unknown", "confidence": 0.0, "source": "storage_disabled"})
+                        return
+                      try:
+                        if hasattr(parent.storage, "get_hybrid_debug_status"):
+                          self._send_json(parent.storage.get_hybrid_debug_status())
+                        else:
+                          self._send_json({"label": "unknown", "confidence": 0.0, "source": "not_supported"})
+                      except Exception as e:
+                        logger.error(f"Hybrid status fetch failed: {e}", exc_info=True)
+                        self._send_json({"label": "unknown", "confidence": 0.0, "source": "error", "error": str(e)}, status=500)
+                      return
 
                 self._send_json({"error": "not found"}, status=404)
 
