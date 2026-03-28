@@ -2,6 +2,17 @@
 
 > ⚠️ **Hinweis**: Dieses Projekt ist experimentell (BETA) - Breaking Changes und Bugs können auftreten.
 
+## 0.6.25 (BETA)
+
+**Robuste Datenpersistenz: kein stiller Datenverlust nach Restart oder Update**
+
+- **Legacy-Tabelle `patterns` migriert**: Ältere DBs mit `patterns` statt `learned_patterns` werden jetzt vollständig in das neue Schema übernommen statt übersprungen
+- **Storage-Pfad-Konstanten**: `LEGACY_PATTERNS_CANDIDATES` und `LEGACY_LIVE_CANDIDATES` zentral definiert – keine verstreuten Hardcoded-Pfade mehr
+- **Migrations-Marker**: Neue `migration_events`-Tabelle in Live- und Pattern-DB verhindert Doppel-Import bei jedem Neustart
+- **Deduplication via `INSERT OR IGNORE`**: Recovery-Inserts überschreiben keine vorhandenen Daten
+- **Verbesserte Startup-Diagnostik**: Primärer Storage-Pfad, Legacy-DB-Dateigrössen, Zeilen-Zähler für `learned_patterns` UND `patterns` in allen DBs
+- **Live-Recovery mit Marker**: `_maybe_recover_live_from_legacy_files` schreibt ebenfalls Migration-Event, verhindert Re-Import
+
 ## 0.6.21 (BETA)
 
 ## 0.6.24 (BETA)

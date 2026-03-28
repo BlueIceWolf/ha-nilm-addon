@@ -23,6 +23,21 @@ class SQLiteStore:
     LIVE_SCHEMA_VERSION = 1
     PATTERNS_SCHEMA_VERSION = 1
 
+    # Legacy DB paths checked during recovery/migration (order matters: most likely first)
+    LEGACY_PATTERNS_CANDIDATES: List[str] = [
+        "/addon_configs/ha_nilm_detector/nilm_patterns.sqlite3",
+        "/addon_configs/ha_nilm_detector/nilm_live.sqlite3",
+        "/data/ha_nilm_detector/nilm_patterns.sqlite3",
+        "/data/ha_nilm_detector/nilm_live.sqlite3",
+        "/data/nilm_patterns.sqlite3",
+        "/data/nilm_live.sqlite3",
+    ]
+    LEGACY_LIVE_CANDIDATES: List[str] = [
+        "/addon_configs/ha_nilm_detector/nilm_live.sqlite3",
+        "/data/ha_nilm_detector/nilm_live.sqlite3",
+        "/data/nilm_live.sqlite3",
+    ]
+
     def __init__(self, db_path: str, retention_days: int = 30, patterns_db_path: str | None = None):
         self.db_path = db_path
         self.patterns_db_path = str(patterns_db_path or db_path)
@@ -173,8 +188,9 @@ class SQLiteStore:
         patterns_stats = self._db_file_stats(self.patterns_db_path)
 
         logger.info(
-            "Storage diagnostics (%s): live_exists=%s live_size=%sB patterns_exists=%s patterns_size=%sB",
+            "Storage init (%s): primary_path=%s live_exists=%s live_size=%sB patterns_exists=%s patterns_size=%sB",
             stage,
+            os.path.dirname(self.db_path),
             live_stats["exists"],
             live_stats["size_bytes"],
             patterns_stats["exists"],
@@ -198,11 +214,27 @@ class SQLiteStore:
             pattern_user_version = int((self._patterns_conn.execute("PRAGMA user_version").fetchone() or [0])[0])
             logger.info("Pattern DB tables (%s): %s", stage, ", ".join(pattern_tables) if pattern_tables else "<none>")
             logger.info(
-                "Pattern DB row counts (%s): learned_patterns=%s user_version=%s",
+                "Pattern DB row counts (%s): learned_patterns=%s legacy_patterns=%s user_version=%s",
                 stage,
                 self._safe_row_count(self._patterns_conn, "learned_patterns"),
+                self._safe_row_count(self._patterns_conn, "patterns"),
                 pattern_user_version,
             )
+
+        if stage == "pre-init":
+            # Log legacy path availability so data-loss issues are immediately visible
+            checked: List[str] = []
+            for leg_path in self.LEGACY_PATTERNS_CANDIDATES + self.LEGACY_LIVE_CANDIDATES:
+                if leg_path in checked:
+                    continue
+                checked.append(leg_path)
+                s = self._db_file_stats(leg_path)
+                if s["exists"]:
+                    logger.info(
+                        "Legacy DB found: %s (size=%sB)",
+                        leg_path,
+                        s["size_bytes"],
+                    )
 
     def _quarantine_corrupt_db(self) -> None:
         if not os.path.exists(self.db_path):
@@ -267,6 +299,111 @@ class SQLiteStore:
             logger.error(f"Failed to initialize SQLite storage: {e}", exc_info=True)
             return False
 
+    # ---------------------------------------------------------------------------
+    # Migration helpers
+    # ---------------------------------------------------------------------------
+
+    def _migration_applied(self, conn: sqlite3.Connection, event_key: str) -> bool:
+        """Return True if this migration was already recorded in migration_events."""
+        try:
+            row = conn.execute(
+                "SELECT 1 FROM migration_events WHERE event_key=? LIMIT 1",
+                (str(event_key),),
+            ).fetchone()
+            return bool(row)
+        except Exception:
+            return False
+
+    def _record_migration(self, conn: sqlite3.Connection, event_key: str, details: str = "") -> None:
+        """Record a completed migration so it is not repeated on next start."""
+        try:
+            with conn:
+                conn.execute(
+                    "INSERT OR IGNORE INTO migration_events (event_key, executed_at, details) VALUES (?, ?, ?)",
+                    (str(event_key), datetime.now().isoformat(), str(details)),
+                )
+        except Exception as e:
+            logger.warning("Could not record migration event %s: %s", event_key, e)
+
+    def _migrate_from_patterns_table(
+        self, src_conn: sqlite3.Connection, dst_conn: sqlite3.Connection, source_label: str
+    ) -> int:
+        """Migrate rows from an old-style 'patterns' table into 'learned_patterns'.
+
+        The old schema may differ from the new one – we map what we can and fill
+        the rest with safe defaults.  Returns the number of rows inserted.
+        """
+        try:
+            pragma = src_conn.execute("PRAGMA table_info(patterns)").fetchall()
+            if not pragma:
+                return 0
+            existing_cols = {str(r[1]) for r in pragma}
+
+            # Build a flexible SELECT that maps old columns to new schema
+            now_iso = datetime.now().isoformat()
+
+            def _col(name: str, fallback: str) -> str:
+                return name if name in existing_cols else fallback
+
+            # suggestion_type may be stored as 'label', 'device_type', or 'suggestion_type'
+            stype_expr = (
+                "suggestion_type" if "suggestion_type" in existing_cols
+                else ("label" if "label" in existing_cols
+                      else ("device_type" if "device_type" in existing_cols
+                            else "'unknown'"))
+            )
+
+            select_sql = f"""
+                SELECT
+                    {_col('created_at', repr(now_iso))},
+                    {_col('updated_at', repr(now_iso))},
+                    {_col('first_seen', repr(now_iso))},
+                    {_col('last_seen', repr(now_iso))},
+                    {_col('seen_count', '1')},
+                    {_col('avg_power_w', '0.0')},
+                    {_col('peak_power_w', '0.0')},
+                    {_col('duration_s', '0.0')},
+                    {_col('energy_wh', '0.0')},
+                    COALESCE({stype_expr}, 'unknown'),
+                    {_col('user_label', 'NULL')},
+                    {_col('status', "'active'")},
+                    COALESCE({_col('avg_active_phases', '1.0')}, 1.0),
+                    COALESCE({_col('phase_mode', "'unknown'")}, 'unknown'),
+                    COALESCE({_col('power_variance', '0.0')}, 0.0),
+                    COALESCE({_col('rise_rate_w_per_s', '0.0')}, 0.0),
+                    COALESCE({_col('fall_rate_w_per_s', '0.0')}, 0.0),
+                    COALESCE({_col('duty_cycle', '0.0')}, 0.0),
+                    COALESCE({_col('peak_to_avg_ratio', '1.0')}, 1.0),
+                    COALESCE({_col('num_substates', '0')}, 0),
+                    COALESCE({_col('has_heating_pattern', '0')}, 0),
+                    COALESCE({_col('has_motor_pattern', '0')}, 0)
+                FROM patterns
+            """
+            rows = src_conn.execute(select_sql).fetchall()
+            if not rows:
+                return 0
+
+            with dst_conn:
+                dst_conn.executemany(
+                    """
+                    INSERT OR IGNORE INTO learned_patterns (
+                        created_at, updated_at, first_seen, last_seen, seen_count,
+                        avg_power_w, peak_power_w, duration_s, energy_wh,
+                        suggestion_type, user_label, status,
+                        avg_active_phases, phase_mode,
+                        power_variance, rise_rate_w_per_s, fall_rate_w_per_s,
+                        duty_cycle, peak_to_avg_ratio, num_substates,
+                        has_heating_pattern, has_motor_pattern
+                    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                    """,
+                    rows,
+                )
+            logger.info("Migrated %s pattern(s) from old 'patterns' table in %s", len(rows), source_label)
+            return len(rows)
+        except Exception as e:
+            logger.warning("_migrate_from_patterns_table failed for %s: %s", source_label, e)
+            return 0
+
     def _maybe_migrate_patterns_from_live(self) -> None:
         """Migrate existing patterns from live DB into dedicated patterns DB once."""
         if not self._conn or not self._patterns_conn:
@@ -275,71 +412,102 @@ class SQLiteStore:
             return
 
         try:
-            if not self._table_exists(self._conn, "learned_patterns"):
-                if self._table_exists(self._conn, "patterns"):
-                    logger.info("Legacy table 'patterns' exists but 'learned_patterns' is missing; skipping auto-migration")
-                logger.info("No legacy learned_patterns table found in live DB, skipping pattern migration")
-                return
+            # --- Case A: modern 'learned_patterns' table in live DB ---------------
+            if self._table_exists(self._conn, "learned_patterns"):
+                src_count = self._safe_row_count(self._conn, "learned_patterns")
+                if src_count == 0:
+                    return
 
-            dst_count = int((self._patterns_conn.execute("SELECT COUNT(*) FROM learned_patterns").fetchone() or [0])[0])
-            if dst_count > 0:
-                return
+                # Only migrate when destination is empty to avoid duplicates
+                dst_count = self._safe_row_count(self._patterns_conn, "learned_patterns")
+                if dst_count > 0:
+                    return
 
-            src_rows = self._conn.execute(
-                """
-                SELECT id, created_at, updated_at, first_seen, last_seen, seen_count,
-                       avg_power_w, peak_power_w, duration_s, energy_wh,
-                       suggestion_type, user_label, status,
-                       COALESCE(avg_active_phases, 1.0), COALESCE(phase_mode, 'unknown'),
-                       COALESCE(power_variance, 0.0), COALESCE(rise_rate_w_per_s, 0.0),
-                       COALESCE(fall_rate_w_per_s, 0.0), COALESCE(duty_cycle, 0.0),
-                       COALESCE(peak_to_avg_ratio, 1.0), COALESCE(num_substates, 0),
-                       COALESCE(has_heating_pattern, 0), COALESCE(has_motor_pattern, 0)
-                FROM learned_patterns
-                """
-            ).fetchall()
-            if not src_rows:
-                return
+                migration_key = "live_to_patterns_db:learned_patterns"
+                if self._migration_applied(self._patterns_conn, migration_key):
+                    return
 
-            with self._patterns_conn:
-                self._patterns_conn.executemany(
+                src_rows = self._conn.execute(
                     """
-                    INSERT OR REPLACE INTO learned_patterns (
-                        id, created_at, updated_at, first_seen, last_seen, seen_count,
-                        avg_power_w, peak_power_w, duration_s, energy_wh,
-                        suggestion_type, user_label, status,
-                        avg_active_phases, phase_mode,
-                        power_variance, rise_rate_w_per_s, fall_rate_w_per_s,
-                        duty_cycle, peak_to_avg_ratio, num_substates,
-                        has_heating_pattern, has_motor_pattern
-                    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-                    """,
-                    src_rows,
+                    SELECT id, created_at, updated_at, first_seen, last_seen, seen_count,
+                           avg_power_w, peak_power_w, duration_s, energy_wh,
+                           suggestion_type, user_label, status,
+                           COALESCE(avg_active_phases, 1.0), COALESCE(phase_mode, 'unknown'),
+                           COALESCE(power_variance, 0.0), COALESCE(rise_rate_w_per_s, 0.0),
+                           COALESCE(fall_rate_w_per_s, 0.0), COALESCE(duty_cycle, 0.0),
+                           COALESCE(peak_to_avg_ratio, 1.0), COALESCE(num_substates, 0),
+                           COALESCE(has_heating_pattern, 0), COALESCE(has_motor_pattern, 0)
+                    FROM learned_patterns
+                    """
+                ).fetchall()
+                if not src_rows:
+                    return
+
+                with self._patterns_conn:
+                    self._patterns_conn.executemany(
+                        """
+                        INSERT OR REPLACE INTO learned_patterns (
+                            id, created_at, updated_at, first_seen, last_seen, seen_count,
+                            avg_power_w, peak_power_w, duration_s, energy_wh,
+                            suggestion_type, user_label, status,
+                            avg_active_phases, phase_mode,
+                            power_variance, rise_rate_w_per_s, fall_rate_w_per_s,
+                            duty_cycle, peak_to_avg_ratio, num_substates,
+                            has_heating_pattern, has_motor_pattern
+                        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                        """,
+                        src_rows,
+                    )
+                self._record_migration(
+                    self._patterns_conn, migration_key,
+                    f"migrated {len(src_rows)} patterns from live DB learned_patterns"
                 )
-            logger.info(f"Migrated {len(src_rows)} pattern(s) into dedicated patterns DB")
+                logger.info("Migrated %s pattern(s) from live DB into dedicated patterns DB", len(src_rows))
+                return
+
+            # --- Case B: old 'patterns' table in live DB (legacy schema) ----------
+            if self._table_exists(self._conn, "patterns"):
+                src_count = self._safe_row_count(self._conn, "patterns")
+                logger.info(
+                    "Found legacy table 'patterns' in live DB with %s rows – migrating to learned_patterns",
+                    src_count,
+                )
+
+                dst_count = self._safe_row_count(self._patterns_conn, "learned_patterns")
+                migration_key = "live_to_patterns_db:legacy_patterns_table"
+                if dst_count > 0 or self._migration_applied(self._patterns_conn, migration_key):
+                    logger.info("Destination already has data or migration already ran – skipping")
+                    return
+
+                count = self._migrate_from_patterns_table(self._conn, self._patterns_conn, "live DB")
+                if count > 0:
+                    self._record_migration(
+                        self._patterns_conn, migration_key,
+                        f"migrated {count} patterns from live DB old 'patterns' table"
+                    )
+                return
+
+            logger.info("No pattern tables found in live DB – nothing to migrate")
         except Exception as e:
-            logger.warning(f"Pattern migration to dedicated DB skipped: {e}")
+            logger.warning("Pattern migration to dedicated DB failed: %s", e)
 
     def _maybe_recover_patterns_from_legacy_files(self) -> None:
-        """Recover patterns from legacy addon paths if current patterns DB is empty."""
+        """Recover patterns from legacy addon paths if current patterns DB is empty.
+
+        Checks both 'learned_patterns' (modern schema) and 'patterns' (legacy schema)
+        in each candidate DB file so that data is never silently lost.
+        """
         if not self._patterns_conn:
             return
 
         try:
-            dst_count = int((self._patterns_conn.execute("SELECT COUNT(*) FROM learned_patterns").fetchone() or [0])[0])
+            dst_count = self._safe_row_count(self._patterns_conn, "learned_patterns")
             if dst_count > 0:
                 return
         except Exception:
             return
 
-        legacy_candidates = [
-            "/addon_configs/ha_nilm_detector/nilm_patterns.sqlite3",
-            "/addon_configs/ha_nilm_detector/nilm_live.sqlite3",
-            "/data/nilm_patterns.sqlite3",
-            "/data/nilm_live.sqlite3",
-        ]
-
-        for legacy_path in legacy_candidates:
+        for legacy_path in self.LEGACY_PATTERNS_CANDIDATES:
             try:
                 legacy_abs = os.path.abspath(str(legacy_path))
                 if legacy_abs == os.path.abspath(self.patterns_db_path):
@@ -347,48 +515,95 @@ class SQLiteStore:
                 if not os.path.exists(legacy_abs):
                     continue
 
+                migration_key = f"legacy_pattern_recovery:{legacy_abs}"
+                if self._migration_applied(self._patterns_conn, migration_key):
+                    logger.info("Legacy recovery already applied for %s – skipping", legacy_abs)
+                    continue
+
                 legacy_conn = sqlite3.connect(legacy_abs, timeout=5)
                 try:
-                    if not self._table_exists(legacy_conn, "learned_patterns"):
-                        continue
-
-                    src_count = int((legacy_conn.execute("SELECT COUNT(*) FROM learned_patterns").fetchone() or [0])[0])
-                    if src_count <= 0:
-                        continue
-
-                    rows = legacy_conn.execute(
-                        """
-                        SELECT created_at, updated_at, first_seen, last_seen, seen_count,
-                               avg_power_w, peak_power_w, duration_s, energy_wh,
-                               suggestion_type, user_label, status
-                        FROM learned_patterns
-                        """
-                    ).fetchall()
-                    if not rows:
-                        continue
-
-                    with self._patterns_conn:
-                        self._patterns_conn.executemany(
-                            """
-                            INSERT INTO learned_patterns (
-                                created_at, updated_at, first_seen, last_seen, seen_count,
-                                avg_power_w, peak_power_w, duration_s, energy_wh,
-                                suggestion_type, user_label, status
-                            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-                            """,
-                            rows,
-                        )
-
-                    logger.warning(
-                        "Recovered %s learned pattern(s) from legacy DB: %s",
-                        len(rows),
+                    legacy_tables = self._list_tables(legacy_conn)
+                    logger.info(
+                        "Checking legacy DB for patterns: %s (tables: %s)",
                         legacy_abs,
+                        ", ".join(legacy_tables) if legacy_tables else "<none>",
                     )
-                    return
+
+                    # --- Try modern schema first ----------------------------------
+                    if self._table_exists(legacy_conn, "learned_patterns"):
+                        src_count = self._safe_row_count(legacy_conn, "learned_patterns")
+                        if src_count > 0:
+                            rows = legacy_conn.execute(
+                                """
+                                SELECT created_at, updated_at, first_seen, last_seen, seen_count,
+                                       avg_power_w, peak_power_w, duration_s, energy_wh,
+                                       suggestion_type, user_label, status,
+                                       COALESCE(avg_active_phases, 1.0),
+                                       COALESCE(phase_mode, 'unknown'),
+                                       COALESCE(power_variance, 0.0),
+                                       COALESCE(rise_rate_w_per_s, 0.0),
+                                       COALESCE(fall_rate_w_per_s, 0.0),
+                                       COALESCE(duty_cycle, 0.0),
+                                       COALESCE(peak_to_avg_ratio, 1.0),
+                                       COALESCE(num_substates, 0),
+                                       COALESCE(has_heating_pattern, 0),
+                                       COALESCE(has_motor_pattern, 0)
+                                FROM learned_patterns
+                                """
+                            ).fetchall()
+                            if rows:
+                                with self._patterns_conn:
+                                    self._patterns_conn.executemany(
+                                        """
+                                        INSERT OR IGNORE INTO learned_patterns (
+                                            created_at, updated_at, first_seen, last_seen, seen_count,
+                                            avg_power_w, peak_power_w, duration_s, energy_wh,
+                                            suggestion_type, user_label, status,
+                                            avg_active_phases, phase_mode,
+                                            power_variance, rise_rate_w_per_s, fall_rate_w_per_s,
+                                            duty_cycle, peak_to_avg_ratio, num_substates,
+                                            has_heating_pattern, has_motor_pattern
+                                        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                                        """,
+                                        rows,
+                                    )
+                                self._record_migration(
+                                    self._patterns_conn, migration_key,
+                                    f"recovered {len(rows)} patterns from learned_patterns in {legacy_abs}"
+                                )
+                                logger.info(
+                                    "Recovered %s pattern(s) from legacy DB learned_patterns: %s",
+                                    len(rows), legacy_abs,
+                                )
+                                return
+
+                    # --- Fall back to old 'patterns' table -----------------------
+                    if self._table_exists(legacy_conn, "patterns"):
+                        src_count = self._safe_row_count(legacy_conn, "patterns")
+                        logger.info(
+                            "Found legacy table 'patterns' in %s (%s rows) – migrating",
+                            legacy_abs, src_count,
+                        )
+                        if src_count > 0:
+                            count = self._migrate_from_patterns_table(
+                                legacy_conn, self._patterns_conn, legacy_abs
+                            )
+                            if count > 0:
+                                self._record_migration(
+                                    self._patterns_conn, migration_key,
+                                    f"recovered {count} patterns from old 'patterns' table in {legacy_abs}"
+                                )
+                                logger.info(
+                                    "Recovered %s pattern(s) from legacy 'patterns' table: %s",
+                                    count, legacy_abs,
+                                )
+                                return
+
+                    logger.info("No usable pattern data found in legacy DB: %s", legacy_abs)
                 finally:
                     legacy_conn.close()
             except Exception as legacy_error:
-                logger.warning("Legacy pattern recovery skipped for %s: %s", legacy_path, legacy_error)
+                logger.warning("Legacy pattern recovery failed for %s: %s", legacy_path, legacy_error)
 
     def get_warmstart_power_values(
         self,
@@ -504,10 +719,7 @@ class SQLiteStore:
         except Exception:
             return
 
-        legacy_candidates = [
-            "/addon_configs/ha_nilm_detector/nilm_live.sqlite3",
-            "/data/nilm_live.sqlite3",
-        ]
+        legacy_candidates = self.LEGACY_LIVE_CANDIDATES
 
         for legacy_path in legacy_candidates:
             try:
@@ -515,6 +727,11 @@ class SQLiteStore:
                 if legacy_abs == os.path.abspath(self.db_path):
                     continue
                 if not os.path.exists(legacy_abs):
+                    continue
+
+                migration_key = f"legacy_live_recovery:{legacy_abs}"
+                if self._migration_applied(self._conn, migration_key):
+                    logger.info("Live recovery already applied for %s – skipping", legacy_abs)
                     continue
 
                 legacy_conn = sqlite3.connect(legacy_abs, timeout=5)
@@ -544,31 +761,34 @@ class SQLiteStore:
                             ).fetchall()
 
                     if not readings_rows and not detections_rows:
+                        logger.info("Legacy live DB has no usable data: %s", legacy_abs)
                         continue
 
                     with self._conn:
                         if readings_rows:
                             self._conn.executemany(
-                                "INSERT INTO power_readings (ts, power_w, phase, metadata) VALUES (?, ?, ?, ?)",
+                                "INSERT OR IGNORE INTO power_readings (ts, power_w, phase, metadata) VALUES (?, ?, ?, ?)",
                                 readings_rows,
                             )
                         if detections_rows:
                             self._conn.executemany(
-                                "INSERT INTO detections (ts, device_name, state, power_w, confidence, details) VALUES (?, ?, ?, ?, ?, ?)",
+                                "INSERT OR IGNORE INTO detections (ts, device_name, state, power_w, confidence, details) VALUES (?, ?, ?, ?, ?, ?)",
                                 detections_rows,
                             )
 
-                    logger.warning(
+                    self._record_migration(
+                        self._conn, migration_key,
+                        f"recovered readings={len(readings_rows)} detections={len(detections_rows)} from {legacy_abs}"
+                    )
+                    logger.info(
                         "Recovered live DB from legacy file %s (readings=%s, detections=%s)",
-                        legacy_abs,
-                        len(readings_rows),
-                        len(detections_rows),
+                        legacy_abs, len(readings_rows), len(detections_rows),
                     )
                     return
                 finally:
                     legacy_conn.close()
             except Exception as legacy_error:
-                logger.warning("Legacy live recovery skipped for %s: %s", legacy_path, legacy_error)
+                logger.warning("Legacy live recovery failed for %s: %s", legacy_path, legacy_error)
 
     def close(self) -> None:
         # Flush and commit pending writes before closing connections.
@@ -762,6 +982,16 @@ class SQLiteStore:
             self._conn.execute(
                 "CREATE INDEX IF NOT EXISTS idx_detections_ts ON detections(ts)"
             )
+            self._conn.execute(
+                """
+                CREATE TABLE IF NOT EXISTS migration_events (
+                    id INTEGER PRIMARY KEY AUTOINCREMENT,
+                    event_key TEXT UNIQUE NOT NULL,
+                    executed_at TEXT NOT NULL,
+                    details TEXT
+                )
+                """
+            )
             self._ensure_schema_version(self._conn, self.LIVE_SCHEMA_VERSION)
 
         if not self._patterns_conn:
@@ -817,6 +1047,18 @@ class SQLiteStore:
             self._ensure_column(self._patterns_conn, "learned_patterns", "hour_distribution_json", "TEXT DEFAULT '{}'")  # Hour frequency map
             self._ensure_column(self._patterns_conn, "learned_patterns", "profile_points_json", "TEXT DEFAULT '[]'")
             self._ensure_column(self._patterns_conn, "learned_patterns", "quality_score_avg", "REAL DEFAULT 0.5")
+
+            # Migration tracking table – one row per migration event (unique key prevents re-runs)
+            self._patterns_conn.execute(
+                """
+                CREATE TABLE IF NOT EXISTS migration_events (
+                    id INTEGER PRIMARY KEY AUTOINCREMENT,
+                    event_key TEXT UNIQUE NOT NULL,
+                    executed_at TEXT NOT NULL,
+                    details TEXT
+                )
+                """
+            )
             self._ensure_schema_version(self._patterns_conn, self.PATTERNS_SCHEMA_VERSION)
 
     def _ensure_column(
