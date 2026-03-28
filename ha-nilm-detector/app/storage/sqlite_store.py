@@ -1301,7 +1301,7 @@ class SQLiteStore:
             # Hole Messwerte im Zeitbereich
             rows = self._conn.execute(
                 """
-                SELECT ts, power_w, phase
+                SELECT ts, power_w, phase, metadata
                 FROM power_readings
                 WHERE ts >= ? AND ts <= ?
                 ORDER BY ts ASC
@@ -1314,6 +1314,7 @@ class SQLiteStore:
             
             # Konvertiere zu PowerReading Objekten für Feature-Extraction
             power_readings = []
+            phase_energy_from_metadata: Dict[str, float] = {}
             for row in rows:
                 try:
                     ts = datetime.fromisoformat(row[0])
@@ -1321,8 +1322,39 @@ class SQLiteStore:
                     if ts.tzinfo is not None:
                         ts = ts.astimezone(timezone.utc).replace(tzinfo=None)
                     power_w = float(row[1])
-                    phase = row[2] if len(row) > 2 else "L1"
-                    power_readings.append(PowerReading(timestamp=ts, power_w=power_w, phase=phase))
+                    phase_raw = str(row[2] if len(row) > 2 else "").upper()
+                    metadata_raw = row[3] if len(row) > 3 else None
+
+                    metadata = {}
+                    if isinstance(metadata_raw, str) and metadata_raw.strip():
+                        try:
+                            metadata = json.loads(metadata_raw)
+                        except Exception:
+                            metadata = {}
+
+                    point_phase = phase_raw if phase_raw in {"L1", "L2", "L3"} else ""
+                    phase_powers = metadata.get("phase_powers_w", {}) if isinstance(metadata, dict) else {}
+                    if isinstance(phase_powers, dict):
+                        local_candidates: List[Tuple[str, float]] = []
+                        for phase_name, phase_power in phase_powers.items():
+                            phase_clean = str(phase_name).upper()
+                            if phase_clean not in {"L1", "L2", "L3"}:
+                                continue
+                            try:
+                                phase_value = float(phase_power)
+                            except (TypeError, ValueError):
+                                continue
+                            phase_energy_from_metadata[phase_clean] = phase_energy_from_metadata.get(phase_clean, 0.0) + max(phase_value, 0.0)
+                            local_candidates.append((phase_clean, phase_value))
+
+                        # For TOTAL rows prefer dominant phase from embedded phase powers.
+                        if not point_phase and local_candidates:
+                            point_phase = max(local_candidates, key=lambda item: item[1])[0]
+
+                    if not point_phase:
+                        point_phase = "L1"
+
+                    power_readings.append(PowerReading(timestamp=ts, power_w=power_w, phase=point_phase, metadata=metadata))
                 except Exception:
                     continue
             
@@ -1360,7 +1392,12 @@ class SQLiteStore:
             for reading in power_readings:
                 phase_name = str(reading.phase or "L1")
                 phase_energy[phase_name] = phase_energy.get(phase_name, 0.0) + float(reading.power_w)
-            dominant_phase = max(phase_energy.items(), key=lambda item: item[1])[0] if phase_energy else "L1"
+            # Prefer dominant phase derived from per-phase metadata when available.
+            if phase_energy_from_metadata:
+                dominant_phase = max(phase_energy_from_metadata.items(), key=lambda item: item[1])[0]
+                phase_mode = "single_phase"
+            else:
+                dominant_phase = max(phase_energy.items(), key=lambda item: item[1])[0] if phase_energy else "L1"
             
             # Werte für DB vorbereiten
             power_variance = features.power_variance if features else 0.0
