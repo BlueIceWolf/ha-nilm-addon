@@ -201,8 +201,8 @@ logging:
 - **Transparent** – Open-Source Code, dokumentierte Algorithmen
 
 **Storage:**
-- Live-Daten: `/data/nilm_readings.sqlite3` (Auto-Rotation nach 30 Tagen)
-- Patterns: `/addon_configs/ha_nilm_detector/nilm_patterns.sqlite3` (Persistent)
+- Live-Daten: `/data/nilm_live.sqlite3` (Auto-Rotation nach 30 Tagen)
+- Patterns: `/data/nilm_patterns.sqlite3` (Persistent)
 
 ---
 

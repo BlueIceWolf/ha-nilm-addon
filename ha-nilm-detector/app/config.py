@@ -3,6 +3,7 @@ Configuration management for NILM detection system.
 """
 import json
 import os
+import shutil
 from typing import Dict, Any, Optional, Union
 from app.models import DeviceConfig
 from app.utils.logging import get_logger
@@ -47,15 +48,16 @@ class Config:
         self.ha_token = ""
         self.storage_path = "/data"
         self.storage_enabled = True
-        self.storage_db_path = "/addon_configs/ha_nilm_detector/nilm_live.sqlite3"
-        self.storage_patterns_db_path = "/addon_configs/ha_nilm_detector/nilm_patterns.sqlite3"
+        # Use /data defaults because this is the guaranteed persistent volume in HA add-ons.
+        self.storage_db_path = "/data/nilm_live.sqlite3"
+        self.storage_patterns_db_path = "/data/nilm_patterns.sqlite3"
         self.storage_retention_days = 30
         self.learning_warmup_minutes = 120
         self.processing_smoothing_window = 5
         self.processing_noise_threshold = 2.0
         self.processing_adaptive_correction = True
         self.confidence_threshold = 0.6
-        self.log_file = "/addon_configs/ha_nilm_detector/nilm.log"  # Log file path (rotated on startup)
+        self.log_file = "/data/nilm.log"  # Log file path (rotated on startup)
         self.max_log_backups = 3  # Keep max 3 old log files (.log.1, .log.2, .log.3)
         
         if config_path:
@@ -214,10 +216,52 @@ class Config:
     def ensure_storage_path(self) -> None:
         """Ensure configured storage directories exist."""
         os.makedirs(self.storage_path, exist_ok=True)
+        self._migrate_legacy_storage_files()
         for db_path in [self.storage_db_path, self.storage_patterns_db_path]:
             db_dir = os.path.dirname(str(db_path or "").strip())
             if db_dir:
                 os.makedirs(db_dir, exist_ok=True)
+
+    def _migrate_legacy_storage_files(self) -> None:
+        """Move legacy /addon_configs files to /data defaults when needed."""
+        migration_pairs = [
+            ("/addon_configs/ha_nilm_detector/nilm_live.sqlite3", self.storage_db_path),
+            ("/addon_configs/ha_nilm_detector/nilm_patterns.sqlite3", self.storage_patterns_db_path),
+            ("/addon_configs/ha_nilm_detector/nilm.log", self.log_file),
+        ]
+
+        for legacy_path, target_path in migration_pairs:
+            legacy = str(legacy_path or "").strip()
+            target = str(target_path or "").strip()
+            if not legacy or not target:
+                continue
+            if os.path.abspath(legacy) == os.path.abspath(target):
+                continue
+            if not os.path.exists(legacy):
+                continue
+            if os.path.exists(target):
+                continue
+
+            try:
+                target_dir = os.path.dirname(target)
+                if target_dir:
+                    os.makedirs(target_dir, exist_ok=True)
+
+                shutil.copy2(legacy, target)
+                for suffix in ("-wal", "-shm"):
+                    legacy_sidecar = f"{legacy}{suffix}"
+                    target_sidecar = f"{target}{suffix}"
+                    if os.path.exists(legacy_sidecar) and not os.path.exists(target_sidecar):
+                        shutil.copy2(legacy_sidecar, target_sidecar)
+
+                logger.info(f"Migrated legacy storage file: {legacy} -> {target}")
+            except Exception as migration_error:
+                logger.warning(
+                    "Legacy storage migration failed for %s -> %s: %s",
+                    legacy,
+                    target,
+                    migration_error,
+                )
 
 
 def load_options_from_file(options_path: str = "/data/options.json") -> Dict[str, Any]:
