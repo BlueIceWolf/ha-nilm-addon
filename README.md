@@ -27,7 +27,7 @@
 
 ---
 
-**Aktuell:** `v0.6.22` — Lernlauf-Fallback verbessert (edge-basierte Segmentierung bei 0 Zyklen)
+**Aktuell:** `v0.6.23` — Hybrid-Debug konsistenter: `unknown` wird nicht mehr mit hoher Konfidenz angezeigt
 
 > ℹ️ **v0.6.11 Hinweis**: Auch die oberen Dashboard-Karten (`Gesamtleistung`, `Durchschnitt`, `Messwerte`, `Gelernte Muster`) schalten jetzt sauber zwischen DE/EN um.
 

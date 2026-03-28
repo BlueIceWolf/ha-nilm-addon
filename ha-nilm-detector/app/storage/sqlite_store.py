@@ -1512,6 +1512,30 @@ class SQLiteStore:
 
         confidence = max(0.0, min(1.0, float(final_confidence)))
 
+        # Unknown labels must never look "certain" in UI/debug output.
+        normalized_label = str(final_label or "").strip().lower()
+        if normalized_label in {"", "unknown", "unbekannt"}:
+            capped_unknown_conf = min(confidence, 0.35)
+            return _remember({
+                "label": fallback,
+                "confidence": capped_unknown_conf,
+                "source": "fallback_unknown_label",
+                "explain": {
+                    **dict(matcher_result.explain),
+                    "unknown_label_capped": True,
+                    "ml": (
+                        {
+                            "label": ml_result.label,
+                            "confidence": round(float(ml_result.confidence), 4),
+                            "source": ml_result.source,
+                            "top_n": ml_result.top_n,
+                        }
+                        if ml_result
+                        else None
+                    ),
+                },
+            })
+
         # Guard against label collapse: if the nearest prototype is still too far,
         # trust the heuristic fallback even if relative vote confidence is high.
         match_threshold = max(0.10, min(float(self.pattern_match_threshold), 0.95))

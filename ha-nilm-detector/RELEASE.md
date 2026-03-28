@@ -4,6 +4,18 @@
 
 ---
 
+# Release 0.6.23 (BETA)
+
+## Store Kurztext
+- **Hybrid-Debug-Fix**: `unknown` wird nicht mehr mit hoher Konfidenz dargestellt.
+
+## Highlights
+- Konsistenzfix fuer Hybrid-Entscheidungen: unbekannte Labels erhalten nun eine gedeckelte, niedrige Konfidenz
+- Neuer Source-Hinweis `fallback_unknown_label` fuer klare Nachvollziehbarkeit
+- Explain-Details bleiben sichtbar
+
+---
+
 # Release 0.6.22 (BETA)
 
 ## Store Kurztext

@@ -19,6 +19,13 @@
 - Segmentierung nutzt Baseline + Delta-On/Off inkl. Sparse-Gap-Handling fuer Recorder-Historie
 - Verhindert den Fall `Messpunkte > 0` aber `Zyklen gelernt: 0` in vielen Praxis-Szenarien
 
+## 0.6.23 (BETA)
+
+**Hybrid-Debug: unbekanntes Label mit plausibler Konfidenz**
+- Fix fuer inkonsistente Ausgabe `label=unknown` bei sehr hoher Konfidenz
+- `unknown` wird jetzt auf niedrige Konfidenz begrenzt und als expliziter Fallback (`fallback_unknown_label`) markiert
+- Debug-Explain-Payload bleibt erhalten (inkl. optionalem ML-Block)
+
 ## 0.6.20 (BETA)
 
 **Datenpersistenz-Hotfix nach Updates**
