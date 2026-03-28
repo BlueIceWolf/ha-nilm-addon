@@ -2,8 +2,6 @@
 
 > ⚠️ **Hinweis**: Dieses Projekt ist experimentell (BETA) - Breaking Changes und Bugs können auftreten.
 
-## 0.6.2 (BETA)
-
 ## 0.6.3 (BETA)
 
 **Self-Learning deutlich erweitert**
