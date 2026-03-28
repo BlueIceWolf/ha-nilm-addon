@@ -2,7 +2,16 @@
 
 > ⚠️ **Hinweis**: Dieses Projekt ist experimentell (BETA) - Breaking Changes und Bugs können auftreten.
 
-## 0.6.1 (BETA)
+## 0.6.2 (BETA)
+
+## 0.6.3 (BETA)
+
+**Self-Learning deutlich erweitert**
+- Replay-Learning arbeitet jetzt phasenbasiert mit separaten Learnern pro Phase (wie der Live-Pfad) statt mit aggregierter Total-Leistung.
+- Pattern-Matching nutzt zusaetzlich Kurvenform-Distanz aus gespeicherten `profile_points` fuer robustere Zuordnung.
+- Niedrigqualitative Zyklen werden vor dem Lernen gefiltert, um Musterrauschen in der DB zu reduzieren.
+- Adaptive Match-Toleranz: etablierte Muster (hoher `seen_count`) werden strenger gematcht, damit sie nicht durch Ausreisser driften.
+- Neue qualitaetsgewichtete, zeitpriorisierte Prototype-Votes (inkl. `quality_score_avg`) fuer plausiblere Selbstklassifikation.
 
 ## 0.6.2 (BETA)
 

@@ -4,6 +4,21 @@
 
 ---
 
+# Release 0.6.3 (BETA)
+
+## Store Kurztext
+- **Selbstlernen verbessert**: Replay lernt jetzt phasenbasiert (L1/L2/L3) statt ueber aggregierte Total-Leistung.
+- **Robusteres Matching**: Kurvenform-Distanz aus echten Profilpunkten verbessert die Pattern-Zuordnung.
+- **Weniger Musterrauschen**: Qualitaetsfilter blockiert unzuverlaessige Zyklen vor dem Lernen.
+
+## Highlights
+- Per-Phase Replay-Learner analog zum Live-Learning-Pfad
+- Adaptive Match-Toleranz nach Pattern-Reife (`seen_count`)
+- Neue persistente Pattern-Qualitaet `quality_score_avg` als Feedback-Signal
+- Vorschlagslogik mit Qualitaetsgewicht + Zeitprior (`avg_hour_of_day`) fuer plausiblere Selbstklassifikation
+
+---
+
 # Release 0.6.2 (BETA)
 
 ## Store Kurztext
