@@ -4,6 +4,21 @@
 
 ---
 
+# Release 0.6.24 (BETA)
+
+## Store Kurztext
+- **Klassifikation verbessert**: Echte Zyklus-Features, deterministic First-Level-Regeln und Frequency-Refinement reduzieren `unknown` und verbessern die Musterqualitaet.
+
+## Highlights
+- Feature-Extraction mit robusten Edge-Raten (Rise/Fall), Plateau/Substate-Segmentierung und `step_count`
+- Deterministische Erstklassifikation (`heater`, `motor`, `electronics`, `long_running`) vor ML-Fallback
+- Replay-Edge-Fallback nutzt echte Features statt Dummy-Werte
+- Frequency-basierte Label-Verfeinerung fuer plausiblere Vorschlaege
+- `step_count` durchgaengig in Pattern-Schema, Update/Insert und manueller Bereichserstellung
+- Erweiterte Klassifikations-Logs mit Regelgrund und Kernmerkmalen fuer bessere Diagnose
+
+---
+
 # Release 0.6.23 (BETA)
 
 ## Store Kurztext

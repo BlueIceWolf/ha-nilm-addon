@@ -381,6 +381,18 @@ class PatternLearner:
         Supports 25+ device types with phase-aware detection and multi-mode learning.
         Returns device type string (e.g., "microwave", "washing_machine").
         """
+        heuristic_label, heuristic_rule = PatternLearner._suggest_device_type_first_level(cycle)
+        if heuristic_label != "unknown":
+            logger.debug(
+                "First-level heuristic classification: label=%s rule=%s avg=%.1f peak=%.1f duration=%.1fs",
+                heuristic_label,
+                heuristic_rule,
+                cycle.avg_power_w,
+                cycle.peak_power_w,
+                cycle.duration_s,
+            )
+            return heuristic_label
+
         try:
             # Use intelligent SmartClassifier (25+ device types, phase-aware)
             device_id, confidence, device_name = SmartDeviceClassifier.classify(cycle)
@@ -447,3 +459,27 @@ class PatternLearner:
             return "kettle"
         
         return "unknown"
+
+    @staticmethod
+    def _suggest_device_type_first_level(cycle: LearnedCycle) -> tuple[str, str]:
+        """Rule-based first-level classification (no ML).
+
+        Required as deterministic baseline so the system does not collapse into
+        all-unknown predictions.
+        """
+        avg_power = float(cycle.avg_power_w)
+        duration_s = float(cycle.duration_s)
+
+        if avg_power > 1500.0:
+            return ("heater", "avg_power_gt_1500")
+
+        if avg_power > 500.0 and duration_s < 60.0:
+            return ("motor", "avg_power_gt_500_and_duration_lt_60")
+
+        if avg_power < 300.0 and duration_s < 60.0:
+            return ("electronics", "avg_power_lt_300_and_duration_lt_60")
+
+        if duration_s > 300.0:
+            return ("long_running", "duration_gt_300")
+
+        return ("unknown", "no_rule_matched")

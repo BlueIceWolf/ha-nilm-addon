@@ -4,6 +4,20 @@
 
 ## 0.6.21 (BETA)
 
+## 0.6.24 (BETA)
+
+**Klassifikations- und Feature-Qualitaet deutlich verbessert**
+- Feature-Extraction liefert jetzt robustere echte Zyklus-Features statt flacher Fallback-Werte:
+  Rise/Fall-Edge-Raten, Plateau/Substate-Segmentierung und `step_count`
+- Deterministische First-Level-Regeln vor ML/Smart-Classifier:
+  `heater`, `motor`, `electronics`, `long_running` (sonst `unknown`)
+- Replay-Edge-Fallback nutzt jetzt ebenfalls echte `CycleFeatures.extract(...)` statt Dummy-Features
+- Frequency-basierte Label-Verfeinerung in der Pattern-Aktualisierung (`fridge`/`pump`/`manual_device` Regeln)
+- `step_count` durchgaengig in Schema/Pattern-Updates/Pattern-Insert und manueller Bereichserstellung persistiert
+- Erweiterte Klassifikations-Logs mit Regelgrund und Schluessel-Features fuer Debugging
+
+## 0.6.21 (BETA)
+
 **Persistenz-, Migration- und Warmstart-Stabilisierung**
 - Speicherpfade zentralisiert (Standard jetzt unter `/data/ha_nilm_detector`) inkl. neuer Option `storage.base_path`
 - Legacy-Dateimigration robuster: migriert auch wenn Ziel-Datei bereits existiert aber leer ist

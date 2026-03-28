@@ -20,6 +20,11 @@ Was funktioniert bereits, was ist noch in Arbeit und wo soll das Projekt hin.
 - **Sichtbarer Pattern-Confidence-Score**: Tabelle zeigt Erkennungssicherheit pro Muster
 - **Device-Gruppen**: Mehrere Pattern werden pro Geraet gruppiert dargestellt
 - **Mode-Clustering verbessert**: Variable Lasten werden besser als Betriebsmodi zusammengehalten
+- **Replay-Learning robuster**: Edge-basierter Fallback erkennt Zyklen auch bei schwieriger Historie
+- **Persistenz/Warmstart stabilisiert**: Daten bleiben nach Neustart/Update deutlich zuverlässiger erhalten
+- **Echte Feature-Extraction (v0.6.24)**: Rise/Fall-Edge-Raten, Plateau/Substates und `step_count` werden gelernt
+- **Deterministische Erstklassifikation (v0.6.24)**: First-Level-Regeln (`heater`, `motor`, `electronics`, `long_running`) vor ML-Fallback
+- **Frequency-Refinement (v0.6.24)**: Label-Verfeinerung nach Nutzungshäufigkeit reduziert `unknown`-Anteil
 
 ---
 
@@ -41,6 +46,8 @@ Was funktioniert bereits, was ist noch in Arbeit und wo soll das Projekt hin.
 
 ### Kurzfristig (nächste Versionen)
 - Bessere Erkennung für stark variable Lasten (Induktionsherd, Staubsauger) weiter ausbauen
+- Rule-Engine je Gerätetyp verfeinern (z. B. mehr klare Regeln für Heizung/Pumpe/Küche)
+- Bewertung der `unknown`-Quote im Live-Betrieb mit Zielwert und Telemetrie im Debug-Panel
 - Täglicher Summary: Top Geräte, Trends, Anomalien
 - Optionales manuelles Merge/Split fuer Device-Gruppen im UI
 
@@ -109,7 +116,7 @@ Damit das Projekt irgendwann "produktiv-ready" ist sollte gelten:
 - Gute Dokumentation damit neue User nicht völlig verloren sind
 - Ein paar Video-Guides zum Einrichten
 
-**Aktuell (v0.6.7):** Etwa 65-75% davon erreicht. Core + UI sind deutlich reifer; Fokus liegt jetzt auf Edge-Cases bei stark variablen Lasten und Gruppen-Feintuning.
+**Aktuell (v0.6.24):** Etwa 75-82% davon erreicht. Core, Persistenz und Lernpipeline sind deutlich stabiler; Fokus liegt jetzt auf variablen Lasten, Feinklassifikation und UI-gestuetztem Pattern-Curation.
 
 ---
 
@@ -126,5 +133,5 @@ Wenn ein Gerät manchmal L1 manchmal L2 benutzt, würde es als *ein* Pattern gel
 
 ---
 
-Ganz Kurz: Das Projekt funktioniert für "normale" Geräte mit stabiler Leistung sehr gut. Für alles andere ist NILM ein Hard Problem wo niemand ne vollkommene Lösung hat. Realistische Erwartungen setzen und nicht entmutigen lassen wenn Induktionsherd nicht perfekt erkannt wird 😄
+Ganz Kurz: Das Projekt funktioniert für "normale" Geräte mit stabiler Leistung sehr gut. Für alles andere ist NILM ein Hard Problem wo niemand ne vollkommene Lösung hat. Realistische Erwartungen setzen und nicht entmutigen lassen wenn Induktionsherd nicht perfekt erkannt wird.
 

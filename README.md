@@ -11,7 +11,7 @@
 
 <p align="center">
   <img src="https://img.shields.io/badge/Status-BETA-orange" alt="BETA" />
-   <img src="https://img.shields.io/badge/Version-0.6.18-blue" alt="Version" />
+   <img src="https://img.shields.io/badge/Version-0.6.24-blue" alt="Version" />
 </p>
 
 > ⚠️ **EXPERIMENTELLES PROJEKT (BETA)**: Dieses Add-on befindet sich in aktiver Entwicklung. Viele Features funktionieren bereits gut, aber es ist **nicht production-ready**. Erwarte Bugs, unvollständige Features und Breaking Changes zwischen Versionen. Nutze es zum Experimentieren und Testen, aber nicht für kritische Automatisierungen.
@@ -27,7 +27,7 @@
 
 ---
 
-**Aktuell:** `v0.6.23` — Hybrid-Debug konsistenter: `unknown` wird nicht mehr mit hoher Konfidenz angezeigt
+**Aktuell:** `v0.6.24` - Klassifikation robuster: echte Zyklus-Features + First-Level-Regeln + Frequency-Refinement
 
 > ℹ️ **v0.6.11 Hinweis**: Auch die oberen Dashboard-Karten (`Gesamtleistung`, `Durchschnitt`, `Messwerte`, `Gelernte Muster`) schalten jetzt sauber zwischen DE/EN um.
 
@@ -51,6 +51,9 @@
 - **📉 Sichtbarer Confidence-Score (v0.6.6+)** – Zeigt pro Pattern die Erkennungssicherheit (Qualitaet + Reife)
 - **🧩 Device-Gruppen (v0.6.7+)** – Mehrere Pattern desselben Geraets werden gruppiert dargestellt und gruppenbasiert vorgeschlagen
 - **🔀 Besseres Mode-Clustering (v0.6.7+)** – Variable Lasten werden als Betriebsmodi in einem Pattern gebuendelt statt als viele Einzellabels
+- **📐 Echte Feature-Extraction (v0.6.24)** – Edge-basierte Rise/Fall-Raten, Plateau/Substates und `step_count` statt flacher Dummy-Features
+- **🧭 Deterministische Erstklassifikation (v0.6.24)** – First-Level-Regeln (`heater`, `motor`, `electronics`, `long_running`) vor ML-Fallback
+- **🔁 Frequency-Refinement (v0.6.24)** – Nutzungshaeufigkeit wird in der Label-Verfeinerung beruecksichtigt, um `unknown` zu reduzieren
 
 ### Web-UI
 - **🌙 Dark Mode** – Durchgehend hell/dunkel Modus mit modernem Home-Assistant-Design
@@ -206,9 +209,10 @@ logging:
 - **Transparent** – Open-Source Code, dokumentierte Algorithmen
 
 **Storage:**
-- Live-Daten: `/addon_configs/ha_nilm_detector/nilm_live.sqlite3` (Auto-Rotation nach 30 Tagen)
-- Patterns: `/addon_configs/ha_nilm_detector/nilm_patterns.sqlite3` (Persistent)
-- Log: `/addon_configs/ha_nilm_detector/nilm.log`
+- Standard-Basispfad: `/data/ha_nilm_detector` (konfigurierbar via `storage.base_path`)
+- Live-Daten: `/data/ha_nilm_detector/nilm_live.sqlite3` (Auto-Rotation nach 30 Tagen)
+- Patterns: `/data/ha_nilm_detector/nilm_patterns.sqlite3` (Persistent)
+- Log: `/data/ha_nilm_detector/nilm.log`
 
 ---
 

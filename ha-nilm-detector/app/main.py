@@ -11,6 +11,7 @@ from app.config import Config, load_options_from_file
 from app.confidence.confidence import ConfidenceEvaluator
 from app.detectors import AdaptiveLoadDetector, FridgeDetector, InverterDeviceDetector
 from app.ha_client import HomeAssistantAPIClient
+from app.learning.features import CycleFeatures
 from app.learning import PatternLearner
 from app.models import PowerReading
 from app.processing.pipeline import ProcessingPipeline
@@ -676,6 +677,7 @@ class NILMDetectionSystem:
                             "duty_cycle": float(cycle_features.duty_cycle) if cycle_features else 0.0,
                             "peak_to_avg_ratio": float(cycle_features.peak_to_avg_ratio) if cycle_features else 1.0,
                             "num_substates": int(cycle_features.num_substates) if cycle_features else 0,
+                            "step_count": int(cycle_features.step_count) if cycle_features else 0,
                             "has_heating_pattern": bool(cycle_features.has_heating_pattern) if cycle_features else False,
                             "has_motor_pattern": bool(cycle_features.has_motor_pattern) if cycle_features else False,
                             "profile_points": list(cycle.profile_points or []),
@@ -803,6 +805,17 @@ class NILMDetectionSystem:
                     avg_power = sum(powers) / len(powers)
                     peak_power = max(powers)
 
+                    segment_readings: List[PowerReading] = [
+                        PowerReading(
+                            timestamp=ts,
+                            power_w=float(power),
+                            phase=phase_name,
+                            metadata={"phase": phase_name, "replay_learning": True},
+                        )
+                        for ts, power in seg
+                    ]
+                    extracted = CycleFeatures.extract(segment_readings)
+
                     energy_ws = 0.0
                     for i in range(1, len(seg)):
                         p_ts, p_val = seg[i - 1]
@@ -822,14 +835,15 @@ class NILMDetectionSystem:
                         "active_phase_count": 1,
                         "phase_mode": "single_phase",
                         "phase": phase_name,
-                        "power_variance": 0.0,
-                        "rise_rate_w_per_s": 0.0,
-                        "fall_rate_w_per_s": 0.0,
-                        "duty_cycle": 0.0,
-                        "peak_to_avg_ratio": (peak_power / max(avg_power, 1.0)),
-                        "num_substates": 0,
-                        "has_heating_pattern": False,
-                        "has_motor_pattern": False,
+                        "power_variance": float(extracted.power_variance) if extracted else 0.0,
+                        "rise_rate_w_per_s": float(extracted.rise_rate_w_per_s) if extracted else 0.0,
+                        "fall_rate_w_per_s": float(extracted.fall_rate_w_per_s) if extracted else 0.0,
+                        "duty_cycle": float(extracted.duty_cycle) if extracted else 0.0,
+                        "peak_to_avg_ratio": float(extracted.peak_to_avg_ratio) if extracted else (peak_power / max(avg_power, 1.0)),
+                        "num_substates": int(extracted.num_substates) if extracted else 0,
+                        "step_count": int(extracted.step_count) if extracted else 0,
+                        "has_heating_pattern": bool(extracted.has_heating_pattern) if extracted else False,
+                        "has_motor_pattern": bool(extracted.has_motor_pattern) if extracted else False,
                         "profile_points": _build_profile(seg),
                     }
                     model_suggestion = self.storage.suggest_cycle_label(cycle_payload, fallback="unknown")
@@ -1101,6 +1115,7 @@ class NILMDetectionSystem:
                                 "duty_cycle": float(cycle.features.duty_cycle) if cycle.features else 0.0,
                                 "peak_to_avg_ratio": float(cycle.features.peak_to_avg_ratio) if cycle.features else 1.0,
                                 "num_substates": int(cycle.features.num_substates) if cycle.features else 0,
+                                "step_count": int(cycle.features.step_count) if cycle.features else 0,
                                 "has_heating_pattern": bool(cycle.features.has_heating_pattern) if cycle.features else False,
                                 "has_motor_pattern": bool(cycle.features.has_motor_pattern) if cycle.features else False,
                                 "profile_points": list(cycle.profile_points or []),

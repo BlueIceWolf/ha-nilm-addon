@@ -802,6 +802,7 @@ class SQLiteStore:
             self._ensure_column(self._patterns_conn, "learned_patterns", "duty_cycle", "REAL DEFAULT 0.0")
             self._ensure_column(self._patterns_conn, "learned_patterns", "peak_to_avg_ratio", "REAL DEFAULT 1.0")
             self._ensure_column(self._patterns_conn, "learned_patterns", "num_substates", "INTEGER DEFAULT 0")
+            self._ensure_column(self._patterns_conn, "learned_patterns", "step_count", "INTEGER DEFAULT 0")
             self._ensure_column(self._patterns_conn, "learned_patterns", "has_heating_pattern", "INTEGER DEFAULT 0")
             self._ensure_column(self._patterns_conn, "learned_patterns", "has_motor_pattern", "INTEGER DEFAULT 0")
             
@@ -1717,6 +1718,27 @@ class SQLiteStore:
             text = text[:-5]
         return text.replace("_", " ")
 
+    @staticmethod
+    def _frequency_per_day(seen_count: int, first_seen_iso: str, last_seen_iso: str) -> float:
+        try:
+            first_dt = datetime.fromisoformat(str(first_seen_iso))
+            last_dt = datetime.fromisoformat(str(last_seen_iso))
+            span_days = max((last_dt - first_dt).total_seconds() / 86400.0, 1.0 / 24.0)
+            return max(float(seen_count), 0.0) / span_days
+        except Exception:
+            return 0.0
+
+    @staticmethod
+    def _refine_label_by_frequency(base_label: str, avg_power_w: float, frequency_per_day: float) -> tuple[str, str]:
+        label = str(base_label or "unknown").strip() or "unknown"
+        if frequency_per_day > 50.0:
+            if avg_power_w <= 350.0:
+                return ("fridge", "frequency_gt_50_low_power")
+            return ("pump", "frequency_gt_50")
+        if frequency_per_day < 5.0 and label == "unknown":
+            return ("manual_device", "frequency_lt_5_unknown")
+        return (label, "frequency_rule_not_applied")
+
     def list_patterns(self, limit: int = 100) -> List[Dict]:
         if not self._patterns_conn:
             return []
@@ -1736,7 +1758,8 @@ class SQLiteStore:
                       COALESCE(typical_interval_s, 0.0), COALESCE(avg_hour_of_day, 12.0),
                       COALESCE(last_intervals_json, '[]'), COALESCE(hour_distribution_json, '{}'),
                       COALESCE(rise_rate_w_per_s, 0.0), COALESCE(fall_rate_w_per_s, 0.0),
-                        COALESCE(num_substates, 0), COALESCE(has_heating_pattern, 0), COALESCE(has_motor_pattern, 0),
+                                                COALESCE(num_substates, 0), COALESCE(step_count, 0),
+                                                COALESCE(has_heating_pattern, 0), COALESCE(has_motor_pattern, 0),
                                                 COALESCE(profile_points_json, '[]'), COALESCE(quality_score_avg, 0.5)
                 FROM learned_patterns
                 ORDER BY seen_count DESC, last_seen DESC
@@ -1805,10 +1828,10 @@ class SQLiteStore:
                 has_multiple_modes = bool(int(row[20] or 0))
                 profile_points = []
                 try:
-                    profile_points = self._normalize_profile_points(json.loads(str(row[30] or "[]")))
+                    profile_points = self._normalize_profile_points(json.loads(str(row[31] or "[]")))
                 except Exception:
                     profile_points = []
-                quality_score_avg = max(0.0, min(1.0, float(row[31] or 0.5)))
+                quality_score_avg = max(0.0, min(1.0, float(row[32] or 0.5)))
                 # Confidence combines quality with pattern maturity (seen_count saturation).
                 maturity = 1.0 - math.exp(-max(seen_count, 0) / 8.0)
                 confidence_score = max(0.0, min(100.0, ((quality_score_avg * 0.7) + (maturity * 0.3)) * 100.0))
@@ -1852,8 +1875,9 @@ class SQLiteStore:
                         "rise_rate_w_per_s": float(row[25] or 0.0),
                         "fall_rate_w_per_s": float(row[26] or 0.0),
                         "num_substates": int(row[27] or 0),
-                        "has_heating_pattern": int(row[28] or 0),
-                        "has_motor_pattern": int(row[29] or 0),
+                        "step_count": int(row[28] or 0),
+                        "has_heating_pattern": int(row[29] or 0),
+                        "has_motor_pattern": int(row[30] or 0),
                         "profile_points": profile_points,
                         "quality_score_avg": quality_score_avg,
                         "confidence_score": round(confidence_score, 1),
@@ -1944,6 +1968,7 @@ class SQLiteStore:
                 duty_cycle = float(best.get("duty_cycle", 0.0)) * (1.0 - alpha) + float(cycle.get("duty_cycle", 0.0)) * alpha
                 peak_to_avg = float(best.get("peak_to_avg_ratio", 1.0)) * (1.0 - alpha) + float(cycle.get("peak_to_avg_ratio", 1.0)) * alpha
                 num_substates = int(round(float(best.get("num_substates", 0)) * (1.0 - alpha) + float(cycle.get("num_substates", 0)) * alpha))
+                step_count = int(round(float(best.get("step_count", 0)) * (1.0 - alpha) + float(cycle.get("step_count", 0)) * alpha))
                 has_heating = 1 if (bool(best.get("has_heating_pattern", 0)) or bool(cycle.get("has_heating_pattern", False))) else 0
                 has_motor = 1 if (bool(best.get("has_motor_pattern", 0)) or bool(cycle.get("has_motor_pattern", False))) else 0
                 profile_points = self._normalize_profile_points(cycle.get("profile_points", []))
@@ -2001,6 +2026,14 @@ class SQLiteStore:
                     last_intervals_json = best.get("last_intervals_json", "[]")
                     hour_distribution_json = best.get("hour_distribution_json", "{}")
 
+                base_label = str(best.get("suggestion_type") or suggestion_type or "unknown")
+                frequency_per_day = self._frequency_per_day(
+                    seen_count=seen_count,
+                    first_seen_iso=str(best.get("first_seen") or cycle.get("start_ts") or now),
+                    last_seen_iso=str(cycle.get("end_ts") or now),
+                )
+                final_label, freq_rule = self._refine_label_by_frequency(base_label, avg_power, frequency_per_day)
+
                 with self._patterns_conn:
                     self._patterns_conn.execute(
                         """
@@ -2009,10 +2042,11 @@ class SQLiteStore:
                             avg_power_w = ?, peak_power_w = ?, duration_s = ?, energy_wh = ?,
                             avg_active_phases = ?, phase_mode = ?, phase = ?,
                             power_variance = ?, rise_rate_w_per_s = ?, fall_rate_w_per_s = ?,
-                            duty_cycle = ?, peak_to_avg_ratio = ?, num_substates = ?,
+                            duty_cycle = ?, peak_to_avg_ratio = ?, num_substates = ?, step_count = ?,
                             has_heating_pattern = ?, has_motor_pattern = ?,
                             profile_points_json = ?,
                             quality_score_avg = ?,
+                            suggestion_type = ?,
                             operating_modes = ?,
                             has_multiple_modes = ?,
                             typical_interval_s = ?, avg_hour_of_day = ?,
@@ -2036,10 +2070,12 @@ class SQLiteStore:
                             duty_cycle,
                             peak_to_avg,
                             num_substates,
+                            step_count,
                             has_heating,
                             has_motor,
                             profile_points_json,
                             quality_score_avg,
+                            final_label,
                             operating_modes_json,
                             has_multiple_modes,
                             typical_interval_s,
@@ -2049,6 +2085,19 @@ class SQLiteStore:
                             int(best["id"]),
                         ),
                     )
+
+                logger.info(
+                    "Pattern classify/update: id=%s label=%s freq_per_day=%.2f rule=%s features[var=%.2f substates=%s steps=%s rise=%.2f fall=%.2f]",
+                    int(best["id"]),
+                    final_label,
+                    frequency_per_day,
+                    freq_rule,
+                    power_variance,
+                    num_substates,
+                    step_count,
+                    rise_rate,
+                    fall_rate,
+                )
 
                 best.update(
                     {
@@ -2068,10 +2117,12 @@ class SQLiteStore:
                         "duty_cycle": duty_cycle,
                         "peak_to_avg_ratio": peak_to_avg,
                         "num_substates": num_substates,
+                        "step_count": step_count,
                         "has_heating_pattern": has_heating,
                         "has_motor_pattern": has_motor,
                         "profile_points": profile_points,
                         "quality_score_avg": quality_score_avg,
+                        "suggestion_type": final_label,
                         "operating_modes": merged_modes,
                         "has_multiple_modes": bool(has_multiple_modes),
                     }
@@ -2090,6 +2141,7 @@ class SQLiteStore:
                 duty_cycle = float(cycle.get("duty_cycle", 0.0))
                 peak_to_avg = float(cycle.get("peak_to_avg_ratio", 1.0))
                 num_substates = int(cycle.get("num_substates", 0))
+                step_count = int(cycle.get("step_count", 0))
                 has_heating = 1 if cycle.get("has_heating_pattern", False) else 0
                 has_motor = 1 if cycle.get("has_motor_pattern", False) else 0
                 profile_points = self._normalize_profile_points(cycle.get("profile_points", []))
@@ -2120,13 +2172,13 @@ class SQLiteStore:
                         suggestion_type, user_label, status,
                         avg_active_phases, phase_mode, phase,
                         power_variance, rise_rate_w_per_s, fall_rate_w_per_s,
-                        duty_cycle, peak_to_avg_ratio, num_substates,
+                        duty_cycle, peak_to_avg_ratio, num_substates, step_count,
                         has_heating_pattern, has_motor_pattern,
                         profile_points_json,
                         quality_score_avg,
                         operating_modes, has_multiple_modes,
                         typical_interval_s, avg_hour_of_day, last_intervals_json, hour_distribution_json
-                    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                     """,
                     (
                         now,
@@ -2150,6 +2202,7 @@ class SQLiteStore:
                         duty_cycle,
                         peak_to_avg,
                         num_substates,
+                        step_count,
                         has_heating,
                         has_motor,
                         profile_points_json,
@@ -2188,6 +2241,7 @@ class SQLiteStore:
                 "duty_cycle": float(cycle.get("duty_cycle", 0.0)),
                 "peak_to_avg_ratio": float(cycle.get("peak_to_avg_ratio", 1.0)),
                 "num_substates": int(cycle.get("num_substates", 0)),
+                "step_count": int(cycle.get("step_count", 0)),
                 "has_heating_pattern": 1 if cycle.get("has_heating_pattern", False) else 0,
                 "has_motor_pattern": 1 if cycle.get("has_motor_pattern", False) else 0,
                 "profile_points": self._normalize_profile_points(cycle.get("profile_points", [])),
@@ -2195,6 +2249,17 @@ class SQLiteStore:
                 "candidate_name": self._normalize_pattern_name(suggestion_type),
                 "is_confirmed": False,
             }
+            logger.info(
+                "Pattern classify/create: id=%s label=%s rule=%s features[var=%.2f substates=%s steps=%s rise=%.2f fall=%.2f]",
+                new_id,
+                suggestion_type,
+                "initial_cycle_label",
+                power_variance,
+                num_substates,
+                step_count,
+                rise_rate,
+                fall_rate,
+            )
             return {"matched": False, "distance": None, "pattern": created}
         except Exception as e:
             logger.error(f"Failed to learn cycle pattern: {e}", exc_info=True)
@@ -2375,6 +2440,7 @@ class SQLiteStore:
             duty_cycle_val = features.duty_cycle if features else 0.0
             peak_to_avg = features.peak_to_avg_ratio if features else 1.0
             num_substates = features.num_substates if features else 0
+            step_count_val = features.step_count if features else 0
             has_heating = 1 if (features and features.has_heating_pattern) else 0
             has_motor = 1 if (features and features.has_motor_pattern) else 0
             total_s = max(duration_s, 1.0)
@@ -2402,17 +2468,17 @@ class SQLiteStore:
                         user_label, seen_count, suggestion_type, status,
                         first_seen, last_seen, created_at, updated_at,
                         power_variance, rise_rate_w_per_s, fall_rate_w_per_s,
-                        duty_cycle, peak_to_avg_ratio, num_substates,
+                        duty_cycle, peak_to_avg_ratio, num_substates, step_count,
                         has_heating_pattern, has_motor_pattern,
                         profile_points_json
-                    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                     """,
                     (
                         avg_power, peak_power, duration_s, energy_wh, phase_mode, dominant_phase,
                         user_label.strip(), 1, "user_defined", "active",
                         start_time, end_time, now, now,
                         power_variance, rise_rate, fall_rate,
-                        duty_cycle_val, peak_to_avg, num_substates,
+                        duty_cycle_val, peak_to_avg, num_substates, step_count_val,
                         has_heating, has_motor,
                         profile_points_json,
                     )
@@ -2421,7 +2487,7 @@ class SQLiteStore:
             logger.info(
                 f"Created pattern {pattern_id} from range: {len(power_readings)} points, "
                 f"avg={avg_power:.1f}W, peak={peak_power:.1f}W, duration={duration_s:.1f}s, "
-                f"label={user_label}, substates={num_substates}, "
+                f"label={user_label}, substates={num_substates}, steps={step_count_val}, "
                 f"heating={bool(has_heating)}, motor={bool(has_motor)}"
             )
             
@@ -2432,7 +2498,8 @@ class SQLiteStore:
                 "avg_power_w": avg_power,
                 "peak_power_w": peak_power,
                 "duration_s": duration_s,
-                "num_substates": num_substates
+                "num_substates": num_substates,
+                "step_count": step_count_val,
             }
         except Exception as e:
             logger.error(f"Failed to create pattern from range: {e}", exc_info=True)

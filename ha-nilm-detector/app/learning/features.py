@@ -34,6 +34,7 @@ class CycleFeatures:
     # Multi-state detection (new!)
     num_substates: int  # Number of distinct power levels (e.g., washing machine phases)
     substates: List[Tuple[float, float]]  # (power_level, duration) pairs
+    step_count: int  # Number of significant power jumps
     has_heating_pattern: bool  # Gradual rise pattern (kettle, oven)
     has_motor_pattern: bool  # Cyclic on/off (fridge, washing machine)
 
@@ -69,31 +70,50 @@ class CycleFeatures:
         variance = sum((v - avg_power) ** 2 for v in values) / n
         std_dev = math.sqrt(variance)
 
-        # Rise rate (robust: average multiple slopes across ramp)
-        # Instead of single point, calculate slopes at multiple windows
-        rise_rates = []
-        ramp_size = max(3, int(n * 0.3))  # Check up to 30% of cycle
-        for window in range(1, min(ramp_size, 12)):
-            if window < len(values):
-                dt = (samples[window].timestamp - samples[0].timestamp).total_seconds()
-                if dt > 0.1:  # Avoid division by tiny values
-                    slope = (values[window] - values[0]) / dt
-                    rise_rates.append(slope)
-        
-        # Use mean of slopes for robustness
-        if rise_rates:
-            rise_rate = sum(rise_rates) / len(rise_rates)
-        else:
-            # Fallback if no valid rates calculated
-            rise_duration = max(1.0, (samples[-1].timestamp - samples[0].timestamp).total_seconds())
-            rise_rate = (values[-1] - values[0]) / rise_duration
+        # Robust edge rates from baseline/peak crossings.
+        baseline = min_power
+        amplitude = max(peak_power - baseline, 1.0)
+        rise_low = baseline + (0.1 * amplitude)
+        rise_high = baseline + (0.8 * amplitude)
+        fall_high = baseline + (0.8 * amplitude)
+        fall_low = baseline + (0.1 * amplitude)
 
-        # Fall rate (last 20% of samples)
-        fall_samples = min(max(int(n * 0.2), 3), 12)
-        fall_start_idx = n - fall_samples
-        fall_duration = (samples[-1].timestamp - samples[fall_start_idx].timestamp).total_seconds()
-        fall_duration = max(fall_duration, 1.0)
-        fall_rate = abs(values[-1] - values[fall_start_idx]) / fall_duration
+        rise_t1 = None
+        rise_t2 = None
+        for idx, v in enumerate(values):
+            if rise_t1 is None and v >= rise_low:
+                rise_t1 = samples[idx].timestamp
+            if rise_t2 is None and v >= rise_high:
+                rise_t2 = samples[idx].timestamp
+            if rise_t1 is not None and rise_t2 is not None:
+                break
+
+        if rise_t1 is not None and rise_t2 is not None:
+            rise_dt = max((rise_t2 - rise_t1).total_seconds(), 0.1)
+            rise_rate = (rise_high - rise_low) / rise_dt
+        else:
+            rise_dt = max((samples[-1].timestamp - samples[0].timestamp).total_seconds(), 1.0)
+            rise_rate = max(0.0, (values[-1] - values[0]) / rise_dt)
+
+        fall_t1 = None
+        fall_t2 = None
+        for rev_idx in range(n - 1, -1, -1):
+            v = values[rev_idx]
+            if fall_t1 is None and v >= fall_high:
+                fall_t1 = samples[rev_idx].timestamp
+            if fall_t2 is None and v <= fall_low:
+                fall_t2 = samples[rev_idx].timestamp
+            if fall_t1 is not None and fall_t2 is not None:
+                break
+
+        if fall_t1 is not None and fall_t2 is not None:
+            fall_dt = max((fall_t2 - fall_t1).total_seconds(), 0.1)
+            fall_rate = abs(fall_high - fall_low) / max(abs(fall_dt), 0.1)
+        else:
+            tail_count = min(max(int(n * 0.2), 3), 12)
+            tail_start = n - tail_count
+            tail_dt = max((samples[-1].timestamp - samples[tail_start].timestamp).total_seconds(), 1.0)
+            fall_rate = abs(values[-1] - values[tail_start]) / tail_dt
 
         # Duty cycle (time above 50% of peak)
         threshold = peak_power * 0.5
@@ -103,8 +123,8 @@ class CycleFeatures:
         # Peak-to-average ratio
         peak_to_avg = peak_power / max(avg_power, 1.0)
 
-        # Multi-state detection: find distinct power levels (k-means-like clustering)
-        substates = cls._detect_substates(values, duration_s)
+        # Multi-state detection: plateau segmentation + significant step counting.
+        substates, step_count = cls._detect_substates(values, samples, duration_s)
 
         # Pattern detection
         has_heating = cls._detect_heating_pattern(values)
@@ -123,57 +143,94 @@ class CycleFeatures:
             power_std_dev=std_dev,
             num_substates=len(substates),
             substates=substates,
+            step_count=step_count,
             has_heating_pattern=has_heating,
             has_motor_pattern=has_motor,
         )
 
     @staticmethod
-    def _detect_substates(values: List[float], duration_s: float) -> List[Tuple[float, float]]:
+    def _detect_substates(
+        values: List[float],
+        samples: List[PowerReading],
+        duration_s: float,
+    ) -> Tuple[List[Tuple[float, float]], int]:
         """Detect distinct power levels (states) in the cycle.
 
-        Uses simple binning approach - lightweight alternative to k-means.
+        Uses plateau segmentation with adaptive jump threshold.
         """
         if len(values) < 5:
-            return []
+            return ([], 0)
 
-        # Create power histogram with adaptive bins
         min_val = min(values)
         max_val = max(values)
-        range_val = max_val - min_val
+        amplitude = max(max_val - min_val, 0.0)
+        if amplitude < 10.0:
+            return ([(sum(values) / len(values), duration_s)], 0)
 
-        if range_val < 10:  # Too stable, single state
-            return [(sum(values) / len(values), duration_s)]
+        jump_threshold = max(25.0, amplitude * 0.12)
+        min_plateau_samples = max(2, int(len(values) * 0.03))
 
-        # Use 10 bins for simplicity
-        num_bins = min(10, len(values) // 3)
-        bin_width = range_val / num_bins
-        bins = [0] * num_bins
+        plateaus: List[Tuple[float, float]] = []
+        step_count = 0
+        seg_start = 0
 
-        # Count samples in each bin
-        for v in values:
-            bin_idx = min(int((v - min_val) / bin_width), num_bins - 1)
-            bins[bin_idx] += 1
+        for idx in range(1, len(values)):
+            if abs(values[idx] - values[idx - 1]) > jump_threshold:
+                seg_len = idx - seg_start
+                if seg_len >= min_plateau_samples:
+                    seg_values = values[seg_start:idx]
+                    seg_level = sum(seg_values) / max(len(seg_values), 1)
+                    seg_duration = max((samples[idx - 1].timestamp - samples[seg_start].timestamp).total_seconds(), 0.0)
+                    plateaus.append((seg_level, seg_duration))
+                step_count += 1
+                seg_start = idx
 
-        # Find significant peaks in histogram (local maxima with >10% of samples)
-        threshold = len(values) * 0.1
-        states = []
-        for i in range(num_bins):
-            if bins[i] < threshold:
+        # trailing plateau
+        if seg_start < len(values) - 1:
+            seg_values = values[seg_start:]
+            seg_level = sum(seg_values) / max(len(seg_values), 1)
+            seg_duration = max((samples[-1].timestamp - samples[seg_start].timestamp).total_seconds(), 0.0)
+            plateaus.append((seg_level, seg_duration))
+
+        # Merge neighboring plateaus with near-identical levels.
+        merged: List[Tuple[float, float]] = []
+        level_merge_threshold = max(15.0, amplitude * 0.06)
+        for level, dur in plateaus:
+            if dur <= 0.0:
                 continue
-            # Check if local maximum
-            is_peak = True
-            for j in range(max(0, i - 1), min(num_bins, i + 2)):
-                if j != i and bins[j] > bins[i]:
-                    is_peak = False
-                    break
-            if is_peak:
-                # Power level is center of bin
-                power_level = min_val + (i + 0.5) * bin_width
-                # Duration is proportional to bin count
-                state_duration = duration_s * (bins[i] / len(values))
-                states.append((power_level, state_duration))
+            if not merged:
+                merged.append((level, dur))
+                continue
+            prev_level, prev_dur = merged[-1]
+            if abs(level - prev_level) <= level_merge_threshold:
+                total_dur = prev_dur + dur
+                blended_level = ((prev_level * prev_dur) + (level * dur)) / max(total_dur, 1e-6)
+                merged[-1] = (blended_level, total_dur)
+            else:
+                merged.append((level, dur))
 
-        return sorted(states, key=lambda x: x[1], reverse=True)  # Sort by duration
+        # Keep dominant substates by time, ignore very short noise plateaus.
+        min_state_duration = max(2.0, duration_s * 0.03)
+        significant = [s for s in merged if s[1] >= min_state_duration]
+        if not significant:
+            significant = merged[:]
+
+        # Distinct substates by power level (800 -> 1200 -> 800 should become 2 levels).
+        distinct: List[Tuple[float, float]] = []
+        for level, dur in significant:
+            matched = False
+            for idx, (d_level, d_dur) in enumerate(distinct):
+                if abs(level - d_level) <= level_merge_threshold:
+                    total_dur = d_dur + dur
+                    new_level = ((d_level * d_dur) + (level * dur)) / max(total_dur, 1e-6)
+                    distinct[idx] = (new_level, total_dur)
+                    matched = True
+                    break
+            if not matched:
+                distinct.append((level, dur))
+
+        distinct.sort(key=lambda x: x[1], reverse=True)
+        return (distinct, step_count)
 
     @staticmethod
     def _detect_heating_pattern(values: List[float]) -> bool:
