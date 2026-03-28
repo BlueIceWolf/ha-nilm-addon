@@ -261,6 +261,7 @@ class SQLiteStore:
             self._ensure_column(self._patterns_conn, "learned_patterns", "last_intervals_json", "TEXT DEFAULT '[]'")  # Last N intervals
             self._ensure_column(self._patterns_conn, "learned_patterns", "hour_distribution_json", "TEXT DEFAULT '{}'")  # Hour frequency map
             self._ensure_column(self._patterns_conn, "learned_patterns", "profile_points_json", "TEXT DEFAULT '[]'")
+            self._ensure_column(self._patterns_conn, "learned_patterns", "quality_score_avg", "REAL DEFAULT 0.5")
 
     def _ensure_column(
         self,
@@ -698,6 +699,12 @@ class SQLiteStore:
         cycle_phase_mode = str(cycle.get("phase_mode") or "unknown")
         cycle_phase = str(cycle.get("phase") or "L1")
         best_distance_overall: float | None = None
+        cycle_hour: float | None = None
+        try:
+            cycle_end_dt = datetime.fromisoformat(str(cycle.get("end_ts") or ""))
+            cycle_hour = float(cycle_end_dt.hour) + (float(cycle_end_dt.minute) / 60.0)
+        except (TypeError, ValueError):
+            cycle_hour = None
 
         for item in patterns:
             if item.get("status") != "active":
@@ -717,7 +724,20 @@ class SQLiteStore:
                 best_distance_overall = distance
             similarity = math.exp(-4.0 * max(distance, 0.0))
             seen_weight = 1.0 + math.log1p(max(int(item.get("seen_count", 1)), 1))
-            vote = similarity * seen_weight
+
+            quality_weight = 0.6 + (max(0.0, min(1.0, float(item.get("quality_score_avg", 0.5)))) * 0.8)
+
+            temporal_weight = 1.0
+            if cycle_hour is not None:
+                try:
+                    expected_hour = float(item.get("avg_hour_of_day", 12.0))
+                    hour_diff = abs(cycle_hour - expected_hour)
+                    hour_diff = min(hour_diff, 24.0 - hour_diff)  # wrap-around distance on 24h clock
+                    temporal_weight = max(0.75, 1.0 - ((hour_diff / 12.0) * 0.25))
+                except (TypeError, ValueError):
+                    temporal_weight = 1.0
+
+            vote = similarity * seen_weight * quality_weight * temporal_weight
             if vote <= 0.0:
                 continue
 
@@ -814,6 +834,12 @@ class SQLiteStore:
                         float(b.get("avg_active_phases", 1.0)),
                         b_seen,
                     )
+                    quality_avg = _weighted_value(
+                        float(a.get("quality_score_avg", 0.5)),
+                        a_seen,
+                        float(b.get("quality_score_avg", 0.5)),
+                        b_seen,
+                    )
 
                     # Prefer confirmed label, then non-unknown suggestion.
                     chosen_label = str(a.get("user_label") or b.get("user_label") or "").strip() or None
@@ -838,6 +864,7 @@ class SQLiteStore:
                             duration_s = ?,
                             energy_wh = ?,
                             avg_active_phases = ?,
+                            quality_score_avg = ?,
                             suggestion_type = ?,
                             user_label = ?
                         WHERE id = ?
@@ -852,6 +879,7 @@ class SQLiteStore:
                             duration,
                             energy,
                             avg_phases,
+                            quality_avg,
                             chosen_suggestion,
                             chosen_label,
                             a_id,
@@ -896,7 +924,7 @@ class SQLiteStore:
                       COALESCE(last_intervals_json, '[]'), COALESCE(hour_distribution_json, '{}'),
                       COALESCE(rise_rate_w_per_s, 0.0), COALESCE(fall_rate_w_per_s, 0.0),
                         COALESCE(num_substates, 0), COALESCE(has_heating_pattern, 0), COALESCE(has_motor_pattern, 0),
-                        COALESCE(profile_points_json, '[]')
+                                                COALESCE(profile_points_json, '[]'), COALESCE(quality_score_avg, 0.5)
                 FROM learned_patterns
                 ORDER BY seen_count DESC, last_seen DESC
                 LIMIT ?
@@ -967,6 +995,7 @@ class SQLiteStore:
                     profile_points = self._normalize_profile_points(json.loads(str(row[30] or "[]")))
                 except Exception:
                     profile_points = []
+                quality_score_avg = max(0.0, min(1.0, float(row[31] or 0.5)))
                 raw_phase_mode = str(row[14] or "unknown")
                 phase_label = str(row[15] or "L1")
                 avg_active_phases = float(row[13] or 1.0)
@@ -1010,6 +1039,7 @@ class SQLiteStore:
                         "has_heating_pattern": int(row[28] or 0),
                         "has_motor_pattern": int(row[29] or 0),
                         "profile_points": profile_points,
+                        "quality_score_avg": quality_score_avg,
                         "candidate_name": self._normalize_pattern_name(row[11] or row[10]),
                         "is_confirmed": bool(str(row[11] or "").strip()),
                     }
@@ -1082,6 +1112,7 @@ class SQLiteStore:
                 if not profile_points:
                     profile_points = self._normalize_profile_points(best.get("profile_points", []))
                 profile_points_json = json.dumps(profile_points)
+                quality_score_avg = float(best.get("quality_score_avg", 0.5)) * (1.0 - alpha) + quality_score * alpha
                 
                 # Temporal pattern tracking - calculate interval since last occurrence
                 last_seen_str = best.get("last_seen", cycle["end_ts"])
@@ -1136,6 +1167,7 @@ class SQLiteStore:
                             duty_cycle = ?, peak_to_avg_ratio = ?, num_substates = ?,
                             has_heating_pattern = ?, has_motor_pattern = ?,
                             profile_points_json = ?,
+                            quality_score_avg = ?,
                             typical_interval_s = ?, avg_hour_of_day = ?,
                             last_intervals_json = ?, hour_distribution_json = ?
                         WHERE id = ?
@@ -1160,6 +1192,7 @@ class SQLiteStore:
                             has_heating,
                             has_motor,
                             profile_points_json,
+                            quality_score_avg,
                             typical_interval_s,
                             avg_hour_of_day,
                             last_intervals_json,
@@ -1189,6 +1222,7 @@ class SQLiteStore:
                         "has_heating_pattern": has_heating,
                         "has_motor_pattern": has_motor,
                         "profile_points": profile_points,
+                        "quality_score_avg": quality_score_avg,
                     }
                 )
                 return {
@@ -1235,9 +1269,10 @@ class SQLiteStore:
                         duty_cycle, peak_to_avg_ratio, num_substates,
                         has_heating_pattern, has_motor_pattern,
                         profile_points_json,
+                        quality_score_avg,
                         operating_modes, has_multiple_modes,
                         typical_interval_s, avg_hour_of_day, last_intervals_json, hour_distribution_json
-                    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                     """,
                     (
                         now,
@@ -1264,6 +1299,7 @@ class SQLiteStore:
                         has_heating,
                         has_motor,
                         profile_points_json,
+                        quality_score,
                         operating_modes_json,
                         has_multiple_modes,
                         0.0,  # typical_interval_s - no interval yet for new pattern
@@ -1301,6 +1337,7 @@ class SQLiteStore:
                 "has_heating_pattern": 1 if cycle.get("has_heating_pattern", False) else 0,
                 "has_motor_pattern": 1 if cycle.get("has_motor_pattern", False) else 0,
                 "profile_points": self._normalize_profile_points(cycle.get("profile_points", [])),
+                "quality_score_avg": quality_score,
                 "candidate_name": self._normalize_pattern_name(suggestion_type),
                 "is_confirmed": False,
             }
