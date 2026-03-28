@@ -2,6 +2,15 @@
 
 > ⚠️ **Hinweis**: Dieses Projekt ist experimentell (BETA) - Breaking Changes und Bugs können auftreten.
 
+## 0.6.15 (BETA)
+
+**Lernpipeline fuer echte Neuauswertung von Exportdaten**
+- Neues Tool `nilm_pipeline.py` mit End-to-End Pipeline: Rohdaten -> Event Detection -> Clustering -> Pattern Update -> Bewertung
+- Erkennt neue Events ueber Baseline/Threshold statt nur bestehende Patterns erneut zu exportieren
+- Gruppiert Events nach Aehnlichkeit (Leistung, Dauer, Profilform) und merged passende Patterns
+- Aktualisiert Pattern-Statistiken laufend (`seen_count`, Leistung, Dauer, Varianz, Profilkurve)
+- Exportiert ML-freundliche Artefakte: `events_detected.json`, `patterns_updated.json`, `features.csv`, `dataset.jsonl`
+
 ## 0.6.14 (BETA)
 
 **Test-Release für schnellen Praxistest**

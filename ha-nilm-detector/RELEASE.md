@@ -4,6 +4,19 @@
 
 ---
 
+# Release 0.6.15 (BETA)
+
+## Store Kurztext
+- **Neue Lernpipeline**: Exportdaten werden jetzt aktiv neu verarbeitet (Event Detection + Clustering + Pattern-Update) statt nur erneut ausgegeben.
+
+## Highlights
+- Neues CLI-Tool `nilm_pipeline.py` fuer echte Lernzyklen aus vorhandenen Daten
+- Event-Erkennung mit Baseline + Schwellwert, Mindestdauer und Gap-Merge
+- Event-Features und Pattern-Updates mit Plausibilitaetsbewertung und Erklaerungstexten
+- Outputs fuer Debug und ML-Vorbereitung: `patterns_updated.json`, `events_detected.json`, `features.csv`, `dataset.jsonl`
+
+---
+
 # Release 0.6.14 (BETA)
 
 ## Store Kurztext
