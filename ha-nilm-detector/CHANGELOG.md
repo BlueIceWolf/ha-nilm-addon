@@ -2,6 +2,20 @@
 
 > ⚠️ **Hinweis**: Dieses Projekt ist experimentell (BETA) - Breaking Changes und Bugs können auftreten.
 
+## 0.6.5 (BETA)
+
+**Musterbenennung und Erkennung verbessert**
+- Muster-Vorschlaege bewerten jetzt zusaetzlich den inkrementellen Lastanstieg ("wie viel kommt zur Basis dazu"), nicht nur Durchschnitt/Peak.
+- Distanzfunktion nutzt Peak-Zeitpunkt im Zyklus, um kurze Spike-Lasten besser von spaeten/plateauartigen Lasten zu unterscheiden.
+- Vorschlags-Voting wurde um Laufzeit-Konsistenz und Spike-Konsistenz (`peak_to_avg_ratio`) erweitert, was Label-Collapse reduziert.
+
+**Web-UI Sprache DE/EN**
+- Neue Add-on Option `language` (`de`/`en`) fuer die Dashboard-Sprache.
+- Dashboard besitzt jetzt einen Sprachumschalter (Deutsch/English) und merkt sich die Auswahl im Browser.
+
+**Roadmap-Fortschritt sichtbar gemacht**
+- README und Roadmap auf aktuellen Stand gebracht (Version, Erkennungs-Fokus, naechste Schritte).
+
 ## 0.6.4 (BETA)
 
 **Persistenz nach Neustart repariert**

@@ -362,6 +362,35 @@ class SQLiteStore:
 
         return max(0.0, min(1.0, score))
 
+    @staticmethod
+    def _incremental_rise_w(signature: Dict) -> float:
+        """Estimate added load above baseline (incremental rise) from profile/metrics."""
+        points = SQLiteStore._normalize_profile_points(signature.get("profile_points", []))
+        if len(points) >= 3:
+            # Use first 20% of samples as baseline approximation.
+            head_count = max(1, int(len(points) * 0.2))
+            baseline = sum(float(p.get("power_w", 0.0)) for p in points[:head_count]) / float(head_count)
+            peak = max(float(p.get("power_w", 0.0)) for p in points)
+            return max(0.0, peak - baseline)
+
+        peak = float(signature.get("peak_power_w", 0.0))
+        avg = float(signature.get("avg_power_w", 0.0))
+        # Fallback when no profile exists: infer a conservative added-load proxy.
+        return max(0.0, peak - max(0.0, avg * 0.75))
+
+    @staticmethod
+    def _peak_timing_ratio(signature: Dict) -> float | None:
+        """Return relative peak position in cycle (0=start, 1=end) if profile exists."""
+        points = SQLiteStore._normalize_profile_points(signature.get("profile_points", []))
+        if len(points) < 3:
+            return None
+
+        best = max(points, key=lambda item: float(item.get("power_w", 0.0)))
+        try:
+            return min(1.0, max(0.0, float(best.get("t_norm", 0.0))))
+        except (TypeError, ValueError):
+            return None
+
     def store_reading(self, reading: PowerReading) -> None:
         if not self._conn:
             return
@@ -609,22 +638,29 @@ class SQLiteStore:
             base = max(abs(a), abs(b), 1.0)
             return abs(a - b) / base
 
-        # Core power characteristics (60% weight)
+        # Core power characteristics (65% weight)
         avg_dist = rel(float(existing["avg_power_w"]), float(candidate["avg_power_w"]))
         peak_dist = rel(float(existing["peak_power_w"]), float(candidate["peak_power_w"]))
         duration_dist = rel(float(existing["duration_s"]), float(candidate["duration_s"]))
         energy_dist = rel(float(existing["energy_wh"]), float(candidate["energy_wh"]))
         phase_dist = rel(float(existing.get("avg_active_phases", 1.0)), float(candidate.get("active_phase_count", 1.0)))
+
+        # Added-load evaluation: how much power came on top of baseline.
+        incremental_dist = rel(
+            SQLiteStore._incremental_rise_w(existing),
+            SQLiteStore._incremental_rise_w(candidate),
+        )
         
         core_distance = (
-            (avg_dist * 0.25)
-            + (peak_dist * 0.20)
-            + (duration_dist * 0.10)
+            (avg_dist * 0.20)
+            + (peak_dist * 0.15)
+            + (duration_dist * 0.14)
+            + (incremental_dist * 0.12)
             + (energy_dist * 0.03)
             + (phase_dist * 0.02)
         )
         
-        # Advanced shape features (40% weight) - this is where we gain accuracy!
+        # Advanced shape features (35% weight) - this is where we gain accuracy!
         shape_distance = 0.0
         
         # Rise/fall rates (how appliance turns on/off)
@@ -675,8 +711,16 @@ class SQLiteStore:
             shape_distance += 0.05
         else:
             shape_distance += profile_dist * 0.12
+
+        # Peak timing in cycle: helps distinguish short spikes vs late-heating peaks.
+        existing_peak_t = SQLiteStore._peak_timing_ratio(existing)
+        candidate_peak_t = SQLiteStore._peak_timing_ratio(candidate)
+        if existing_peak_t is not None and candidate_peak_t is not None:
+            shape_distance += abs(existing_peak_t - candidate_peak_t) * 0.05
+        else:
+            shape_distance += 0.02
         
-        # Weights are already baked into core_distance (0.6) and shape_distance (0.4)
+        # Weights are already baked into core_distance (0.65) and shape_distance (0.35)
         # So we combine them directly to get normalized 0-1 distance
         total_distance = core_distance + shape_distance
         return min(total_distance, 1.0)
@@ -700,6 +744,11 @@ class SQLiteStore:
         cycle_phase = str(cycle.get("phase") or "L1")
         best_distance_overall: float | None = None
         cycle_hour: float | None = None
+
+        def rel(a: float, b: float) -> float:
+            base = max(abs(a), abs(b), 1.0)
+            return abs(a - b) / base
+
         try:
             cycle_end_dt = datetime.fromisoformat(str(cycle.get("end_ts") or ""))
             cycle_hour = float(cycle_end_dt.hour) + (float(cycle_end_dt.minute) / 60.0)
@@ -727,6 +776,24 @@ class SQLiteStore:
 
             quality_weight = 0.6 + (max(0.0, min(1.0, float(item.get("quality_score_avg", 0.5)))) * 0.8)
 
+            # Runtime consistency: prefer labels with similar typical cycle length.
+            runtime_weight = 1.0
+            try:
+                runtime_dist = rel(float(item.get("duration_s", 0.0)), float(cycle.get("duration_s", 0.0)))
+                runtime_weight = max(0.75, 1.0 - min(runtime_dist, 1.0) * 0.25)
+            except (TypeError, ValueError):
+                runtime_weight = 1.0
+
+            # Spike consistency: compare peak-vs-average behavior.
+            spike_weight = 1.0
+            try:
+                item_ratio = float(item.get("peak_to_avg_ratio", 1.0))
+                cycle_ratio = float(cycle.get("peak_to_avg_ratio", 1.0))
+                spike_dist = rel(item_ratio, cycle_ratio)
+                spike_weight = max(0.75, 1.0 - min(spike_dist, 1.0) * 0.25)
+            except (TypeError, ValueError):
+                spike_weight = 1.0
+
             temporal_weight = 1.0
             if cycle_hour is not None:
                 try:
@@ -737,7 +804,7 @@ class SQLiteStore:
                 except (TypeError, ValueError):
                     temporal_weight = 1.0
 
-            vote = similarity * seen_weight * quality_weight * temporal_weight
+            vote = similarity * seen_weight * quality_weight * temporal_weight * runtime_weight * spike_weight
             if vote <= 0.0:
                 continue
 

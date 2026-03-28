@@ -1,4 +1,8 @@
 configuration:
+  language:
+    name: Dashboard language
+    description: >-
+      Select the dashboard language. Use "de" for German or "en" for English.
   log_level:
     name: Log level
     description: >-

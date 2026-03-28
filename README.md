@@ -11,7 +11,7 @@
 
 <p align="center">
   <img src="https://img.shields.io/badge/Status-BETA-orange" alt="BETA" />
-   <img src="https://img.shields.io/badge/Version-0.6.4-blue" alt="Version" />
+   <img src="https://img.shields.io/badge/Version-0.6.5-blue" alt="Version" />
 </p>
 
 > ⚠️ **EXPERIMENTELLES PROJEKT (BETA)**: Dieses Add-on befindet sich in aktiver Entwicklung. Viele Features funktionieren bereits gut, aber es ist **nicht production-ready**. Erwarte Bugs, unvollständige Features und Breaking Changes zwischen Versionen. Nutze es zum Experimentieren und Testen, aber nicht für kritische Automatisierungen.
@@ -27,9 +27,9 @@
 
 ---
 
-**Aktuell:** `v0.6.4` — Persistenz-Fix: Muster bleiben nach Neustarts erhalten, inklusive Legacy-Migration auf `/data`
+**Aktuell:** `v0.6.5` — Bessere Musterbenennung durch Delta-/Spitzen-/Laufzeit-Bewertung + Dashboard-Sprache DE/EN
 
-> ℹ️ **v0.6.4 Hinweis**: Speicherpfade wurden auf `/data` vereinheitlicht. Bestehende Legacy-Dateien aus `/addon_configs/ha_nilm_detector` werden beim Start automatisch migriert.
+> ℹ️ **v0.6.5 Hinweis**: Pattern-Vorschlaege nutzen jetzt zusaetzlich inkrementellen Lastanstieg, Peak-Zeitpunkt und Laufzeit-/Spike-Konsistenz. Das reduziert unplausible Benennungen bei aehnlichen Lasten.
 
 <a id="features"></a>
 ## ✨ Features
@@ -47,9 +47,11 @@
 - **📈 Power Curve Visualization** – Klick auf ein Muster zeigt die rekonstruierte Leistungskurve
 - **⏰ Temporale Muster** – Lernt typische Betriebszeiten und Intervalle zwischen Zyklen
 - **🔀 Multi-Modal Detection** – Unterscheidet verschiedene Betriebsmodi desselben Geräts (experimentell)
+- **🏷️ Plausiblere Musterbenennung (v0.6.5+)** – Bewertet Delta zur Basis, typische Spikes und Laufzeit-Konsistenz zusätzlich
 
 ### Web-UI
 - **🌙 Dark Mode** – Durchgehend hell/dunkel Modus mit modernem Home-Assistant-Design
+- **🌍 Sprache DE/EN (v0.6.5+)** – Add-on-Option `language` und Umschalter im Dashboard
 - **🔍 Schnelle Suche & Filter** – Muster nach Label, Typ, ID oder Häufigkeit durchsuchen
 - **📊 Flexible Sortierung** – Nach Häufigkeit, Leistung, Dauer, Stabilität oder Zeitintervall
 - **✏️ Bereich-Markierung** – Zeitraum ziehen im Chart und direkt als Muster speichern

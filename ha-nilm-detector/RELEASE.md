@@ -4,6 +4,21 @@
 
 ---
 
+# Release 0.6.5 (BETA)
+
+## Store Kurztext
+- **Bessere Muster-Namen**: Vorschlaege bewerten jetzt zusaetzlich Lastanstieg (Delta zur Basis), typische Spitzenform und Laufzeiten.
+- **Weniger Fehlzuordnung**: Runtime-/Spike-Konsistenz im Voting macht Labels plausibler bei aehnlichen Leistungsniveaus.
+- **Sprache einstellbar**: Dashboard unterstuetzt jetzt Deutsch und Englisch (`language: de|en`).
+
+## Highlights
+- Neue Distanz-Merkmale: `incremental_rise_w` und Peak-Zeitpunkt im Zyklus
+- Erweiterte Label-Votes mit Laufzeit- und `peak_to_avg_ratio`-Konsistenz
+- Add-on Option `language` + UI-Sprachumschalter (persistiert im Browser)
+- Dokumentation und Roadmap auf Version 0.6.5 aktualisiert
+
+---
+
 # Release 0.6.4 (BETA)
 
 ## Store Kurztext

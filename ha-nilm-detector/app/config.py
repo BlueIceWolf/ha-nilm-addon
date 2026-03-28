@@ -28,6 +28,7 @@ class Config:
         self.web_enabled = True
         self.web_port = 8099
         self.web_history_minutes = 180
+        self.language = "de"
         self.learning_enabled = True
         self.learning_on_threshold_w = 50.0
         self.learning_off_threshold_w = 25.0
@@ -96,6 +97,8 @@ class Config:
         self.web_enabled = bool(web_config.get('enabled', self.web_enabled))
         self.web_port = int(web_config.get('port', self.web_port))
         self.web_history_minutes = int(web_config.get('history_minutes', self.web_history_minutes))
+        configured_language = str(config_dict.get('language', self.language)).strip().lower()
+        self.language = configured_language if configured_language in ('de', 'en') else 'de'
 
         learning_config = config_dict.get('learning', {})
         self.learning_enabled = bool(learning_config.get('enabled', self.learning_enabled))

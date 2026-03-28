@@ -12,9 +12,10 @@ from app.utils.logging import get_logger
 logger = get_logger(__name__)
 
 
-def _html_page() -> str:
-    return """<!doctype html>
-<html lang=\"en\">
+def _html_page(default_language: str = "de") -> str:
+  lang = "en" if str(default_language).strip().lower() == "en" else "de"
+  return """<!doctype html>
+<html lang=\"__DEFAULT_LANG__\"> 
 <head>
   <meta charset=\"utf-8\" />
   <meta name=\"viewport\" content=\"width=device-width, initial-scale=1\" />
@@ -282,7 +283,7 @@ def _html_page() -> str:
 <body>
   <div class=\"wrap\">
     <div class=\"head\">
-      <h1>HA NILM Live-Statistik</h1>
+      <h1 id=\"pageTitle\">HA NILM Live-Statistik</h1>
       <div id=\"ts\" class=\"muted\">Lädt...</div>
     </div>
     <div style=\"margin-bottom: 12px; display: flex; gap: 8px; flex-wrap: wrap; align-items: center;\">
@@ -291,6 +292,11 @@ def _html_page() -> str:
       <button id=\"clearPatternsBtn\" title=\"Nur gelernte Muster löschen\">🗑️ Muster löschen</button>
       <button id=\"importHistoryBtn\" title=\"Verlauf aus Home Assistant importieren\">HA Verlauf importieren</button>
       <button id=\"darkModeToggle\" title=\"Hell/Dunkel umschalten\">🌙 Nachtmodus</button>
+      <label for=\"languageSelect\" id=\"languageLabel\" class=\"muted\" style=\"margin-left: 8px;\">Sprache:</label>
+      <select id=\"languageSelect\" style=\"padding: 5px 8px;\">
+        <option value=\"de\">Deutsch</option>
+        <option value=\"en\">English</option>
+      </select>
     </div>
 
     <div id=\"activeTask\" class=\"task-progress\" aria-live=\"polite\">
@@ -319,15 +325,15 @@ def _html_page() -> str:
 
     <div class=\"chart-wrap\">
       <div class=\"chart-controls\">
-        <span class=\"muted\" style=\"font-size: 0.85rem;\">Anzeigen:</span>
+        <span id=\"showLabel\" class=\"muted\" style=\"font-size: 0.85rem;\">Anzeigen:</span>
         <div class=\"btn-group\">
-          <button class=\"phase-toggle active\" data-phase=\"total\">Gesamt</button>
+          <button id=\"phaseTotalBtn\" class=\"phase-toggle active\" data-phase=\"total\">Gesamt</button>
           <button class=\"phase-toggle\" data-phase=\"L1\" style=\"display:none;\">L1</button>
           <button class=\"phase-toggle\" data-phase=\"L2\" style=\"display:none;\">L2</button>
           <button class=\"phase-toggle\" data-phase=\"L3\" style=\"display:none;\">L3</button>
         </div>
         <span class=\"muted\" style=\"font-size: 0.85rem; margin-left: 12px;\">|</span>
-        <label for=\"windowSelect\" class=\"muted\" style=\"font-size: 0.85rem;\">Fenster:</label>
+        <label id=\"windowLabel\" for=\"windowSelect\" class=\"muted\" style=\"font-size: 0.85rem;\">Fenster:</label>
         <select id=\"windowSelect\" style=\"padding: 4px 8px; border: 1px solid var(--line); border-radius: 8px; background: var(--card); color: var(--ink);\">
           <option value=\"120\">1h</option>
           <option value=\"360\" selected>3h</option>
@@ -347,29 +353,29 @@ def _html_page() -> str:
       </div>
     </div>
 
-    <h2 style=\"margin:14px 0 8px; font-size:1.1rem;\">Erkannte Geräte</h2>
+    <h2 id=\"devicesHeading\" style=\"margin:14px 0 8px; font-size:1.1rem;\">Erkannte Geräte</h2>
     <table>
       <thead>
-        <tr><th>Gerät</th><th>Status</th><th>Leistung (W)</th><th>Konfidenz</th><th>Zyklen</th><th>Laufzeit (s)</th></tr>
+        <tr><th id=\"thDevice\">Gerät</th><th id=\"thStatus\">Status</th><th id=\"thPower\">Leistung (W)</th><th id=\"thConfidence\">Konfidenz</th><th id=\"thCycles\">Zyklen</th><th id=\"thRuntime\">Laufzeit (s)</th></tr>
       </thead>
       <tbody id=\"deviceRows\"></tbody>
     </table>
 
-    <h2 style=\"margin:14px 0 8px; font-size:1.1rem;\">Gelernte Muster</h2>
+    <h2 id=\"patternsHeading\" style=\"margin:14px 0 8px; font-size:1.1rem;\">Gelernte Muster</h2>
     <div style=\"margin-bottom: 8px; display: flex; gap: 8px; align-items: center; flex-wrap: wrap;\">
       <input type=\"text\" id=\"patternSearch\" placeholder=\"Muster suchen...\" style=\"padding: 6px 10px; border: 1px solid var(--line); border-radius: 6px; background: var(--card); color: var(--ink); flex: 1; min-width: 200px;\" />
       <select id=\"patternSort\" style=\"padding: 6px 10px; border: 1px solid var(--line); border-radius: 6px; background: var(--card); color: var(--ink);\">
-        <option value=\"seen_count\">Sortieren: Häufigkeit ↓</option>
-        <option value=\"avg_power_w\">Sortieren: Leistung ↓</option>
-        <option value=\"duration_s\">Sortieren: Dauer ↓</option>
-        <option value=\"stability_score\">Sortieren: Stabilität ↓</option>
-        <option value=\"typical_interval_s\">Sortieren: Intervall ↓</option>
-        <option value=\"id\">Sortieren: ID ↑</option>
+        <option id=\"sortSeenCount\" value=\"seen_count\">Sortieren: Häufigkeit ↓</option>
+        <option id=\"sortPower\" value=\"avg_power_w\">Sortieren: Leistung ↓</option>
+        <option id=\"sortDuration\" value=\"duration_s\">Sortieren: Dauer ↓</option>
+        <option id=\"sortStability\" value=\"stability_score\">Sortieren: Stabilität ↓</option>
+        <option id=\"sortInterval\" value=\"typical_interval_s\">Sortieren: Intervall ↓</option>
+        <option id=\"sortId\" value=\"id\">Sortieren: ID ↑</option>
       </select>
     </div>
     <table>
       <thead>
-        <tr><th>ID</th><th>Typ</th><th>Label</th><th style="font-size:0.85rem;">Häufig.</th><th style="font-size:0.85rem;">Intervall</th><th style="font-size:0.85rem;">Uhrzeit</th><th style="font-size:0.85rem;">Stabilit.</th><th>Phasen</th><th>Ø (W)</th><th>Spitze (W)</th><th>Dauer (s)</th><th>Anzahl</th><th>Aktion</th></tr>
+        <tr><th id=\"pthId\">ID</th><th id=\"pthType\">Typ</th><th id=\"pthLabel\">Label</th><th id=\"pthFrequency\" style="font-size:0.85rem;">Häufig.</th><th id=\"pthInterval\" style="font-size:0.85rem;">Intervall</th><th id=\"pthTime\" style="font-size:0.85rem;">Uhrzeit</th><th id=\"pthStability\" style="font-size:0.85rem;">Stabilit.</th><th id=\"pthPhases\">Phasen</th><th id=\"pthAvg\">Ø (W)</th><th id=\"pthPeak\">Spitze (W)</th><th id=\"pthDuration\">Dauer (s)</th><th id=\"pthCount\">Anzahl</th><th id=\"pthAction\">Aktion</th></tr>
       </thead>
       <tbody id=\"patternRows\"></tbody>
     </table>
@@ -414,6 +420,209 @@ let allPatterns = [];
 let currentSortBy = 'seen_count';
 let seriesWindow = 360;
 let seriesOffset = 0;
+const defaultLanguage = document.documentElement.lang === 'en' ? 'en' : 'de';
+
+const I18N = {
+  de: {
+    pageTitle: 'HA NILM Live-Statistik',
+    languageLabel: 'Sprache:',
+    runLearningBtn: 'Lernen jetzt ausführen',
+    clearReadingsBtn: 'Live-Daten löschen',
+    clearPatternsBtn: 'Muster löschen',
+    importHistoryBtn: 'HA Verlauf importieren',
+    darkModeOn: '☀️ Tagmodus',
+    darkModeOff: '🌙 Nachtmodus',
+    devicesHeading: 'Erkannte Geräte',
+    patternsHeading: 'Gelernte Muster',
+    thDevice: 'Gerät',
+    thStatus: 'Status',
+    thPower: 'Leistung (W)',
+    thConfidence: 'Konfidenz',
+    thCycles: 'Zyklen',
+    thRuntime: 'Laufzeit (s)',
+    pthType: 'Typ',
+    pthFrequency: 'Häufig.',
+    pthInterval: 'Intervall',
+    pthTime: 'Uhrzeit',
+    pthStability: 'Stabilit.',
+    pthPhases: 'Phasen',
+    pthPeak: 'Spitze (W)',
+    pthDuration: 'Dauer (s)',
+    pthCount: 'Anzahl',
+    pthAction: 'Aktion',
+    showLabel: 'Anzeigen:',
+    phaseTotalBtn: 'Gesamt',
+    windowLabel: 'Fenster:',
+    olderBtn: '← Älter',
+    newerBtn: 'Neuer →',
+    rangeBtnIdle: '📍 Bereich markieren',
+    rangeBtnActive: '✓ Wähle Bereich aus',
+    patternSearchPlaceholder: 'Muster suchen...',
+    sortSeenCount: 'Sortieren: Häufigkeit ↓',
+    sortPower: 'Sortieren: Leistung ↓',
+    sortDuration: 'Sortieren: Dauer ↓',
+    sortStability: 'Sortieren: Stabilität ↓',
+    sortInterval: 'Sortieren: Intervall ↓',
+    sortId: 'Sortieren: ID ↑',
+    loading: 'Lade Live-Daten...',
+    waitingApi: 'Warte auf API',
+    drawing: 'Zeichne Verlauf und aktualisiere Tabellen...',
+    noDataSeries: 'Noch nicht genug Daten für den Verlauf.',
+    noPhaseSelected: 'Keine Phase ausgewählt.',
+    noDevices: 'Keine Geräte konfiguriert oder noch keine Erkennung.',
+    noPatterns: 'Noch keine Muster erkannt.',
+    unknown: 'unbekannt',
+    maybePrefix: 'evtl.',
+    confirmedSuffix: 'bestätigt',
+    currentWindow: 'aktuell',
+    offset: 'offset',
+    sourceReal: 'Quelle: Echte Messkurve',
+    sourceLegacy: 'Quelle: Rekonstruierte Kurve (Legacy-Muster ohne Profilpunkte)',
+    taskRunning: 'Aufgabe läuft...',
+    deleteConfirm: 'Muster {id} wirklich löschen?',
+    promptLabel: 'Welches Gerät ist das? (z.B. Kühlschrank)',
+    promptHours: 'Wie viele Stunden Verlauf importieren? (1-168)',
+    invalidHours: 'Bitte eine Zahl zwischen 1 und 168 eingeben.',
+    createPatternSuccess: 'Muster erfolgreich erstellt! ID: {id}',
+    createPatternFailed: 'Muster-Erstellung fehlgeschlagen: {err}'
+  },
+  en: {
+    pageTitle: 'HA NILM Live Statistics',
+    languageLabel: 'Language:',
+    runLearningBtn: 'Run learning now',
+    clearReadingsBtn: 'Clear live data',
+    clearPatternsBtn: 'Clear patterns',
+    importHistoryBtn: 'Import HA history',
+    darkModeOn: '☀️ Light mode',
+    darkModeOff: '🌙 Dark mode',
+    devicesHeading: 'Detected devices',
+    patternsHeading: 'Learned patterns',
+    thDevice: 'Device',
+    thStatus: 'Status',
+    thPower: 'Power (W)',
+    thConfidence: 'Confidence',
+    thCycles: 'Cycles',
+    thRuntime: 'Runtime (s)',
+    pthType: 'Type',
+    pthFrequency: 'Freq.',
+    pthInterval: 'Interval',
+    pthTime: 'Time',
+    pthStability: 'Stability',
+    pthPhases: 'Phases',
+    pthPeak: 'Peak (W)',
+    pthDuration: 'Duration (s)',
+    pthCount: 'Count',
+    pthAction: 'Action',
+    showLabel: 'Show:',
+    phaseTotalBtn: 'Total',
+    windowLabel: 'Window:',
+    olderBtn: '← Older',
+    newerBtn: 'Newer →',
+    rangeBtnIdle: '📍 Select range',
+    rangeBtnActive: '✓ Select range now',
+    patternSearchPlaceholder: 'Search patterns...',
+    sortSeenCount: 'Sort: frequency ↓',
+    sortPower: 'Sort: power ↓',
+    sortDuration: 'Sort: duration ↓',
+    sortStability: 'Sort: stability ↓',
+    sortInterval: 'Sort: interval ↓',
+    sortId: 'Sort: ID ↑',
+    loading: 'Loading live data...',
+    waitingApi: 'Waiting for API',
+    drawing: 'Drawing chart and updating tables...',
+    noDataSeries: 'Not enough data for the chart yet.',
+    noPhaseSelected: 'No phase selected.',
+    noDevices: 'No devices configured or no detections yet.',
+    noPatterns: 'No patterns detected yet.',
+    unknown: 'unknown',
+    maybePrefix: 'maybe',
+    confirmedSuffix: 'confirmed',
+    currentWindow: 'current',
+    offset: 'offset',
+    sourceReal: 'Source: Real measured curve',
+    sourceLegacy: 'Source: Reconstructed curve (legacy pattern without profile points)',
+    taskRunning: 'Task running...',
+    deleteConfirm: 'Delete pattern {id}?',
+    promptLabel: 'Which device is this? (e.g. fridge)',
+    promptHours: 'How many hours of history to import? (1-168)',
+    invalidHours: 'Please enter a number between 1 and 168.',
+    createPatternSuccess: 'Pattern created successfully! ID: {id}',
+    createPatternFailed: 'Pattern creation failed: {err}'
+  }
+};
+
+let currentLanguage = localStorage.getItem('dashboardLanguage') || defaultLanguage;
+if (currentLanguage !== 'de' && currentLanguage !== 'en') {
+  currentLanguage = defaultLanguage;
+}
+
+function t(key, params = null) {
+  const langDict = I18N[currentLanguage] || I18N.de;
+  const fallback = I18N.de[key] || key;
+  let text = langDict[key] || fallback;
+  if (params && typeof text === 'string') {
+    Object.entries(params).forEach(([pKey, pValue]) => {
+      text = text.replace(`{${pKey}}`, String(pValue));
+    });
+  }
+  return text;
+}
+
+function applyLanguage() {
+  document.documentElement.lang = currentLanguage;
+  const assignText = (id, key) => {
+    const el = document.getElementById(id);
+    if (el) el.textContent = t(key);
+  };
+
+  assignText('pageTitle', 'pageTitle');
+  assignText('languageLabel', 'languageLabel');
+  assignText('runLearningBtn', 'runLearningBtn');
+  assignText('clearReadingsBtn', 'clearReadingsBtn');
+  assignText('clearPatternsBtn', 'clearPatternsBtn');
+  assignText('importHistoryBtn', 'importHistoryBtn');
+  assignText('devicesHeading', 'devicesHeading');
+  assignText('patternsHeading', 'patternsHeading');
+  assignText('thDevice', 'thDevice');
+  assignText('thStatus', 'thStatus');
+  assignText('thPower', 'thPower');
+  assignText('thConfidence', 'thConfidence');
+  assignText('thCycles', 'thCycles');
+  assignText('thRuntime', 'thRuntime');
+  assignText('pthType', 'pthType');
+  assignText('pthFrequency', 'pthFrequency');
+  assignText('pthInterval', 'pthInterval');
+  assignText('pthTime', 'pthTime');
+  assignText('pthStability', 'pthStability');
+  assignText('pthPhases', 'pthPhases');
+  assignText('pthPeak', 'pthPeak');
+  assignText('pthDuration', 'pthDuration');
+  assignText('pthCount', 'pthCount');
+  assignText('pthAction', 'pthAction');
+  assignText('showLabel', 'showLabel');
+  assignText('phaseTotalBtn', 'phaseTotalBtn');
+  assignText('windowLabel', 'windowLabel');
+  assignText('olderBtn', 'olderBtn');
+  assignText('newerBtn', 'newerBtn');
+  assignText('sortSeenCount', 'sortSeenCount');
+  assignText('sortPower', 'sortPower');
+  assignText('sortDuration', 'sortDuration');
+  assignText('sortStability', 'sortStability');
+  assignText('sortInterval', 'sortInterval');
+  assignText('sortId', 'sortId');
+
+  const search = document.getElementById('patternSearch');
+  if (search) {
+    search.placeholder = t('patternSearchPlaceholder');
+  }
+
+  const rangeBtn = document.getElementById('selectRangeBtn');
+  if (rangeBtn) {
+    rangeBtn.textContent = rangeSelection.active ? t('rangeBtnActive') : t('rangeBtnIdle');
+  }
+
+  updateDarkModeButtonText();
+}
 
 // Dark Mode initialisieren
 if (localStorage.getItem('darkMode') === 'true') {
@@ -438,7 +647,7 @@ async function fetchJson(path) {
   try {
     return JSON.parse(body);
   } catch (error) {
-    throw new Error(`Ungültige JSON-Antwort für ${path}: ${body.slice(0, 120)}`);
+    throw new Error(`Invalid JSON response for ${path}: ${body.slice(0, 120)}`);
   }
 }
 
@@ -466,6 +675,9 @@ function updateTaskProgress(taskInfo) {
   // Show and update task progress
   activeTaskEl.classList.add('visible');
   taskNameEl.textContent = taskInfo.name || 'Aufgabe läuft...';
+  if (!taskInfo.name) {
+    taskNameEl.textContent = t('taskRunning');
+  }
   
   const percent = Math.min(100, Math.max(0, taskInfo.progress || 0));
   taskPercentEl.textContent = `${percent.toFixed(0)}%`;
@@ -542,12 +754,12 @@ async function runLearningNow() {
 }
 
 async function importHistoryFromHA() {
-  const raw = prompt('Wie viele Stunden Verlauf importieren? (1-168)', '24');
+  const raw = prompt(t('promptHours'), '24');
   if (raw === null) return;
 
   const hours = Number(raw);
   if (!Number.isFinite(hours) || hours < 1 || hours > 168) {
-    alert('Bitte eine Zahl zwischen 1 und 168 eingeben.');
+    alert(t('invalidHours'));
     return;
   }
 
@@ -578,12 +790,18 @@ function buildLiveStatusMessage(live) {
 
   if (power === null || power === undefined) {
     if (sensorTs) {
-      return `Warte auf verwertbare Messwerte (letzter Sensor-Zeitstempel: ${sensorTs})`;
+      return currentLanguage === 'en'
+        ? `Waiting for usable readings (last sensor timestamp: ${sensorTs})`
+        : `Warte auf verwertbare Messwerte (letzter Sensor-Zeitstempel: ${sensorTs})`;
     }
-    return `Warte auf erste Messwerte vom Sensor (Stand: ${now})`;
+    return currentLanguage === 'en'
+      ? `Waiting for first readings from sensor (as of: ${now})`
+      : `Warte auf erste Messwerte vom Sensor (Stand: ${now})`;
   }
 
-  return `Aktiv: ${fmt(power, ' W')} (aktualisiert: ${now})`;
+  return currentLanguage === 'en'
+    ? `Active: ${fmt(power, ' W')} (updated: ${now})`
+    : `Aktiv: ${fmt(power, ' W')} (aktualisiert: ${now})`;
 }
 
 function drawChart(series, forceRedraw = false) {
@@ -619,7 +837,7 @@ function drawChart(series, forceRedraw = false) {
   if (!series || series.length < 2) {
     ctx.fillStyle = '#667085';
     ctx.font = '14px Segoe UI';
-    ctx.fillText('Noch nicht genug Daten für den Verlauf.', 20, 36);
+    ctx.fillText(t('noDataSeries'), 20, 36);
     return;
   }
 
@@ -637,7 +855,7 @@ function drawChart(series, forceRedraw = false) {
   if (allValues.length === 0) {
     ctx.fillStyle = '#667085';
     ctx.font = '14px Segoe UI';
-    ctx.fillText('Keine Phase ausgewählt.', 20, 36);
+    ctx.fillText(t('noPhaseSelected'), 20, 36);
     return;
   }
 
@@ -760,7 +978,7 @@ function renderDevices(devices) {
   const names = Object.keys(devices || {});
   if (!names.length) {
     const tr = document.createElement('tr');
-    tr.innerHTML = '<td colspan="6">Keine Geräte konfiguriert oder noch keine Erkennung.</td>';
+    tr.innerHTML = `<td colspan="6">${t('noDevices')}</td>`;
     tbody.appendChild(tr);
     return;
   }
@@ -782,7 +1000,7 @@ function renderPatterns(patterns) {
   tbody.innerHTML = '';
   if (!patterns || !patterns.length) {
     const tr = document.createElement('tr');
-    tr.innerHTML = '<td colspan="14">Noch keine Muster erkannt.</td>';
+    tr.innerHTML = `<td colspan="14">${t('noPatterns')}</td>`;
     tbody.appendChild(tr);
     return;
   }
@@ -790,8 +1008,8 @@ function renderPatterns(patterns) {
   patterns.forEach(p => {
     const tr = document.createElement('tr');
     const label = p.user_label || '-';
-    const candidate = p.candidate_name || p.suggestion_type || 'unbekannt';
-    const typeText = p.is_confirmed ? candidate : `evtl. ${candidate}`;
+    const candidate = p.candidate_name || p.suggestion_type || t('unknown');
+    const typeText = p.is_confirmed ? candidate : `${t('maybePrefix')} ${candidate}`;
     const phaseModeRaw = String(p.phase_mode || 'unknown');
     const phaseModeShort = phaseModeRaw === 'single_phase' ? '1-ph' : (phaseModeRaw === 'multi_phase' ? '3-ph' : '?');
     const phaseLabel = String(p.phase || 'L1');
@@ -899,7 +1117,7 @@ function renderPatterns(patterns) {
   tbody.querySelectorAll('button.btn-delete[data-id]').forEach(btn => {
     btn.addEventListener('click', async () => {
       const id = Number(btn.getAttribute('data-id'));
-      if (!confirm(`Muster ${id} wirklich löschen?`)) return;
+      if (!confirm(t('deleteConfirm', { id }))) return;
       try {
         const res = await fetch(apiPath(`api/patterns/${id}/delete`), {
           method: 'POST'
@@ -915,7 +1133,7 @@ function renderPatterns(patterns) {
 
 async function refresh() {
   try {
-    setStatus('Lade Live-Daten...');
+    setStatus(t('loading'));
     const [summaryRes, seriesRes, liveRes, patternsRes] = await Promise.all([
       fetchJson('api/summary'),
       fetchJson(`api/series?limit=${seriesWindow}&offset=${seriesOffset}`),
@@ -970,18 +1188,18 @@ async function refresh() {
 
     setStatus(buildLiveStatusMessage(live));
 
-    setStatus('Zeichne Verlauf und aktualisiere Tabellen...');
+    setStatus(t('drawing'));
     drawChart(series.points || []);
     renderDevices(live.devices || {});
     renderPatterns(Array.isArray(patterns) ? patterns : []);
     const windowInfo = document.getElementById('windowInfo');
     if (windowInfo) {
       const hours = Math.round((seriesWindow / 120.0) * 10) / 10;
-      windowInfo.textContent = `${hours}h, ${seriesOffset === 0 ? 'aktuell' : `offset ${seriesOffset}`}`;
+      windowInfo.textContent = `${hours}h, ${seriesOffset === 0 ? t('currentWindow') : `${t('offset')} ${seriesOffset}`}`;
     }
     setStatus(buildLiveStatusMessage(live));
   } catch (err) {
-    setStatus(`Warte auf API: ${err}`);
+    setStatus(`${t('waitingApi')}: ${err}`);
   }
 }
 
@@ -1005,7 +1223,7 @@ document.getElementById('selectRangeBtn').addEventListener('click', () => {
   rangeSelection.active = !rangeSelection.active;
   const btn = document.getElementById('selectRangeBtn');
   btn.classList.toggle('active', rangeSelection.active);
-  btn.textContent = rangeSelection.active ? '✓ Wähle Bereich aus' : '📍 Bereich markieren';
+  btn.textContent = rangeSelection.active ? t('rangeBtnActive') : t('rangeBtnIdle');
   selectionOverlay.style.display = 'none';
   canvas.style.cursor = rangeSelection.active ? 'crosshair' : 'default';
 });
@@ -1059,7 +1277,7 @@ function getDataIndexFromX(x) {
 }
 
 async function createPatternFromRange(startIdx, endIdx) {
-  const label = prompt('Welches Gerät ist das? (z.B. Waschmaschine, Kühlschrank)');
+  const label = prompt(t('promptLabel'));
   if (!label) return;
   
   const startPoint = currentSeriesData[startIdx];
@@ -1087,15 +1305,15 @@ async function createPatternFromRange(startIdx, endIdx) {
       throw new Error(result.error || `HTTP ${response.status}`);
     }
     
-    alert(`Muster erfolgreich erstellt! ID: ${result.pattern_id || '?'}`);
+    alert(t('createPatternSuccess', { id: result.pattern_id || '?' }));
     rangeSelection.active = false;
     document.getElementById('selectRangeBtn').classList.remove('active');
-    document.getElementById('selectRangeBtn').textContent = '📍 Bereich markieren';
+    document.getElementById('selectRangeBtn').textContent = t('rangeBtnIdle');
     canvas.style.cursor = 'default';
     await refresh();
   } catch (err) {
-    alert(`Muster-Erstellung fehlgeschlagen: ${err}`);
-    setStatus(`Muster-Erstellung fehlgeschlagen: ${err}`);
+    alert(t('createPatternFailed', { err }));
+    setStatus(t('createPatternFailed', { err }));
   }
 }
 
@@ -1154,8 +1372,8 @@ function renderPatternChart(pattern) {
 
   if (sourceEl) {
     sourceEl.textContent = usedStoredProfile
-      ? `Quelle: Echte Messkurve (${chartPoints.length} Punkte)`
-      : 'Quelle: Rekonstruierte Kurve (Legacy-Muster ohne Profilpunkte)';
+      ? `${t('sourceReal')} (${chartPoints.length} points)`
+      : t('sourceLegacy');
   }
 
   ctx.strokeStyle = lineColor;
@@ -1329,8 +1547,14 @@ document.getElementById('patternSort').addEventListener('change', (e) => {
 function toggleDarkMode() {
   const isDark = document.documentElement.classList.toggle('dark-mode');
   localStorage.setItem('darkMode', isDark);
+  updateDarkModeButtonText();
+}
+
+function updateDarkModeButtonText() {
   const btn = document.getElementById('darkModeToggle');
-  btn.textContent = isDark ? '☀️ Tagmodus' : '🌙 Nachtmodus';
+  if (!btn) return;
+  const isDark = document.documentElement.classList.contains('dark-mode');
+  btn.textContent = isDark ? t('darkModeOn') : t('darkModeOff');
 }
 
 function filterAndSortPatterns() {
@@ -1360,16 +1584,25 @@ function filterAndSortPatterns() {
   renderPatterns(filtered);
 }
 
-// Dark Mode Button Text initial setzen
-if (document.documentElement.classList.contains('dark-mode')) {
-  document.getElementById('darkModeToggle').textContent = '☀️ Tagmodus';
+const languageSelect = document.getElementById('languageSelect');
+if (languageSelect) {
+  languageSelect.value = currentLanguage;
+  languageSelect.addEventListener('change', (e) => {
+    const selected = String(e.target.value || '').toLowerCase();
+    currentLanguage = selected === 'en' ? 'en' : 'de';
+    localStorage.setItem('dashboardLanguage', currentLanguage);
+    applyLanguage();
+    refresh();
+  });
 }
+
+applyLanguage();
 
 
 </script>
 </body>
 </html>
-"""
+""".replace("__DEFAULT_LANG__", lang)
 
 
 class StatsWebServer:
@@ -1391,6 +1624,7 @@ class StatsWebServer:
         run_learning_now: Optional[Callable[[], Dict]] = None,
         import_history_from_ha: Optional[Callable[[int], Dict]] = None,
         create_pattern_from_range: Optional[Callable[[str, str, str], Dict]] = None,
+        language: str = "de",
     ):
         self.host = host
         self.port = int(port)
@@ -1406,6 +1640,7 @@ class StatsWebServer:
         self.run_learning_now = run_learning_now
         self.import_history_from_ha = import_history_from_ha
         self.create_pattern_from_range = create_pattern_from_range
+        self.language = "en" if str(language).strip().lower() == "en" else "de"
         self._server: Optional[ThreadingHTTPServer] = None
         self._thread: Optional[threading.Thread] = None
 
@@ -1434,7 +1669,7 @@ class StatsWebServer:
 
     def _build_handler(self):
         parent = self
-        html = _html_page()
+        html = _html_page(parent.language)
 
         class Handler(BaseHTTPRequestHandler):
             def _send_json(self, payload: Dict | List, status: int = 200) -> None:

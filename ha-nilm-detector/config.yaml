@@ -1,6 +1,6 @@
 name: "HA NILM Detector"
 description: "Detect appliances from power consumption patterns (BETA - Experimental project in active development)"
-version: "0.6.4"
+version: "0.6.5"
 slug: "ha_nilm_detector"
 startup: application
 boot: auto
@@ -15,12 +15,14 @@ arch:
   - armv7
 init: false
 options:
+  language: "de"
   home_assistant:
     phase_entities:
       l1: ""
       l2: ""
       l3: ""
 schema:
+  language: list(de|en)?
   log_level: list(debug|info|warning|error)?
   log_file: str?
   max_log_backups: int(1,10)?
