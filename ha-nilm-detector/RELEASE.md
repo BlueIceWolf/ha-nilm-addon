@@ -4,6 +4,20 @@
 
 ---
 
+# Release 0.6.4 (BETA)
+
+## Store Kurztext
+- **Muster bleiben erhalten**: Standard-Speicherpfade liegen jetzt unter `/data`, damit gelernte Patterns Neustarts ueberstehen.
+- **Sichere Umstellung**: Legacy-Dateien aus `/addon_configs/ha_nilm_detector/` werden bei Bedarf automatisch nach `/data` migriert.
+- **DB-Konsistenz**: SQLite-`-wal`/`-shm` Dateien werden in der Migration mitkopiert.
+
+## Highlights
+- Neue Default-Pfade: `/data/nilm_live.sqlite3`, `/data/nilm_patterns.sqlite3`, `/data/nilm.log`
+- Automatische Migration nur dann, wenn am Ziel noch keine Datei existiert (keine Ueberschreibung bestehender Daten)
+- Verbessert Upgrade-Verhalten fuer bestehende Installationen mit alten Pfaden
+
+---
+
 # Release 0.6.3 (BETA)
 
 ## Store Kurztext

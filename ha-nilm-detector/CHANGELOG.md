@@ -2,6 +2,13 @@
 
 > ⚠️ **Hinweis**: Dieses Projekt ist experimentell (BETA) - Breaking Changes und Bugs können auftreten.
 
+## 0.6.4 (BETA)
+
+**Persistenz nach Neustart repariert**
+- Standard-Speicherpfade wurden auf `/data` umgestellt (`nilm_live.sqlite3`, `nilm_patterns.sqlite3`, `nilm.log`), damit gelernte Muster Add-on-Neustarts ueberleben.
+- Automatische Legacy-Migration eingefuehrt: vorhandene Dateien aus `/addon_configs/ha_nilm_detector/` werden beim Start nach `/data` kopiert, falls dort noch keine Zieldateien existieren.
+- SQLite-Neben-Dateien (`-wal`, `-shm`) werden bei der Migration mitgenommen, um Konsistenz von bestehenden Datenbanken zu erhalten.
+
 ## 0.6.3 (BETA)
 
 **Self-Learning deutlich erweitert**
