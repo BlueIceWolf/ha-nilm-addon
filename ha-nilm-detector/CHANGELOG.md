@@ -2,6 +2,15 @@
 
 > ⚠️ **Hinweis**: Dieses Projekt ist experimentell (BETA) - Breaking Changes und Bugs können auftreten.
 
+## 0.6.1 (BETA)
+
+**Reliability-Update: Import + Mustererkennung stabilisiert**
+- Replay- und Live-Learning uebergeben jetzt vollstaendige Zyklus-Features (`power_variance`, Rise/Fall-Rate, Duty-Cycle, Substates, Heating/Motor-Flags), damit Matching nicht mehr durch Fallback-Penalties entgleist.
+- Zeitstempel aus HA-History und Replay werden konsistent auf naive UTC normalisiert, um stille Fehler bei Datetime-Arithmetik zu vermeiden.
+- Beim Update bestehender Patterns werden jetzt auch erweiterte Feature-Spalten und Phase mitgepflegt, nicht nur Basiswerte (avg/peak/duration).
+- Label-Vorschlaege filtern bei Single-Phase-Zyklen auf phasenkompatible Pattern, wodurch unplausible Vorschlaege deutlich seltener werden.
+- Manuell aus dem Graphen angelegte Patterns speichern explizit die dominante Phase.
+
 ## 0.6.0 (BETA)
 
 > ℹ️ **Version-Status**: Fundamentales Architektur-Redesign - noch nicht ausführlich getestet. Bei Problemen auf v0.5.2.1 zurückrollen.

@@ -3,7 +3,7 @@ import os
 import signal
 import sys
 import time
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, timezone
 from typing import Dict, List
 
 from app.collector.source import Collector, HARestPowerSource
@@ -384,6 +384,9 @@ class NILMDetectionSystem:
                 except ValueError:
                     continue
 
+                if ts.tzinfo is not None:
+                    ts = ts.astimezone(timezone.utc).replace(tzinfo=None)
+
                 power_w = float(point.get("power_w") or 0.0)
                 phases = point.get("phases") if isinstance(point.get("phases"), dict) else {}
                 metadata = {"phase_powers_w": phases, "replay_learning": True}
@@ -398,6 +401,7 @@ class NILMDetectionSystem:
                     continue
 
                 active_phase_count = 1
+                dominant_phase = "L1"
                 if phases:
                     numeric_phase_values = []
                     for val in phases.values():
@@ -407,6 +411,17 @@ class NILMDetectionSystem:
                             continue
                     if numeric_phase_values:
                         active_phase_count = max(1, sum(1 for v in numeric_phase_values if v > 20.0))
+
+                    phase_candidates = []
+                    for phase_name, phase_value in phases.items():
+                        try:
+                            phase_candidates.append((str(phase_name), float(phase_value)))
+                        except (TypeError, ValueError):
+                            continue
+                    if phase_candidates:
+                        dominant_phase = max(phase_candidates, key=lambda item: item[1])[0]
+
+                cycle_features = cycle.features
 
                 cycle_payload = {
                     "start_ts": cycle.start_ts.isoformat(),
@@ -419,6 +434,15 @@ class NILMDetectionSystem:
                     "has_multiple_modes": cycle.has_multiple_modes,
                     "active_phase_count": int(active_phase_count),
                     "phase_mode": "multi_phase" if active_phase_count > 1 else "single_phase",
+                    "phase": dominant_phase,
+                    "power_variance": float(cycle_features.power_variance) if cycle_features else 0.0,
+                    "rise_rate_w_per_s": float(cycle_features.rise_rate_w_per_s) if cycle_features else 0.0,
+                    "fall_rate_w_per_s": float(cycle_features.fall_rate_w_per_s) if cycle_features else 0.0,
+                    "duty_cycle": float(cycle_features.duty_cycle) if cycle_features else 0.0,
+                    "peak_to_avg_ratio": float(cycle_features.peak_to_avg_ratio) if cycle_features else 1.0,
+                    "num_substates": int(cycle_features.num_substates) if cycle_features else 0,
+                    "has_heating_pattern": bool(cycle_features.has_heating_pattern) if cycle_features else False,
+                    "has_motor_pattern": bool(cycle_features.has_motor_pattern) if cycle_features else False,
                 }
                 heuristic_suggestion = replay_learner.suggest_device_type(cycle)
                 model_suggestion = self.storage.suggest_cycle_label(cycle_payload, fallback=heuristic_suggestion)
@@ -482,6 +506,9 @@ class NILMDetectionSystem:
                         ts_obj = datetime.fromisoformat(str(ts_raw).replace("Z", "+00:00"))
                     except ValueError:
                         continue
+
+                    if ts_obj.tzinfo is not None:
+                        ts_obj = ts_obj.astimezone(timezone.utc).replace(tzinfo=None)
 
                     phase_events.append((ts_obj, phase_name, value))
 
@@ -625,6 +652,14 @@ class NILMDetectionSystem:
                                 "active_phase_count": 1,  # Single phase per learner
                                 "phase_mode": "single_phase",
                                 "phase": phase_name,  # Explicit phase attribution
+                                "power_variance": float(cycle.features.power_variance) if cycle.features else 0.0,
+                                "rise_rate_w_per_s": float(cycle.features.rise_rate_w_per_s) if cycle.features else 0.0,
+                                "fall_rate_w_per_s": float(cycle.features.fall_rate_w_per_s) if cycle.features else 0.0,
+                                "duty_cycle": float(cycle.features.duty_cycle) if cycle.features else 0.0,
+                                "peak_to_avg_ratio": float(cycle.features.peak_to_avg_ratio) if cycle.features else 1.0,
+                                "num_substates": int(cycle.features.num_substates) if cycle.features else 0,
+                                "has_heating_pattern": bool(cycle.features.has_heating_pattern) if cycle.features else False,
+                                "has_motor_pattern": bool(cycle.features.has_motor_pattern) if cycle.features else False,
                             }
                             heuristic_suggestion = learner.suggest_device_type(cycle)
                             model_suggestion = self.storage.suggest_cycle_label(

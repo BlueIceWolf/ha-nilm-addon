@@ -4,6 +4,20 @@
 
 ---
 
+# Release 0.6.1 (BETA)
+
+## Store Kurztext
+- **Erkennung stabiler**: Vollstaendige Feature-Nutzung im Learning (weniger unplausible Pattern-Vorschlaege)
+- **Import robuster**: Zeitstempel-Normalisierung fuer HA-History/Replay verhindert stille Lern-Aussetzer
+- **DB konsistenter**: Pattern-Updates pflegen jetzt auch erweiterte Feature-Spalten und Phase
+
+## Highlights
+- Replay- und Live-Learning uebergeben nun alle relevanten Zyklusmerkmale (u.a. Varianz, Rise/Fall-Rate, Duty-Cycle, Substates)
+- Vorschlagsmodell beruecksichtigt bei Single-Phase-Cycles nur phasenkompatible Pattern
+- Manuelle Pattern-Erstellung aus dem Graphen speichert explizit die dominante Phase
+
+---
+
 # Release 0.6.0 (BETA)
 
 > ℹ️ **Version-Hinweis**: Fundamentales Architektur-Redesign - noch nicht ausführlich getestet.

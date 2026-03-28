@@ -4,7 +4,7 @@ import json
 import math
 import os
 import sqlite3
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, timezone
 from typing import Dict, List, Tuple
 
 from app.models import DetectionResult, PowerReading
@@ -605,9 +605,16 @@ class SQLiteStore:
 
         score_by_label: Dict[str, float] = {}
         total_score = 0.0
+        cycle_phase_mode = str(cycle.get("phase_mode") or "unknown")
+        cycle_phase = str(cycle.get("phase") or "L1")
 
         for item in patterns:
             if item.get("status") != "active":
+                continue
+
+            item_phase_mode = str(item.get("phase_mode") or "unknown")
+            item_phase = str(item.get("phase") or "L1")
+            if cycle_phase_mode == "single_phase" and item_phase_mode == "single_phase" and item_phase != cycle_phase:
                 continue
 
             label_raw = str(item.get("user_label") or item.get("suggestion_type") or "").strip()
@@ -929,6 +936,15 @@ class SQLiteStore:
                 energy = float(best["energy_wh"]) * (1.0 - alpha) + float(cycle["energy_wh"]) * alpha
                 avg_active_phases = float(best.get("avg_active_phases", 1.0)) * (1.0 - alpha) + float(cycle.get("active_phase_count", 1.0)) * alpha
                 phase_mode = str(cycle.get("phase_mode") or best.get("phase_mode") or "unknown")
+                phase = str(cycle.get("phase") or best.get("phase") or "L1")
+                power_variance = float(best.get("power_variance", 0.0)) * (1.0 - alpha) + float(cycle.get("power_variance", 0.0)) * alpha
+                rise_rate = float(best.get("rise_rate_w_per_s", 0.0)) * (1.0 - alpha) + float(cycle.get("rise_rate_w_per_s", 0.0)) * alpha
+                fall_rate = float(best.get("fall_rate_w_per_s", 0.0)) * (1.0 - alpha) + float(cycle.get("fall_rate_w_per_s", 0.0)) * alpha
+                duty_cycle = float(best.get("duty_cycle", 0.0)) * (1.0 - alpha) + float(cycle.get("duty_cycle", 0.0)) * alpha
+                peak_to_avg = float(best.get("peak_to_avg_ratio", 1.0)) * (1.0 - alpha) + float(cycle.get("peak_to_avg_ratio", 1.0)) * alpha
+                num_substates = int(round(float(best.get("num_substates", 0)) * (1.0 - alpha) + float(cycle.get("num_substates", 0)) * alpha))
+                has_heating = 1 if (bool(best.get("has_heating_pattern", 0)) or bool(cycle.get("has_heating_pattern", False))) else 0
+                has_motor = 1 if (bool(best.get("has_motor_pattern", 0)) or bool(cycle.get("has_motor_pattern", False))) else 0
                 
                 # Temporal pattern tracking - calculate interval since last occurrence
                 last_seen_str = best.get("last_seen", cycle["end_ts"])
@@ -939,7 +955,8 @@ class SQLiteStore:
                     
                     # Update last_intervals history (keep last 10)
                     last_intervals = json.loads(best.get("last_intervals_json", "[]"))
-                    last_intervals.append(interval_s)
+                    if interval_s > 0:
+                        last_intervals.append(interval_s)
                     if len(last_intervals) > 10:
                         last_intervals = last_intervals[-10:]
                     last_intervals_json = json.dumps(last_intervals)
@@ -950,7 +967,7 @@ class SQLiteStore:
                         median_idx = len(sorted_intervals) // 2
                         typical_interval_s = sorted_intervals[median_idx]
                     else:
-                        typical_interval_s = interval_s
+                        typical_interval_s = interval_s if interval_s > 0 else float(best.get("typical_interval_s", 0.0))
                     
                     # Update hour distribution
                     cycle_hour = cycle_end_dt.hour + cycle_end_dt.minute / 60.0
@@ -977,7 +994,10 @@ class SQLiteStore:
                         UPDATE learned_patterns
                         SET updated_at = ?, last_seen = ?, seen_count = ?,
                             avg_power_w = ?, peak_power_w = ?, duration_s = ?, energy_wh = ?,
-                            avg_active_phases = ?, phase_mode = ?,
+                            avg_active_phases = ?, phase_mode = ?, phase = ?,
+                            power_variance = ?, rise_rate_w_per_s = ?, fall_rate_w_per_s = ?,
+                            duty_cycle = ?, peak_to_avg_ratio = ?, num_substates = ?,
+                            has_heating_pattern = ?, has_motor_pattern = ?,
                             typical_interval_s = ?, avg_hour_of_day = ?,
                             last_intervals_json = ?, hour_distribution_json = ?
                         WHERE id = ?
@@ -992,6 +1012,15 @@ class SQLiteStore:
                             energy,
                             avg_active_phases,
                             phase_mode,
+                            phase,
+                            power_variance,
+                            rise_rate,
+                            fall_rate,
+                            duty_cycle,
+                            peak_to_avg,
+                            num_substates,
+                            has_heating,
+                            has_motor,
                             typical_interval_s,
                             avg_hour_of_day,
                             last_intervals_json,
@@ -1011,6 +1040,15 @@ class SQLiteStore:
                         "energy_wh": energy,
                         "avg_active_phases": avg_active_phases,
                         "phase_mode": phase_mode,
+                        "phase": phase,
+                        "power_variance": power_variance,
+                        "rise_rate_w_per_s": rise_rate,
+                        "fall_rate_w_per_s": fall_rate,
+                        "duty_cycle": duty_cycle,
+                        "peak_to_avg_ratio": peak_to_avg,
+                        "num_substates": num_substates,
+                        "has_heating_pattern": has_heating,
+                        "has_motor_pattern": has_motor,
                     }
                 )
                 return {
@@ -1109,6 +1147,15 @@ class SQLiteStore:
                 "status": "active",
                 "avg_active_phases": float(cycle.get("active_phase_count", 1.0)),
                 "phase_mode": str(cycle.get("phase_mode", "unknown")),
+                "phase": str(cycle.get("phase", "L1")),
+                "power_variance": float(cycle.get("power_variance", 0.0)),
+                "rise_rate_w_per_s": float(cycle.get("rise_rate_w_per_s", 0.0)),
+                "fall_rate_w_per_s": float(cycle.get("fall_rate_w_per_s", 0.0)),
+                "duty_cycle": float(cycle.get("duty_cycle", 0.0)),
+                "peak_to_avg_ratio": float(cycle.get("peak_to_avg_ratio", 1.0)),
+                "num_substates": int(cycle.get("num_substates", 0)),
+                "has_heating_pattern": 1 if cycle.get("has_heating_pattern", False) else 0,
+                "has_motor_pattern": 1 if cycle.get("has_motor_pattern", False) else 0,
                 "candidate_name": self._normalize_pattern_name(suggestion_type),
                 "is_confirmed": False,
             }
@@ -1203,9 +1250,9 @@ class SQLiteStore:
             for row in rows:
                 try:
                     ts = datetime.fromisoformat(row[0])
-                    # Remove timezone info if present (convert to naive)
+                    # Normalize to naive UTC for consistent arithmetic.
                     if ts.tzinfo is not None:
-                        ts = ts.replace(tzinfo=None)
+                        ts = ts.astimezone(timezone.utc).replace(tzinfo=None)
                     power_w = float(row[1])
                     phase = row[2] if len(row) > 2 else "L1"
                     power_readings.append(PowerReading(timestamp=ts, power_w=power_w, phase=phase))
@@ -1242,6 +1289,11 @@ class SQLiteStore:
             # Erkennung Phasen-Modus
             phases_set = set(r.phase for r in power_readings if r.phase)
             phase_mode = "multi_phase" if len(phases_set) > 1 else "single_phase"
+            phase_energy: Dict[str, float] = {}
+            for reading in power_readings:
+                phase_name = str(reading.phase or "L1")
+                phase_energy[phase_name] = phase_energy.get(phase_name, 0.0) + float(reading.power_w)
+            dominant_phase = max(phase_energy.items(), key=lambda item: item[1])[0] if phase_energy else "L1"
             
             # Werte für DB vorbereiten
             power_variance = features.power_variance if features else 0.0
@@ -1260,16 +1312,16 @@ class SQLiteStore:
                 cursor = self._patterns_conn.execute(
                     """
                     INSERT INTO learned_patterns (
-                        avg_power_w, peak_power_w, duration_s, energy_wh, phase_mode,
+                        avg_power_w, peak_power_w, duration_s, energy_wh, phase_mode, phase,
                         user_label, seen_count, suggestion_type, status,
                         first_seen, last_seen, created_at, updated_at,
                         power_variance, rise_rate_w_per_s, fall_rate_w_per_s,
                         duty_cycle, peak_to_avg_ratio, num_substates,
                         has_heating_pattern, has_motor_pattern
-                    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                     """,
                     (
-                        avg_power, peak_power, duration_s, energy_wh, phase_mode,
+                        avg_power, peak_power, duration_s, energy_wh, phase_mode, dominant_phase,
                         user_label.strip(), 1, "user_defined", "active",
                         start_time, end_time, now, now,
                         power_variance, rise_rate, fall_rate,
