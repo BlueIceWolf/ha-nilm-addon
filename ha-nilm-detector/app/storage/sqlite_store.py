@@ -1,6 +1,9 @@
 """SQLite storage for power readings and detection events."""
 
 import json
+import hashlib
+import csv
+import io
 import math
 import os
 import sqlite3
@@ -20,8 +23,8 @@ logger = get_logger(__name__)
 class SQLiteStore:
     """Persists readings/detections for diagnostics and future learning."""
 
-    LIVE_SCHEMA_VERSION = 1
-    PATTERNS_SCHEMA_VERSION = 1
+    LIVE_SCHEMA_VERSION = 2
+    PATTERNS_SCHEMA_VERSION = 2
 
     # Legacy DB paths checked during recovery/migration (order matters: most likely first)
     LEGACY_PATTERNS_CANDIDATES: List[str] = [
@@ -152,6 +155,16 @@ class SQLiteStore:
         except Exception:
             return 0
 
+    # Public helpers for robust migration/recovery checks
+    def table_exists(self, connection: sqlite3.Connection, table_name: str) -> bool:
+        return self._table_exists(connection, table_name)
+
+    def list_tables(self, connection: sqlite3.Connection) -> List[str]:
+        return self._list_tables(connection)
+
+    def count_rows(self, connection: sqlite3.Connection, table_name: str) -> int:
+        return self._safe_row_count(connection, table_name)
+
     @staticmethod
     def _db_file_stats(path: str) -> Dict[str, Any]:
         exists = os.path.exists(path)
@@ -214,10 +227,14 @@ class SQLiteStore:
             pattern_user_version = int((self._patterns_conn.execute("PRAGMA user_version").fetchone() or [0])[0])
             logger.info("Pattern DB tables (%s): %s", stage, ", ".join(pattern_tables) if pattern_tables else "<none>")
             logger.info(
-                "Pattern DB row counts (%s): learned_patterns=%s legacy_patterns=%s user_version=%s",
+                "Pattern DB row counts (%s): learned_patterns=%s legacy_patterns=%s devices=%s events=%s user_labels=%s class_log=%s user_version=%s",
                 stage,
                 self._safe_row_count(self._patterns_conn, "learned_patterns"),
                 self._safe_row_count(self._patterns_conn, "patterns"),
+                self._safe_row_count(self._patterns_conn, "devices"),
+                self._safe_row_count(self._patterns_conn, "events"),
+                self._safe_row_count(self._patterns_conn, "user_labels"),
+                self._safe_row_count(self._patterns_conn, "classification_log"),
                 pattern_user_version,
             )
 
@@ -288,6 +305,8 @@ class SQLiteStore:
             self._maybe_migrate_patterns_from_live()
             self._maybe_recover_live_from_legacy_files()
             self._maybe_recover_patterns_from_legacy_files()
+            self._maybe_backfill_normalized_tables()
+            self._maybe_backfill_patterns_mirror()
             self.cleanup_old_data()
             self._log_startup_diagnostics(stage="post-init")
             logger.info(
@@ -324,6 +343,154 @@ class SQLiteStore:
                 )
         except Exception as e:
             logger.warning("Could not record migration event %s: %s", event_key, e)
+
+    def _maybe_backfill_normalized_tables(self) -> None:
+        """Backfill devices/pattern_history/pattern_features from learned_patterns once."""
+        if not self._patterns_conn:
+            return
+
+        event_key = "normalized_backfill_from_learned_patterns:v1"
+        if self._migration_applied(self._patterns_conn, event_key):
+            return
+
+        if not self._table_exists(self._patterns_conn, "learned_patterns"):
+            self._record_migration(self._patterns_conn, event_key, "learned_patterns missing")
+            return
+
+        try:
+            patterns = self.list_patterns(limit=5000)
+            if not patterns:
+                self._record_migration(self._patterns_conn, event_key, "no patterns to backfill")
+                return
+
+            linked_devices = 0
+            history_rows = 0
+            feature_rows = 0
+
+            for pattern in patterns:
+                pid = int(pattern.get("id", 0) or 0)
+                if pid <= 0:
+                    continue
+
+                label = str(pattern.get("user_label") or pattern.get("suggestion_type") or "unknown").strip() or "unknown"
+                phase = str(pattern.get("phase") or "L1")
+                confidence = float(pattern.get("confidence_score", 0.0) or 0.0) / 100.0
+                device_id = self._get_or_create_device(
+                    label=label,
+                    phase=phase,
+                    confidence=confidence,
+                    confirmed=bool(pattern.get("user_label")),
+                )
+                if device_id:
+                    linked_devices += 1
+                    with self._patterns_conn:
+                        self._patterns_conn.execute(
+                            """
+                            UPDATE learned_patterns
+                            SET device_id = COALESCE(device_id, ?),
+                                candidate_name = COALESCE(NULLIF(candidate_name, ''), ?),
+                                is_confirmed = CASE WHEN user_label IS NOT NULL AND TRIM(user_label) != '' THEN 1 ELSE is_confirmed END
+                            WHERE id = ?
+                            """,
+                            (int(device_id), label, pid),
+                        )
+
+                self._record_pattern_history_snapshot(pattern)
+                history_rows += 1
+
+                synthetic_cycle = {
+                    "power_variance": pattern.get("power_variance", 0.0),
+                    "avg_power_w": pattern.get("avg_power_w", 0.0),
+                    "num_substates": pattern.get("num_substates", 0),
+                    "step_count": pattern.get("step_count", 0),
+                    "rise_rate_w_per_s": pattern.get("rise_rate_w_per_s", 0.0),
+                    "fall_rate_w_per_s": pattern.get("fall_rate_w_per_s", 0.0),
+                    "profile_points": pattern.get("profile_points", []),
+                }
+                self._record_pattern_features(pid, synthetic_cycle, feature_version="backfill_v1")
+                feature_rows += 1
+
+            details = (
+                f"patterns={len(patterns)} linked_devices={linked_devices} "
+                f"history_rows={history_rows} feature_rows={feature_rows}"
+            )
+            self._record_migration(self._patterns_conn, event_key, details)
+            logger.info("Backfilled normalized NILM tables: %s", details)
+        except Exception as e:
+            logger.warning("Normalized table backfill failed: %s", e)
+
+        # Keep an explicit normalized patterns table in sync (separate from learned_patterns).
+        self._maybe_backfill_patterns_mirror()
+
+    def _maybe_backfill_patterns_mirror(self) -> None:
+        if not self._patterns_conn:
+            return
+        event_key = "patterns_mirror_backfill:v1"
+        if self._migration_applied(self._patterns_conn, event_key):
+            return
+        try:
+            patterns = self.list_patterns(limit=5000)
+            for pattern in patterns:
+                self._upsert_patterns_mirror(pattern)
+            self._record_migration(self._patterns_conn, event_key, f"mirrored={len(patterns)}")
+            logger.info("Backfilled explicit patterns mirror table with %s rows", len(patterns))
+        except Exception as e:
+            logger.warning("Patterns mirror backfill failed: %s", e)
+
+    def _upsert_patterns_mirror(self, pattern: Dict[str, Any]) -> None:
+        if not self._patterns_conn:
+            return
+        try:
+            with self._patterns_conn:
+                self._patterns_conn.execute(
+                    """
+                    INSERT OR REPLACE INTO patterns (
+                        pattern_id, device_id, created_at, updated_at, first_seen, last_seen,
+                        seen_count, phase, phase_mode,
+                        avg_power_w, peak_power_w, duration_s, energy_wh,
+                        stability_score, confidence_score, frequency_per_day,
+                        typical_interval_s, quality_score_avg,
+                        suggestion_type, candidate_name, status, is_confirmed,
+                        profile_points_json, shape_vector_json, prototype_hash,
+                        num_substates, step_count, plateau_count,
+                        shape_similarity_score, cluster_similarity_score
+                    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                    """,
+                    (
+                        int(pattern.get("id", 0) or 0),
+                        int(pattern.get("device_id", 0) or 0) or None,
+                        str(pattern.get("created_at") or datetime.now().isoformat()),
+                        str(pattern.get("updated_at") or datetime.now().isoformat()),
+                        str(pattern.get("first_seen") or datetime.now().isoformat()),
+                        str(pattern.get("last_seen") or datetime.now().isoformat()),
+                        int(pattern.get("seen_count", 0) or 0),
+                        str(pattern.get("phase") or "L1"),
+                        str(pattern.get("phase_mode") or "unknown"),
+                        float(pattern.get("avg_power_w", 0.0) or 0.0),
+                        float(pattern.get("peak_power_w", 0.0) or 0.0),
+                        float(pattern.get("duration_s", 0.0) or 0.0),
+                        float(pattern.get("energy_wh", 0.0) or 0.0),
+                        float(pattern.get("stability_score", 0.0) or 0.0),
+                        float(pattern.get("confidence_score_db", pattern.get("confidence_score", 0.0)) or 0.0),
+                        float(pattern.get("frequency_per_day_db", pattern.get("frequency_per_day", 0.0)) or 0.0),
+                        float(pattern.get("typical_interval_s", 0.0) or 0.0),
+                        float(pattern.get("quality_score_avg", 0.0) or 0.0),
+                        str(pattern.get("suggestion_type") or "unknown"),
+                        str(pattern.get("candidate_name") or "unknown"),
+                        str(pattern.get("status") or "active"),
+                        1 if bool(pattern.get("is_confirmed")) else 0,
+                        json.dumps(self._normalize_profile_points(pattern.get("profile_points", []))),
+                        str(pattern.get("shape_vector_json") or "[]"),
+                        str(pattern.get("prototype_hash") or ""),
+                        int(pattern.get("num_substates", 0) or 0),
+                        int(pattern.get("step_count", 0) or 0),
+                        int(pattern.get("num_substates", 0) or 0),
+                        0.0,
+                        0.0,
+                    ),
+                )
+        except Exception as e:
+            logger.debug("_upsert_patterns_mirror failed: %s", e)
 
     def _migrate_from_patterns_table(
         self, src_conn: sqlite3.Connection, dst_conn: sqlite3.Connection, source_label: str
@@ -836,6 +1003,9 @@ class SQLiteStore:
         patterns = []
         readings = []
         dataset = []
+        devices: List[Dict[str, Any]] = []
+        recent_events: List[Dict[str, Any]] = []
+        recent_labels: List[Dict[str, Any]] = []
         
         try:
             patterns = self.list_patterns(limit=500)
@@ -851,13 +1021,261 @@ class SQLiteStore:
             dataset = build_pattern_dataset_rows(patterns)
         except Exception as e:
             logger.warning(f"Failed to export pattern dataset rows: {e}")
+
+        try:
+            if self._patterns_conn and self._table_exists(self._patterns_conn, "devices"):
+                dev_rows = self._patterns_conn.execute(
+                    """
+                    SELECT device_id, created_at, updated_at, phase, predicted_label,
+                           user_label, final_label, confirmed, confidence_avg,
+                           times_seen_total, notes, active
+                    FROM devices
+                    WHERE active = 1
+                    ORDER BY times_seen_total DESC, updated_at DESC
+                    LIMIT 500
+                    """
+                ).fetchall()
+                devices = [
+                    {
+                        "device_id": int(r[0]),
+                        "created_at": r[1],
+                        "updated_at": r[2],
+                        "phase": r[3],
+                        "predicted_label": r[4],
+                        "user_label": r[5],
+                        "final_label": r[6],
+                        "confirmed": int(r[7] or 0),
+                        "confidence_avg": float(r[8] or 0.0),
+                        "times_seen_total": int(r[9] or 0),
+                        "notes": r[10],
+                        "active": int(r[11] or 0),
+                    }
+                    for r in dev_rows
+                ]
+        except Exception as e:
+            logger.warning("Failed to export devices: %s", e)
+
+        try:
+            if self._patterns_conn and self._table_exists(self._patterns_conn, "events"):
+                evt_rows = self._patterns_conn.execute(
+                    """
+                    SELECT event_id, created_at, phase, start_ts, end_ts, duration_s,
+                           avg_power_w, peak_power_w, energy_wh,
+                           assigned_pattern_id, assigned_device_id,
+                           final_label, final_confidence
+                    FROM events
+                    ORDER BY event_id DESC
+                    LIMIT 1000
+                    """
+                ).fetchall()
+                recent_events = [
+                    {
+                        "event_id": int(r[0]),
+                        "created_at": r[1],
+                        "phase": r[2],
+                        "start_ts": r[3],
+                        "end_ts": r[4],
+                        "duration_s": float(r[5] or 0.0),
+                        "avg_power_w": float(r[6] or 0.0),
+                        "peak_power_w": float(r[7] or 0.0),
+                        "energy_wh": float(r[8] or 0.0),
+                        "assigned_pattern_id": int(r[9] or 0),
+                        "assigned_device_id": int(r[10] or 0),
+                        "final_label": r[11],
+                        "final_confidence": float(r[12] or 0.0),
+                    }
+                    for r in evt_rows
+                ]
+        except Exception as e:
+            logger.warning("Failed to export events: %s", e)
+
+        try:
+            if self._patterns_conn and self._table_exists(self._patterns_conn, "user_labels"):
+                label_rows = self._patterns_conn.execute(
+                    """
+                    SELECT id, created_at, pattern_id, device_id, old_label, new_label, comment
+                    FROM user_labels
+                    ORDER BY id DESC
+                    LIMIT 500
+                    """
+                ).fetchall()
+                recent_labels = [
+                    {
+                        "id": int(r[0]),
+                        "created_at": r[1],
+                        "pattern_id": int(r[2] or 0),
+                        "device_id": int(r[3] or 0),
+                        "old_label": r[4],
+                        "new_label": r[5],
+                        "comment": r[6],
+                    }
+                    for r in label_rows
+                ]
+        except Exception as e:
+            logger.warning("Failed to export user labels: %s", e)
         
         return {
             "exported_at": datetime.now().isoformat(),
             "patterns": patterns,
             "readings": readings,
             "pattern_dataset": dataset,
+            "devices": devices,
+            "events": recent_events,
+            "user_labels": recent_labels,
         }
+
+    def list_devices(self, limit: int = 500) -> List[Dict[str, Any]]:
+        if not self._patterns_conn or not self._table_exists(self._patterns_conn, "devices"):
+            return []
+        try:
+            rows = self._patterns_conn.execute(
+                """
+                SELECT device_id, created_at, updated_at, phase, predicted_label,
+                       user_label, final_label, confirmed, confidence_avg,
+                       times_seen_total, notes, active
+                FROM devices
+                ORDER BY times_seen_total DESC, updated_at DESC
+                LIMIT ?
+                """,
+                (int(max(limit, 1)),),
+            ).fetchall()
+            return [
+                {
+                    "device_id": int(r[0]),
+                    "created_at": r[1],
+                    "updated_at": r[2],
+                    "phase": r[3],
+                    "predicted_label": r[4],
+                    "user_label": r[5],
+                    "final_label": r[6],
+                    "confirmed": int(r[7] or 0),
+                    "confidence_avg": float(r[8] or 0.0),
+                    "times_seen_total": int(r[9] or 0),
+                    "notes": r[10],
+                    "active": int(r[11] or 0),
+                }
+                for r in rows
+            ]
+        except Exception as e:
+            logger.warning("Failed to list devices: %s", e)
+            return []
+
+    def list_events(self, limit: int = 1000) -> List[Dict[str, Any]]:
+        if not self._patterns_conn or not self._table_exists(self._patterns_conn, "events"):
+            return []
+        try:
+            rows = self._patterns_conn.execute(
+                """
+                SELECT event_id, created_at, phase, start_ts, end_ts, duration_s,
+                       avg_power_w, peak_power_w, energy_wh,
+                       assigned_pattern_id, assigned_device_id,
+                       match_score, shape_score, ml_score,
+                       final_label, final_confidence, rejected_reason
+                FROM events
+                ORDER BY event_id DESC
+                LIMIT ?
+                """,
+                (int(max(limit, 1)),),
+            ).fetchall()
+            return [
+                {
+                    "event_id": int(r[0]),
+                    "created_at": r[1],
+                    "phase": r[2],
+                    "start_ts": r[3],
+                    "end_ts": r[4],
+                    "duration_s": float(r[5] or 0.0),
+                    "avg_power_w": float(r[6] or 0.0),
+                    "peak_power_w": float(r[7] or 0.0),
+                    "energy_wh": float(r[8] or 0.0),
+                    "assigned_pattern_id": int(r[9] or 0),
+                    "assigned_device_id": int(r[10] or 0),
+                    "match_score": float(r[11] or 0.0),
+                    "shape_score": float(r[12] or 0.0),
+                    "ml_score": float(r[13] or 0.0),
+                    "final_label": r[14],
+                    "final_confidence": float(r[15] or 0.0),
+                    "rejected_reason": r[16],
+                }
+                for r in rows
+            ]
+        except Exception as e:
+            logger.warning("Failed to list events: %s", e)
+            return []
+
+    def list_classification_logs(self, limit: int = 1000) -> List[Dict[str, Any]]:
+        if not self._patterns_conn or not self._table_exists(self._patterns_conn, "classification_log"):
+            return []
+        try:
+            rows = self._patterns_conn.execute(
+                """
+                SELECT id, created_at, event_id, pattern_id, device_id,
+                       prototype_label, prototype_score,
+                       shape_label, shape_score,
+                       ml_label, ml_confidence,
+                       rule_label, rule_reason,
+                       final_label, final_confidence, decision_source
+                FROM classification_log
+                ORDER BY id DESC
+                LIMIT ?
+                """,
+                (int(max(limit, 1)),),
+            ).fetchall()
+            return [
+                {
+                    "id": int(r[0]),
+                    "created_at": r[1],
+                    "event_id": int(r[2] or 0),
+                    "pattern_id": int(r[3] or 0),
+                    "device_id": int(r[4] or 0),
+                    "prototype_label": r[5],
+                    "prototype_score": float(r[6] or 0.0),
+                    "shape_label": r[7],
+                    "shape_score": float(r[8] or 0.0),
+                    "ml_label": r[9],
+                    "ml_confidence": float(r[10] or 0.0),
+                    "rule_label": r[11],
+                    "rule_reason": r[12],
+                    "final_label": r[13],
+                    "final_confidence": float(r[14] or 0.0),
+                    "decision_source": r[15],
+                }
+                for r in rows
+            ]
+        except Exception as e:
+            logger.warning("Failed to list classification logs: %s", e)
+            return []
+
+    def list_user_labels(self, limit: int = 1000) -> List[Dict[str, Any]]:
+        if not self._patterns_conn or not self._table_exists(self._patterns_conn, "user_labels"):
+            return []
+        try:
+            rows = self._patterns_conn.execute(
+                """
+                SELECT id, created_at, pattern_id, device_id, old_label, new_label,
+                       confirmed_by_user, comment
+                FROM user_labels
+                ORDER BY id DESC
+                LIMIT ?
+                """,
+                (int(max(limit, 1)),),
+            ).fetchall()
+            return [
+                {
+                    "id": int(r[0]),
+                    "created_at": r[1],
+                    "pattern_id": int(r[2] or 0),
+                    "device_id": int(r[3] or 0),
+                    "old_label": r[4],
+                    "new_label": r[5],
+                    "confirmed_by_user": int(r[6] or 0),
+                    "comment": r[7],
+                }
+                for r in rows
+            ]
+        except Exception as e:
+            logger.warning("Failed to list user labels: %s", e)
+            return []
     
     def import_data(self, data: Dict) -> Dict:
         """Import patterns and readings from JSON export."""
@@ -947,6 +1365,79 @@ class SQLiteStore:
             "errors": errors,
         }
 
+    def export_training_dataset_jsonl(self, limit: int = 5000) -> str:
+        """Export cycle events with labels as JSONL for downstream ML training."""
+        if not self._patterns_conn or not self._table_exists(self._patterns_conn, "events"):
+            return ""
+        try:
+            rows = self._patterns_conn.execute(
+                """
+                SELECT event_id, created_at, phase, duration_s, avg_power_w, peak_power_w,
+                       energy_wh, assigned_pattern_id, assigned_device_id, final_label,
+                       final_confidence, resampled_points_json
+                FROM events
+                WHERE COALESCE(final_label, '') != ''
+                ORDER BY event_id DESC
+                LIMIT ?
+                """,
+                (int(limit),),
+            ).fetchall()
+            lines: List[str] = []
+            for r in rows:
+                payload = {
+                    "event_id": int(r[0]),
+                    "created_at": r[1],
+                    "phase": r[2],
+                    "duration_s": float(r[3] or 0.0),
+                    "avg_power_w": float(r[4] or 0.0),
+                    "peak_power_w": float(r[5] or 0.0),
+                    "energy_wh": float(r[6] or 0.0),
+                    "pattern_id": int(r[7] or 0),
+                    "device_id": int(r[8] or 0),
+                    "label": r[9],
+                    "confidence": float(r[10] or 0.0),
+                    "resampled_points": json.loads(str(r[11] or "[]")),
+                }
+                lines.append(json.dumps(payload, ensure_ascii=True))
+            return "\n".join(lines)
+        except Exception as e:
+            logger.warning("Failed to export JSONL training dataset: %s", e)
+            return ""
+
+    def export_features_csv(self, limit: int = 5000) -> str:
+        """Export labeled event-level features as CSV for model experimentation."""
+        if not self._patterns_conn or not self._table_exists(self._patterns_conn, "events"):
+            return ""
+        try:
+            rows = self._patterns_conn.execute(
+                """
+                SELECT event_id, created_at, phase, duration_s, avg_power_w, peak_power_w,
+                       energy_wh, match_score, shape_score, ml_score,
+                       final_label, final_confidence
+                FROM events
+                WHERE COALESCE(final_label, '') != ''
+                ORDER BY event_id DESC
+                LIMIT ?
+                """,
+                (int(limit),),
+            ).fetchall()
+            buffer = io.StringIO()
+            writer = csv.writer(buffer)
+            writer.writerow([
+                "event_id", "created_at", "phase", "duration_s", "avg_power_w", "peak_power_w",
+                "energy_wh", "match_score", "shape_score", "ml_score", "final_label", "final_confidence",
+            ])
+            for r in rows:
+                writer.writerow([
+                    int(r[0]), r[1], r[2], float(r[3] or 0.0), float(r[4] or 0.0), float(r[5] or 0.0),
+                    float(r[6] or 0.0), float(r[7] or 0.0), float(r[8] or 0.0), float(r[9] or 0.0),
+                    r[10], float(r[11] or 0.0),
+                ])
+            return buffer.getvalue()
+        except Exception as e:
+            logger.warning("Failed to export feature CSV: %s", e)
+            return ""
+
     def _create_tables(self) -> None:
         if not self._conn:
             return
@@ -1000,6 +1491,46 @@ class SQLiteStore:
         with self._patterns_conn:
             self._patterns_conn.execute(
                 """
+                CREATE TABLE IF NOT EXISTS patterns (
+                    pattern_id INTEGER PRIMARY KEY,
+                    device_id INTEGER,
+                    created_at TEXT NOT NULL,
+                    updated_at TEXT NOT NULL,
+                    first_seen TEXT NOT NULL,
+                    last_seen TEXT NOT NULL,
+                    seen_count INTEGER NOT NULL DEFAULT 1,
+                    phase TEXT,
+                    phase_mode TEXT,
+                    avg_power_w REAL,
+                    peak_power_w REAL,
+                    duration_s REAL,
+                    energy_wh REAL,
+                    stability_score REAL,
+                    confidence_score REAL,
+                    frequency_per_day REAL,
+                    typical_interval_s REAL,
+                    quality_score_avg REAL,
+                    suggestion_type TEXT,
+                    candidate_name TEXT,
+                    status TEXT,
+                    is_confirmed INTEGER DEFAULT 0,
+                    profile_points_json TEXT,
+                    shape_vector_json TEXT,
+                    prototype_hash TEXT,
+                    num_substates INTEGER DEFAULT 0,
+                    step_count INTEGER DEFAULT 0,
+                    plateau_count INTEGER DEFAULT 0,
+                    shape_similarity_score REAL DEFAULT 0.0,
+                    cluster_similarity_score REAL DEFAULT 0.0
+                )
+                """
+            )
+            self._patterns_conn.execute(
+                "CREATE INDEX IF NOT EXISTS idx_patterns_seen ON patterns(last_seen)"
+            )
+
+            self._patterns_conn.execute(
+                """
                 CREATE TABLE IF NOT EXISTS learned_patterns (
                     id INTEGER PRIMARY KEY AUTOINCREMENT,
                     created_at TEXT NOT NULL,
@@ -1047,6 +1578,160 @@ class SQLiteStore:
             self._ensure_column(self._patterns_conn, "learned_patterns", "hour_distribution_json", "TEXT DEFAULT '{}'")  # Hour frequency map
             self._ensure_column(self._patterns_conn, "learned_patterns", "profile_points_json", "TEXT DEFAULT '[]'")
             self._ensure_column(self._patterns_conn, "learned_patterns", "quality_score_avg", "REAL DEFAULT 0.5")
+            self._ensure_column(self._patterns_conn, "learned_patterns", "device_id", "INTEGER")
+            self._ensure_column(self._patterns_conn, "learned_patterns", "confidence_score", "REAL DEFAULT 0.0")
+            self._ensure_column(self._patterns_conn, "learned_patterns", "frequency_per_day", "REAL DEFAULT 0.0")
+            self._ensure_column(self._patterns_conn, "learned_patterns", "candidate_name", "TEXT")
+            self._ensure_column(self._patterns_conn, "learned_patterns", "is_confirmed", "INTEGER DEFAULT 0")
+            self._ensure_column(self._patterns_conn, "learned_patterns", "shape_vector_json", "TEXT DEFAULT '[]'")
+            self._ensure_column(self._patterns_conn, "learned_patterns", "prototype_hash", "TEXT DEFAULT ''")
+
+            self._patterns_conn.execute(
+                """
+                CREATE TABLE IF NOT EXISTS devices (
+                    device_id INTEGER PRIMARY KEY AUTOINCREMENT,
+                    created_at TEXT NOT NULL,
+                    updated_at TEXT NOT NULL,
+                    phase TEXT,
+                    predicted_label TEXT,
+                    user_label TEXT,
+                    final_label TEXT,
+                    confirmed INTEGER DEFAULT 0,
+                    confidence_avg REAL DEFAULT 0.0,
+                    times_seen_total INTEGER DEFAULT 0,
+                    notes TEXT,
+                    active INTEGER DEFAULT 1
+                )
+                """
+            )
+            self._patterns_conn.execute(
+                "CREATE INDEX IF NOT EXISTS idx_devices_final_label_phase ON devices(final_label, phase)"
+            )
+
+            self._patterns_conn.execute(
+                """
+                CREATE TABLE IF NOT EXISTS events (
+                    event_id INTEGER PRIMARY KEY AUTOINCREMENT,
+                    created_at TEXT NOT NULL,
+                    phase TEXT,
+                    start_ts TEXT,
+                    end_ts TEXT,
+                    duration_s REAL,
+                    avg_power_w REAL,
+                    peak_power_w REAL,
+                    energy_wh REAL,
+                    raw_points_json TEXT,
+                    resampled_points_json TEXT,
+                    assigned_pattern_id INTEGER,
+                    assigned_device_id INTEGER,
+                    match_score REAL,
+                    shape_score REAL,
+                    ml_score REAL,
+                    final_label TEXT,
+                    final_confidence REAL,
+                    rejected_reason TEXT
+                )
+                """
+            )
+            self._patterns_conn.execute(
+                "CREATE INDEX IF NOT EXISTS idx_events_created ON events(created_at)"
+            )
+            self._patterns_conn.execute(
+                "CREATE INDEX IF NOT EXISTS idx_events_pattern ON events(assigned_pattern_id)"
+            )
+
+            self._patterns_conn.execute(
+                """
+                CREATE TABLE IF NOT EXISTS pattern_features (
+                    id INTEGER PRIMARY KEY AUTOINCREMENT,
+                    pattern_id INTEGER NOT NULL,
+                    feature_version TEXT NOT NULL,
+                    power_variance REAL,
+                    power_std REAL,
+                    power_cv REAL,
+                    power_range REAL,
+                    num_substates INTEGER,
+                    step_count INTEGER,
+                    max_step_w REAL,
+                    avg_step_w REAL,
+                    plateau_count INTEGER,
+                    dominant_power_levels_json TEXT,
+                    substate_durations_json TEXT,
+                    substate_power_levels_json TEXT,
+                    rise_rate_w_per_s REAL,
+                    fall_rate_w_per_s REAL,
+                    shape_embedding_json TEXT,
+                    created_at TEXT NOT NULL
+                )
+                """
+            )
+            self._patterns_conn.execute(
+                "CREATE INDEX IF NOT EXISTS idx_pattern_features_pattern ON pattern_features(pattern_id, created_at DESC)"
+            )
+
+            self._patterns_conn.execute(
+                """
+                CREATE TABLE IF NOT EXISTS classification_log (
+                    id INTEGER PRIMARY KEY AUTOINCREMENT,
+                    created_at TEXT NOT NULL,
+                    event_id INTEGER,
+                    pattern_id INTEGER,
+                    device_id INTEGER,
+                    prototype_label TEXT,
+                    prototype_score REAL,
+                    shape_label TEXT,
+                    shape_score REAL,
+                    ml_label TEXT,
+                    ml_confidence REAL,
+                    rule_label TEXT,
+                    rule_reason TEXT,
+                    final_label TEXT,
+                    final_confidence REAL,
+                    decision_source TEXT
+                )
+                """
+            )
+            self._patterns_conn.execute(
+                "CREATE INDEX IF NOT EXISTS idx_classification_log_created ON classification_log(created_at)"
+            )
+
+            self._patterns_conn.execute(
+                """
+                CREATE TABLE IF NOT EXISTS user_labels (
+                    id INTEGER PRIMARY KEY AUTOINCREMENT,
+                    created_at TEXT NOT NULL,
+                    pattern_id INTEGER,
+                    device_id INTEGER,
+                    old_label TEXT,
+                    new_label TEXT,
+                    confirmed_by_user INTEGER DEFAULT 1,
+                    comment TEXT
+                )
+                """
+            )
+            self._patterns_conn.execute(
+                "CREATE INDEX IF NOT EXISTS idx_user_labels_pattern ON user_labels(pattern_id, created_at DESC)"
+            )
+
+            self._patterns_conn.execute(
+                """
+                CREATE TABLE IF NOT EXISTS pattern_history (
+                    id INTEGER PRIMARY KEY AUTOINCREMENT,
+                    pattern_id INTEGER NOT NULL,
+                    snapshot_ts TEXT NOT NULL,
+                    seen_count INTEGER,
+                    avg_power_w REAL,
+                    peak_power_w REAL,
+                    duration_s REAL,
+                    confidence_score REAL,
+                    profile_points_json TEXT,
+                    quality_score_avg REAL
+                )
+                """
+            )
+            self._patterns_conn.execute(
+                "CREATE INDEX IF NOT EXISTS idx_pattern_history_pattern ON pattern_history(pattern_id, snapshot_ts DESC)"
+            )
 
             # Migration tracking table – one row per migration event (unique key prevents re-runs)
             self._patterns_conn.execute(
@@ -1159,6 +1844,349 @@ class SQLiteStore:
             score -= 0.08
 
         return max(0.0, min(1.0, score))
+
+    @staticmethod
+    def _resample_profile_points(points: List[Dict[str, float]], sample_count: int = 32) -> List[float]:
+        """Resample normalized profile points to a fixed vector length."""
+        normalized = SQLiteStore._normalize_profile_points(points)
+        if len(normalized) < 2:
+            return []
+
+        def interpolate(t_norm: float) -> float:
+            left = normalized[0]
+            for idx in range(1, len(normalized)):
+                right = normalized[idx]
+                if right["t_norm"] >= t_norm:
+                    span = max(right["t_norm"] - left["t_norm"], 1e-6)
+                    alpha = (t_norm - left["t_norm"]) / span
+                    return left["power_w"] * (1.0 - alpha) + right["power_w"] * alpha
+                left = right
+            return normalized[-1]["power_w"]
+
+        out: List[float] = []
+        for idx in range(max(sample_count, 8)):
+            t = idx / max(sample_count - 1, 1)
+            out.append(round(float(interpolate(t)), 3))
+        return out
+
+    @staticmethod
+    def _prototype_hash_from_cycle(cycle: Dict) -> str:
+        """Create a stable fingerprint for a cycle prototype."""
+        payload = {
+            "avg": round(float(cycle.get("avg_power_w", 0.0)), 2),
+            "peak": round(float(cycle.get("peak_power_w", 0.0)), 2),
+            "dur": round(float(cycle.get("duration_s", 0.0)), 2),
+            "ene": round(float(cycle.get("energy_wh", 0.0)), 3),
+            "sub": int(cycle.get("num_substates", 0) or 0),
+            "step": int(cycle.get("step_count", 0) or 0),
+            "profile": SQLiteStore._resample_profile_points(cycle.get("profile_points", []), sample_count=24),
+        }
+        raw = json.dumps(payload, sort_keys=True, separators=(",", ":"))
+        return hashlib.sha1(raw.encode("utf-8")).hexdigest()
+
+    @staticmethod
+    def _infer_unknown_subclass(cycle: Dict) -> str:
+        """Refine unknown classes for better internal diagnostics and future ML."""
+        avg_power = float(cycle.get("avg_power_w", 0.0) or 0.0)
+        duration_s = float(cycle.get("duration_s", 0.0) or 0.0)
+        if bool(cycle.get("has_motor_pattern", False)):
+            return "unknown_motor_like"
+        if bool(cycle.get("has_heating_pattern", False)):
+            return "unknown_heater_like"
+        if duration_s <= 12.0:
+            return "unknown_short_pulse"
+        if duration_s >= 1800.0:
+            return "unknown_long_running"
+        if avg_power <= 60.0:
+            return "unknown_low_power_cycle"
+        return "unknown_electronics"
+
+    def _get_or_create_device(self, label: str, phase: str, confidence: float, confirmed: bool = False) -> int | None:
+        """Return device_id for label/phase pair, creating it if needed."""
+        if not self._patterns_conn:
+            return None
+
+        clean_label = str(label or "").strip() or "unknown"
+        now = datetime.now().isoformat()
+        try:
+            row = self._patterns_conn.execute(
+                """
+                SELECT device_id, times_seen_total, confidence_avg, confirmed
+                FROM devices
+                WHERE final_label = ? AND COALESCE(phase, '') = ? AND active = 1
+                ORDER BY device_id ASC
+                LIMIT 1
+                """,
+                (clean_label, str(phase or "")),
+            ).fetchone()
+            if row:
+                device_id = int(row[0])
+                seen = int(row[1] or 0) + 1
+                prev_conf = float(row[2] or 0.0)
+                conf_avg = ((prev_conf * max(seen - 1, 0)) + float(confidence)) / float(max(seen, 1))
+                with self._patterns_conn:
+                    self._patterns_conn.execute(
+                        """
+                        UPDATE devices
+                        SET updated_at = ?, times_seen_total = ?, confidence_avg = ?, confirmed = ?
+                        WHERE device_id = ?
+                        """,
+                        (now, seen, conf_avg, 1 if (confirmed or bool(row[3])) else 0, device_id),
+                    )
+                return device_id
+
+            with self._patterns_conn:
+                cur = self._patterns_conn.execute(
+                    """
+                    INSERT INTO devices (
+                        created_at, updated_at, phase, predicted_label, user_label,
+                        final_label, confirmed, confidence_avg, times_seen_total, notes, active
+                    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                    """,
+                    (
+                        now,
+                        now,
+                        str(phase or ""),
+                        clean_label,
+                        clean_label if confirmed else None,
+                        clean_label,
+                        1 if confirmed else 0,
+                        float(confidence),
+                        1,
+                        "auto-created from pattern learning",
+                        1,
+                    ),
+                )
+                return int(cur.lastrowid or 0)
+        except Exception as e:
+            logger.debug("_get_or_create_device failed: %s", e)
+            return None
+
+    def _record_cycle_event(
+        self,
+        cycle: Dict,
+        assigned_pattern_id: int | None,
+        assigned_device_id: int | None,
+        final_label: str,
+        final_confidence: float,
+        rejected_reason: str | None = None,
+    ) -> int | None:
+        """Persist one detected cycle event for long-term training/replay."""
+        if not self._patterns_conn:
+            return None
+        now = datetime.now().isoformat()
+        try:
+            profile_points = self._normalize_profile_points(cycle.get("profile_points", []))
+            resampled = self._resample_profile_points(profile_points, sample_count=32)
+            with self._patterns_conn:
+                cur = self._patterns_conn.execute(
+                    """
+                    INSERT INTO events (
+                        created_at, phase, start_ts, end_ts, duration_s,
+                        avg_power_w, peak_power_w, energy_wh,
+                        raw_points_json, resampled_points_json,
+                        assigned_pattern_id, assigned_device_id,
+                        match_score, shape_score, ml_score,
+                        final_label, final_confidence, rejected_reason
+                    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                    """,
+                    (
+                        now,
+                        str(cycle.get("phase", "L1")),
+                        str(cycle.get("start_ts", "")),
+                        str(cycle.get("end_ts", "")),
+                        float(cycle.get("duration_s", 0.0)),
+                        float(cycle.get("avg_power_w", 0.0)),
+                        float(cycle.get("peak_power_w", 0.0)),
+                        float(cycle.get("energy_wh", 0.0)),
+                        json.dumps(profile_points),
+                        json.dumps(resampled),
+                        int(assigned_pattern_id) if assigned_pattern_id else None,
+                        int(assigned_device_id) if assigned_device_id else None,
+                        float(self._last_hybrid_decision.get("confidence", 0.0) or 0.0),
+                        float((self._last_hybrid_decision.get("explain") or {}).get("shape_confidence", 0.0) or 0.0),
+                        float((((self._last_hybrid_decision.get("explain") or {}).get("ml") or {}).get("confidence", 0.0) or 0.0)),
+                        str(final_label or "unknown"),
+                        float(final_confidence or 0.0),
+                        str(rejected_reason) if rejected_reason else None,
+                    ),
+                )
+                return int(cur.lastrowid or 0)
+        except Exception as e:
+            logger.debug("_record_cycle_event failed: %s", e)
+            return None
+
+    def _record_classification_log(
+        self,
+        event_id: int | None,
+        pattern_id: int | None,
+        device_id: int | None,
+        final_label: str,
+        final_confidence: float,
+        decision_source: str,
+    ) -> None:
+        """Persist explainable classification decision details."""
+        if not self._patterns_conn:
+            return
+        explain = dict(self._last_hybrid_decision.get("explain") or {})
+        ml = dict(explain.get("ml") or {})
+        try:
+            with self._patterns_conn:
+                self._patterns_conn.execute(
+                    """
+                    INSERT INTO classification_log (
+                        created_at, event_id, pattern_id, device_id,
+                        prototype_label, prototype_score,
+                        shape_label, shape_score,
+                        ml_label, ml_confidence,
+                        rule_label, rule_reason,
+                        final_label, final_confidence, decision_source
+                    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                    """,
+                    (
+                        datetime.now().isoformat(),
+                        int(event_id) if event_id else None,
+                        int(pattern_id) if pattern_id else None,
+                        int(device_id) if device_id else None,
+                        str(explain.get("best_label") or "unknown"),
+                        float(explain.get("prototype_confidence", 0.0) or 0.0),
+                        str(explain.get("best_label") or "unknown"),
+                        float(explain.get("shape_confidence", 0.0) or 0.0),
+                        str(ml.get("label") or "unknown"),
+                        float(ml.get("confidence", 0.0) or 0.0),
+                        str(final_label or "unknown"),
+                        str(decision_source or "unspecified"),
+                        str(final_label or "unknown"),
+                        float(final_confidence or 0.0),
+                        str(decision_source or "unspecified"),
+                    ),
+                )
+        except Exception as e:
+            logger.debug("_record_classification_log failed: %s", e)
+
+    def _record_pattern_features(self, pattern_id: int, cycle: Dict, feature_version: str = "v2") -> None:
+        """Store a versioned feature snapshot for one pattern update/create event."""
+        if not self._patterns_conn or not pattern_id:
+            return
+
+        profile_points = self._normalize_profile_points(cycle.get("profile_points", []))
+        power_levels = [float(p.get("power_w", 0.0)) for p in profile_points]
+        if power_levels:
+            power_min = min(power_levels)
+            power_max = max(power_levels)
+            power_range = power_max - power_min
+            power_std = (float(cycle.get("power_variance", 0.0) or 0.0) ** 0.5)
+            power_cv = (power_std / max(float(cycle.get("avg_power_w", 0.0) or 1.0), 1.0))
+        else:
+            power_range = 0.0
+            power_std = 0.0
+            power_cv = 0.0
+
+        step_count = int(cycle.get("step_count", 0) or 0)
+        avg_step_w = (power_range / max(step_count, 1)) if step_count > 0 else 0.0
+
+        try:
+            with self._patterns_conn:
+                self._patterns_conn.execute(
+                    """
+                    INSERT INTO pattern_features (
+                        pattern_id, feature_version,
+                        power_variance, power_std, power_cv, power_range,
+                        num_substates, step_count, max_step_w, avg_step_w,
+                        plateau_count, dominant_power_levels_json,
+                        substate_durations_json, substate_power_levels_json,
+                        rise_rate_w_per_s, fall_rate_w_per_s,
+                        shape_embedding_json, created_at
+                    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                    """,
+                    (
+                        int(pattern_id),
+                        str(feature_version),
+                        float(cycle.get("power_variance", 0.0) or 0.0),
+                        power_std,
+                        power_cv,
+                        power_range,
+                        int(cycle.get("num_substates", 0) or 0),
+                        step_count,
+                        power_range,
+                        avg_step_w,
+                        int(cycle.get("num_substates", 0) or 0),
+                        json.dumps(power_levels[:16]),
+                        "[]",
+                        "[]",
+                        float(cycle.get("rise_rate_w_per_s", 0.0) or 0.0),
+                        float(cycle.get("fall_rate_w_per_s", 0.0) or 0.0),
+                        json.dumps(self._resample_profile_points(profile_points, sample_count=32)),
+                        datetime.now().isoformat(),
+                    ),
+                )
+        except Exception as e:
+            logger.debug("_record_pattern_features failed: %s", e)
+
+    def _record_pattern_history_snapshot(self, pattern: Dict) -> None:
+        """Persist lightweight history snapshots for drift tracking."""
+        if not self._patterns_conn:
+            return
+        pattern_id = int(pattern.get("id", 0) or 0)
+        if pattern_id <= 0:
+            return
+        try:
+            with self._patterns_conn:
+                self._patterns_conn.execute(
+                    """
+                    INSERT INTO pattern_history (
+                        pattern_id, snapshot_ts, seen_count,
+                        avg_power_w, peak_power_w, duration_s,
+                        confidence_score, profile_points_json, quality_score_avg
+                    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+                    """,
+                    (
+                        pattern_id,
+                        datetime.now().isoformat(),
+                        int(pattern.get("seen_count", 0) or 0),
+                        float(pattern.get("avg_power_w", 0.0) or 0.0),
+                        float(pattern.get("peak_power_w", 0.0) or 0.0),
+                        float(pattern.get("duration_s", 0.0) or 0.0),
+                        float(pattern.get("confidence_score", 0.0) or 0.0),
+                        json.dumps(self._normalize_profile_points(pattern.get("profile_points", []))),
+                        float(pattern.get("quality_score_avg", 0.0) or 0.0),
+                    ),
+                )
+        except Exception as e:
+            logger.debug("_record_pattern_history_snapshot failed: %s", e)
+
+    def _record_user_label_change(
+        self,
+        pattern_id: int,
+        device_id: int | None,
+        old_label: str,
+        new_label: str,
+        comment: str | None = None,
+    ) -> None:
+        """Persist user label corrections for later supervised ML training."""
+        if not self._patterns_conn:
+            return
+        try:
+            with self._patterns_conn:
+                self._patterns_conn.execute(
+                    """
+                    INSERT INTO user_labels (
+                        created_at, pattern_id, device_id, old_label, new_label,
+                        confirmed_by_user, comment
+                    ) VALUES (?, ?, ?, ?, ?, ?, ?)
+                    """,
+                    (
+                        datetime.now().isoformat(),
+                        int(pattern_id),
+                        int(device_id) if device_id else None,
+                        str(old_label or ""),
+                        str(new_label or ""),
+                        1,
+                        str(comment) if comment else None,
+                    ),
+                )
+        except Exception as e:
+            logger.debug("_record_user_label_change failed: %s", e)
 
     @staticmethod
     def _parse_operating_modes(raw: object) -> List[Dict]:
@@ -2002,7 +3030,11 @@ class SQLiteStore:
                       COALESCE(rise_rate_w_per_s, 0.0), COALESCE(fall_rate_w_per_s, 0.0),
                                                 COALESCE(num_substates, 0), COALESCE(step_count, 0),
                                                 COALESCE(has_heating_pattern, 0), COALESCE(has_motor_pattern, 0),
-                                                COALESCE(profile_points_json, '[]'), COALESCE(quality_score_avg, 0.5)
+                                                COALESCE(profile_points_json, '[]'), COALESCE(quality_score_avg, 0.5),
+                                                COALESCE(device_id, 0), COALESCE(confidence_score, 0.0),
+                                                COALESCE(frequency_per_day, 0.0), COALESCE(candidate_name, ''),
+                                                COALESCE(is_confirmed, 0), COALESCE(shape_vector_json, '[]'),
+                                                COALESCE(prototype_hash, '')
                 FROM learned_patterns
                 ORDER BY seen_count DESC, last_seen DESC
                 LIMIT ?
@@ -2123,8 +3155,13 @@ class SQLiteStore:
                         "profile_points": profile_points,
                         "quality_score_avg": quality_score_avg,
                         "confidence_score": round(confidence_score, 1),
-                        "candidate_name": self._normalize_pattern_name(row[11] or row[10]),
-                        "is_confirmed": bool(str(row[11] or "").strip()),
+                        "device_id": int(row[33] or 0),
+                        "confidence_score_db": float(row[34] or 0.0),
+                        "frequency_per_day_db": float(row[35] or 0.0),
+                        "candidate_name": str(row[36] or self._normalize_pattern_name(row[11] or row[10])),
+                        "is_confirmed": bool(int(row[37] or 0)) or bool(str(row[11] or "").strip()),
+                        "shape_vector_json": str(row[38] or "[]"),
+                        "prototype_hash": str(row[39] or ""),
                     }
                 )
 
@@ -2217,6 +3254,8 @@ class SQLiteStore:
                 if not profile_points:
                     profile_points = self._normalize_profile_points(best.get("profile_points", []))
                 profile_points_json = json.dumps(profile_points)
+                shape_vector_json = json.dumps(self._resample_profile_points(profile_points, sample_count=32))
+                prototype_hash = self._prototype_hash_from_cycle(cycle)
                 quality_score_avg = float(best.get("quality_score_avg", 0.5)) * (1.0 - alpha) + quality_score * alpha
                 candidate_mode = self._build_mode_signature(cycle, str(cycle.get("end_ts", now)))
                 merged_modes = self._merge_operating_modes(
@@ -2275,6 +3314,14 @@ class SQLiteStore:
                     last_seen_iso=str(cycle.get("end_ts") or now),
                 )
                 final_label, freq_rule = self._refine_label_by_frequency(base_label, avg_power, frequency_per_day)
+                confidence_score_norm = max(0.0, min(1.0, (quality_score_avg * 0.7) + ((1.0 - math.exp(-seen_count / 8.0)) * 0.3)))
+                candidate_name = self._normalize_pattern_name(best.get("user_label") or final_label)
+                device_id = self._get_or_create_device(
+                    label=best.get("user_label") or final_label,
+                    phase=phase,
+                    confidence=confidence_score_norm,
+                    confirmed=bool(best.get("user_label")),
+                )
 
                 with self._patterns_conn:
                     self._patterns_conn.execute(
@@ -2289,6 +3336,13 @@ class SQLiteStore:
                             profile_points_json = ?,
                             quality_score_avg = ?,
                             suggestion_type = ?,
+                            device_id = ?,
+                            confidence_score = ?,
+                            frequency_per_day = ?,
+                            candidate_name = ?,
+                            is_confirmed = ?,
+                            shape_vector_json = ?,
+                            prototype_hash = ?,
                             operating_modes = ?,
                             has_multiple_modes = ?,
                             typical_interval_s = ?, avg_hour_of_day = ?,
@@ -2318,6 +3372,13 @@ class SQLiteStore:
                             profile_points_json,
                             quality_score_avg,
                             final_label,
+                            int(device_id) if device_id else None,
+                            confidence_score_norm,
+                            frequency_per_day,
+                            candidate_name,
+                            1 if bool(best.get("user_label")) else int(best.get("is_confirmed", 0) or 0),
+                            shape_vector_json,
+                            prototype_hash,
                             operating_modes_json,
                             has_multiple_modes,
                             typical_interval_s,
@@ -2365,9 +3426,34 @@ class SQLiteStore:
                         "profile_points": profile_points,
                         "quality_score_avg": quality_score_avg,
                         "suggestion_type": final_label,
+                        "device_id": int(device_id) if device_id else int(best.get("device_id", 0) or 0),
+                        "confidence_score_db": confidence_score_norm,
+                        "frequency_per_day_db": frequency_per_day,
+                        "candidate_name": candidate_name,
+                        "is_confirmed": bool(best.get("user_label")) or bool(best.get("is_confirmed", False)),
+                        "shape_vector_json": shape_vector_json,
+                        "prototype_hash": prototype_hash,
                         "operating_modes": merged_modes,
                         "has_multiple_modes": bool(has_multiple_modes),
                     }
+                )
+                self._record_pattern_features(int(best["id"]), cycle)
+                self._record_pattern_history_snapshot(best)
+                self._upsert_patterns_mirror(best)
+                event_id = self._record_cycle_event(
+                    cycle=cycle,
+                    assigned_pattern_id=int(best["id"]),
+                    assigned_device_id=int(device_id) if device_id else None,
+                    final_label=final_label,
+                    final_confidence=float(self._last_hybrid_decision.get("confidence", 0.0) or 0.0),
+                )
+                self._record_classification_log(
+                    event_id=event_id,
+                    pattern_id=int(best["id"]),
+                    device_id=int(device_id) if device_id else None,
+                    final_label=final_label,
+                    final_confidence=float(self._last_hybrid_decision.get("confidence", 0.0) or 0.0),
+                    decision_source=str(self._last_hybrid_decision.get("source", "pattern_update")),
                 )
                 return {
                     "matched": True,
@@ -2388,6 +3474,8 @@ class SQLiteStore:
                 has_motor = 1 if cycle.get("has_motor_pattern", False) else 0
                 profile_points = self._normalize_profile_points(cycle.get("profile_points", []))
                 profile_points_json = json.dumps(profile_points)
+                shape_vector_json = json.dumps(self._resample_profile_points(profile_points, sample_count=32))
+                prototype_hash = self._prototype_hash_from_cycle(cycle)
                 
                 # Multi-mode learning
                 initial_mode = self._build_mode_signature(cycle, str(cycle.get("end_ts", now)))
@@ -2405,6 +3493,23 @@ class SQLiteStore:
                 except (ValueError, TypeError):
                     initial_hour_of_day = 12.0
                     initial_hour_dist_json = "{}"
+
+                suggestion_seed = str(suggestion_type or "unknown").strip() or "unknown"
+                if suggestion_seed == "unknown":
+                    suggestion_seed = self._infer_unknown_subclass(cycle)
+                confidence_score_norm = max(0.0, min(1.0, quality_score))
+                frequency_per_day_seed = self._frequency_per_day(
+                    seen_count=1,
+                    first_seen_iso=str(cycle.get("start_ts") or now),
+                    last_seen_iso=str(cycle.get("end_ts") or now),
+                )
+                candidate_name = self._normalize_pattern_name(suggestion_seed)
+                device_id = self._get_or_create_device(
+                    label=suggestion_seed,
+                    phase=str(cycle.get("phase", "L1")),
+                    confidence=confidence_score_norm,
+                    confirmed=False,
+                )
                 
                 cur = self._patterns_conn.execute(
                     """
@@ -2418,9 +3523,11 @@ class SQLiteStore:
                         has_heating_pattern, has_motor_pattern,
                         profile_points_json,
                         quality_score_avg,
+                        device_id, confidence_score, frequency_per_day,
+                        candidate_name, is_confirmed, shape_vector_json, prototype_hash,
                         operating_modes, has_multiple_modes,
                         typical_interval_s, avg_hour_of_day, last_intervals_json, hour_distribution_json
-                    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                     """,
                     (
                         now,
@@ -2432,7 +3539,7 @@ class SQLiteStore:
                         float(cycle["peak_power_w"]),
                         float(cycle["duration_s"]),
                         float(cycle["energy_wh"]),
-                        suggestion_type,
+                        suggestion_seed,
                         None,
                         "active",
                         float(cycle.get("active_phase_count", 1.0)),
@@ -2449,6 +3556,13 @@ class SQLiteStore:
                         has_motor,
                         profile_points_json,
                         quality_score,
+                        int(device_id) if device_id else None,
+                        confidence_score_norm,
+                        frequency_per_day_seed,
+                        candidate_name,
+                        0,
+                        shape_vector_json,
+                        prototype_hash,
                         operating_modes_json,
                         has_multiple_modes,
                         0.0,  # typical_interval_s - no interval yet for new pattern
@@ -2471,7 +3585,7 @@ class SQLiteStore:
                 "peak_power_w": float(cycle["peak_power_w"]),
                 "duration_s": float(cycle["duration_s"]),
                 "energy_wh": float(cycle["energy_wh"]),
-                "suggestion_type": suggestion_type,
+                "suggestion_type": suggestion_seed,
                 "user_label": None,
                 "status": "active",
                 "avg_active_phases": float(cycle.get("active_phase_count", 1.0)),
@@ -2488,19 +3602,42 @@ class SQLiteStore:
                 "has_motor_pattern": 1 if cycle.get("has_motor_pattern", False) else 0,
                 "profile_points": self._normalize_profile_points(cycle.get("profile_points", [])),
                 "quality_score_avg": quality_score,
-                "candidate_name": self._normalize_pattern_name(suggestion_type),
+                "device_id": int(device_id) if device_id else 0,
+                "confidence_score_db": confidence_score_norm,
+                "frequency_per_day_db": frequency_per_day_seed,
+                "candidate_name": candidate_name,
                 "is_confirmed": False,
+                "shape_vector_json": shape_vector_json,
+                "prototype_hash": prototype_hash,
             }
             logger.info(
                 "Pattern classify/create: id=%s label=%s rule=%s features[var=%.2f substates=%s steps=%s rise=%.2f fall=%.2f]",
                 new_id,
-                suggestion_type,
+                suggestion_seed,
                 "initial_cycle_label",
                 power_variance,
                 num_substates,
                 step_count,
                 rise_rate,
                 fall_rate,
+            )
+            self._record_pattern_features(new_id, cycle)
+            self._record_pattern_history_snapshot(created)
+            self._upsert_patterns_mirror(created)
+            event_id = self._record_cycle_event(
+                cycle=cycle,
+                assigned_pattern_id=new_id,
+                assigned_device_id=int(device_id) if device_id else None,
+                final_label=suggestion_seed,
+                final_confidence=float(self._last_hybrid_decision.get("confidence", 0.0) or 0.0),
+            )
+            self._record_classification_log(
+                event_id=event_id,
+                pattern_id=new_id,
+                device_id=int(device_id) if device_id else None,
+                final_label=suggestion_seed,
+                final_confidence=float(self._last_hybrid_decision.get("confidence", 0.0) or 0.0),
+                decision_source=str(self._last_hybrid_decision.get("source", "pattern_create")),
             )
             return {"matched": False, "distance": None, "pattern": created}
         except Exception as e:
@@ -2511,11 +3648,60 @@ class SQLiteStore:
         if not self._patterns_conn:
             return False
         try:
+            clean_label = str(user_label).strip()
+            if not clean_label:
+                return False
+            old_row = self._patterns_conn.execute(
+                "SELECT user_label, suggestion_type, phase FROM learned_patterns WHERE id = ?",
+                (int(pattern_id),),
+            ).fetchone()
+            old_label = ""
+            phase = "L1"
+            if old_row:
+                old_label = str(old_row[0] or old_row[1] or "")
+                phase = str(old_row[2] or "L1")
+            device_id = self._get_or_create_device(
+                label=clean_label,
+                phase=phase,
+                confidence=1.0,
+                confirmed=True,
+            )
             with self._patterns_conn:
                 self._patterns_conn.execute(
-                    "UPDATE learned_patterns SET user_label = ?, updated_at = ? WHERE id = ?",
-                    (str(user_label).strip(), datetime.now().isoformat(), int(pattern_id)),
+                    """
+                    UPDATE learned_patterns
+                    SET user_label = ?,
+                        candidate_name = ?,
+                        is_confirmed = 1,
+                        device_id = COALESCE(?, device_id),
+                        updated_at = ?
+                    WHERE id = ?
+                    """,
+                    (
+                        clean_label,
+                        self._normalize_pattern_name(clean_label),
+                        int(device_id) if device_id else None,
+                        datetime.now().isoformat(),
+                        int(pattern_id),
+                    ),
                 )
+            self._record_user_label_change(
+                pattern_id=int(pattern_id),
+                device_id=int(device_id) if device_id else None,
+                old_label=old_label,
+                new_label=clean_label,
+                comment="label_pattern API",
+            )
+            updated = self._patterns_conn.execute(
+                "SELECT * FROM learned_patterns WHERE id = ?",
+                (int(pattern_id),),
+            ).fetchone()
+            if updated:
+                patterns = self.list_patterns(limit=2000)
+                for p in patterns:
+                    if int(p.get("id", 0) or 0) == int(pattern_id):
+                        self._upsert_patterns_mirror(p)
+                        break
             return True
         except Exception as e:
             logger.error(f"Failed to label pattern {pattern_id}: {e}", exc_info=True)

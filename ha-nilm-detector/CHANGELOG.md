@@ -2,6 +2,30 @@
 
 > ⚠️ **Hinweis**: Dieses Projekt ist experimentell (BETA) - Breaking Changes und Bugs können auftreten.
 
+## 0.6.26 (BETA)
+
+**NILM-Wissensbasis erweitert: Events, Devices, Entscheidungslog und Label-Historie**
+
+- Neue persistente Tabellen: `devices`, `events`, `pattern_features`, `classification_log`, `user_labels`, `pattern_history`
+- `learned_patterns` erweitert um Device-Linking und Shape/Fingerprint-Felder (`device_id`, `candidate_name`, `shape_vector_json`, `prototype_hash`)
+- Explizite `patterns`-Mirror-Tabelle als getrennte Pattern-Ebene eingeführt (parallel zu `learned_patterns`)
+- Idempotente Startup-Backfills mit Migrationsmarkern: alte Pattern werden in normalisierte Tabellen und Patterns-Mirror überführt
+- Lern-/Klassifikationspfad schreibt jetzt zusätzlich:
+  - Event-Records (`events`)
+  - nachvollziehbare Entscheidungsprotokolle (`classification_log`)
+  - versionierte Feature-Snapshots (`pattern_features`)
+  - Pattern-Verlauf (`pattern_history`)
+  - User-Label-Änderungen (`user_labels`)
+- Neue Web-API-Endpunkte:
+  - `GET /api/devices`
+  - `GET /api/events`
+  - `GET /api/classification-log`
+  - `GET /api/user-labels`
+  - `GET /api/debug/export-training-jsonl`
+  - `GET /api/debug/export-features-csv`
+- Storage-Config vereinheitlicht mit `PRIMARY_STORAGE_PATH` und `LEGACY_STORAGE_PATHS`
+- Tests weiterhin grün: `10 passed`
+
 ## 0.6.25 (BETA)
 
 **Robuste Datenpersistenz: kein stiller Datenverlust nach Restart oder Update**

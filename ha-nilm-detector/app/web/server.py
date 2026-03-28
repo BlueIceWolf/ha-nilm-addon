@@ -2045,6 +2045,90 @@ class StatsWebServer:
                         self._send_json([])
                     return
 
+                if parsed.path == "/api/devices":
+                  if not parent.storage or not hasattr(parent.storage, "list_devices"):
+                    self._send_json([])
+                    return
+                  self._send_json(parent.storage.list_devices(limit=1000))
+                  return
+
+                if parsed.path == "/api/events":
+                  if not parent.storage or not hasattr(parent.storage, "list_events"):
+                    self._send_json([])
+                    return
+                  query = parse_qs(parsed.query or "")
+                  limit_raw = (query.get("limit") or ["500"])[0]
+                  try:
+                    limit = max(10, min(int(limit_raw), 5000))
+                  except ValueError:
+                    limit = 500
+                  self._send_json(parent.storage.list_events(limit=limit))
+                  return
+
+                if parsed.path == "/api/classification-log":
+                  if not parent.storage or not hasattr(parent.storage, "list_classification_logs"):
+                    self._send_json([])
+                    return
+                  query = parse_qs(parsed.query or "")
+                  limit_raw = (query.get("limit") or ["500"])[0]
+                  try:
+                    limit = max(10, min(int(limit_raw), 5000))
+                  except ValueError:
+                    limit = 500
+                  self._send_json(parent.storage.list_classification_logs(limit=limit))
+                  return
+
+                if parsed.path == "/api/user-labels":
+                  if not parent.storage or not hasattr(parent.storage, "list_user_labels"):
+                    self._send_json([])
+                    return
+                  query = parse_qs(parsed.query or "")
+                  limit_raw = (query.get("limit") or ["500"])[0]
+                  try:
+                    limit = max(10, min(int(limit_raw), 5000))
+                  except ValueError:
+                    limit = 500
+                  self._send_json(parent.storage.list_user_labels(limit=limit))
+                  return
+
+                if parsed.path == "/api/debug/export-training-jsonl":
+                  if not parent.storage or not hasattr(parent.storage, "export_training_dataset_jsonl"):
+                    self._send_json({"error": "storage not enabled"}, status=400)
+                    return
+                  query = parse_qs(parsed.query or "")
+                  limit_raw = (query.get("limit") or ["5000"])[0]
+                  try:
+                    limit = max(10, min(int(limit_raw), 20000))
+                  except ValueError:
+                    limit = 5000
+                  body = parent.storage.export_training_dataset_jsonl(limit=limit)
+                  data = body.encode("utf-8")
+                  self.send_response(200)
+                  self.send_header("Content-Type", "application/x-ndjson; charset=utf-8")
+                  self.send_header("Content-Length", str(len(data)))
+                  self.end_headers()
+                  self.wfile.write(data)
+                  return
+
+                if parsed.path == "/api/debug/export-features-csv":
+                  if not parent.storage or not hasattr(parent.storage, "export_features_csv"):
+                    self._send_json({"error": "storage not enabled"}, status=400)
+                    return
+                  query = parse_qs(parsed.query or "")
+                  limit_raw = (query.get("limit") or ["5000"])[0]
+                  try:
+                    limit = max(10, min(int(limit_raw), 20000))
+                  except ValueError:
+                    limit = 5000
+                  body = parent.storage.export_features_csv(limit=limit)
+                  data = body.encode("utf-8")
+                  self.send_response(200)
+                  self.send_header("Content-Type", "text/csv; charset=utf-8")
+                  self.send_header("Content-Length", str(len(data)))
+                  self.end_headers()
+                  self.wfile.write(data)
+                  return
+
                 if parsed.path == "/api/debug/export":
                     if not parent.storage:
                         self._send_json({"error": "storage not enabled"}, status=400)

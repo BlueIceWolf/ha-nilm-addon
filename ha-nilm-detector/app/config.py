@@ -12,8 +12,12 @@ from app.utils.logging import get_logger
 logger = get_logger(__name__)
 
 
-DEFAULT_STORAGE_BASE = "/data/ha_nilm_detector"
-LEGACY_STORAGE_BASE = "/addon_configs/ha_nilm_detector"
+PRIMARY_STORAGE_PATH = "/data/ha_nilm_detector"
+LEGACY_STORAGE_PATHS = [
+    "/addon_configs/ha_nilm_detector",
+]
+DEFAULT_STORAGE_BASE = PRIMARY_STORAGE_PATH
+LEGACY_STORAGE_BASE = LEGACY_STORAGE_PATHS[0]
 
 
 class Config:
@@ -281,12 +285,15 @@ class Config:
     
     def ensure_storage_path(self) -> None:
         """Ensure configured storage directories exist."""
+        logger.info("Using primary storage path: %s", self.storage_path)
+        logger.info("Checking legacy storage paths: %s", ", ".join(LEGACY_STORAGE_PATHS))
         os.makedirs(self.storage_path, exist_ok=True)
         # Compatibility: keep legacy addon config folder available for users/tools.
-        try:
-            os.makedirs(LEGACY_STORAGE_BASE, exist_ok=True)
-        except Exception as legacy_dir_error:
-            logger.debug(f"Legacy addon_configs directory not available: {legacy_dir_error}")
+        for legacy_path in LEGACY_STORAGE_PATHS:
+            try:
+                os.makedirs(legacy_path, exist_ok=True)
+            except Exception as legacy_dir_error:
+                logger.debug("Legacy directory not available (%s): %s", legacy_path, legacy_dir_error)
         self._migrate_legacy_storage_files()
         for db_path in [self.storage_db_path, self.storage_patterns_db_path]:
             db_dir = os.path.dirname(str(db_path or "").strip())

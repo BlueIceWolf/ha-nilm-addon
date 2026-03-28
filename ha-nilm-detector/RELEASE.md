@@ -4,6 +4,21 @@
 
 ---
 
+# Release 0.6.26 (BETA)
+
+## Store Kurztext
+- **Wissensbasis-Upgrade**: Pattern, Events, Devices und Entscheidungslog werden jetzt getrennt und persistent gespeichert fuer nachvollziehbares Langzeitlernen.
+
+## Highlights
+- Neue persistente Tabellen: `devices`, `events`, `pattern_features`, `classification_log`, `user_labels`, `pattern_history`
+- Explizite `patterns`-Mirror-Tabelle als getrennte Pattern-Ebene (parallel zu `learned_patterns`)
+- Laufende Lernzyklen speichern jetzt Event-Daten, Feature-Snapshots, Entscheidungsgruende und Historie
+- User-Label-Aenderungen werden als Trainingssignal in `user_labels` historisiert
+- Neue API-Endpunkte fuer Debug/Analyse: `/api/devices`, `/api/events`, `/api/classification-log`, `/api/user-labels`
+- Neue Trainings-Exporte: `/api/debug/export-training-jsonl` und `/api/debug/export-features-csv`
+
+---
+
 # Release 0.6.24 (BETA)
 
 ## Store Kurztext

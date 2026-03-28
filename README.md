@@ -11,7 +11,7 @@
 
 <p align="center">
   <img src="https://img.shields.io/badge/Status-BETA-orange" alt="BETA" />
-   <img src="https://img.shields.io/badge/Version-0.6.24-blue" alt="Version" />
+   <img src="https://img.shields.io/badge/Version-0.6.26-blue" alt="Version" />
 </p>
 
 > ⚠️ **EXPERIMENTELLES PROJEKT (BETA)**: Dieses Add-on befindet sich in aktiver Entwicklung. Viele Features funktionieren bereits gut, aber es ist **nicht production-ready**. Erwarte Bugs, unvollständige Features und Breaking Changes zwischen Versionen. Nutze es zum Experimentieren und Testen, aber nicht für kritische Automatisierungen.
@@ -27,7 +27,7 @@
 
 ---
 
-**Aktuell:** `v0.6.24` - Klassifikation robuster: echte Zyklus-Features + First-Level-Regeln + Frequency-Refinement
+**Aktuell:** `v0.6.26` - Persistente NILM-Wissensbasis: Events + Devices + Pattern-Historie + Decision Logs
 
 > ℹ️ **v0.6.11 Hinweis**: Auch die oberen Dashboard-Karten (`Gesamtleistung`, `Durchschnitt`, `Messwerte`, `Gelernte Muster`) schalten jetzt sauber zwischen DE/EN um.
 
@@ -54,6 +54,7 @@
 - **📐 Echte Feature-Extraction (v0.6.24)** – Edge-basierte Rise/Fall-Raten, Plateau/Substates und `step_count` statt flacher Dummy-Features
 - **🧭 Deterministische Erstklassifikation (v0.6.24)** – First-Level-Regeln (`heater`, `motor`, `electronics`, `long_running`) vor ML-Fallback
 - **🔁 Frequency-Refinement (v0.6.24)** – Nutzungshaeufigkeit wird in der Label-Verfeinerung beruecksichtigt, um `unknown` zu reduzieren
+- **🧠 Wissensbasis-Upgrade (v0.6.26)** – Neue persistente Tabellen fuer `events`, `devices`, `classification_log`, `user_labels`, `pattern_history` und exportierbare Trainingsdaten
 
 ### Web-UI
 - **🌙 Dark Mode** – Durchgehend hell/dunkel Modus mit modernem Home-Assistant-Design
