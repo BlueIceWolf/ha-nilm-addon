@@ -4,6 +4,18 @@
 
 ---
 
+# Release 0.6.20 (BETA)
+
+## Store Kurztext
+- **Persistenz-Hotfix**: Nach Updates koennen Live-Daten jetzt automatisch aus Legacy-DB-Pfaden wiederhergestellt werden.
+
+## Highlights
+- Neue Startup-Recovery fuer `power_readings` und `detections`, wenn aktuelle Live-DB leer ist
+- Recovery prueft bekannte Legacy-Pfade (`/addon_configs/...`, `/data/...`) und importiert vorhandene Daten
+- Reduziert Datenverlust-Eindruck nach Versionswechsel deutlich
+
+---
+
 # Release 0.6.19 (BETA)
 
 ## Store Kurztext

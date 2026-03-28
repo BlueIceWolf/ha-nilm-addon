@@ -9,6 +9,13 @@
 - Replay fuehrt einen Fallback-Pass ohne Baseline-Priming aus, falls im ersten Pass keine Zyklen gefunden werden
 - Verbessert Erkennung bei unruhigen/lastigen Importverlaeufen, in denen adaptive Baseline zuvor zu konservativ war
 
+## 0.6.20 (BETA)
+
+**Datenpersistenz-Hotfix nach Updates**
+- Startup-Recovery fuer Live-Daten ergaenzt: `power_readings` und `detections` werden aus Legacy-DBs wiederhergestellt, wenn die aktuelle Live-DB leer ist
+- Schuetzt gegen Update-Szenarien, in denen eine leere Ziel-DB existiert und reine Dateimigration deshalb nicht greift
+- Verhindert, dass Verlauf nach Update "verschwunden" wirkt, obwohl Daten in alten Pfaden noch vorhanden sind
+
 ## 0.6.18 (BETA)
 
 **Hybrid-AI Debug Panel im Dashboard**

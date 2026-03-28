@@ -27,7 +27,7 @@
 
 ---
 
-**Aktuell:** `v0.6.19` — Lernlauf-Robustheit verbessert (Replay-Fallback + 48h bei manuellem Trigger)
+**Aktuell:** `v0.6.20` — Datenpersistenz-Hotfix: Live-DB-Recovery aus Legacy-Pfaden nach Update
 
 > ℹ️ **v0.6.11 Hinweis**: Auch die oberen Dashboard-Karten (`Gesamtleistung`, `Durchschnitt`, `Messwerte`, `Gelernte Muster`) schalten jetzt sauber zwischen DE/EN um.
 

@@ -152,6 +152,7 @@ class SQLiteStore:
 
             self._create_tables()
             self._maybe_migrate_patterns_from_live()
+            self._maybe_recover_live_from_legacy_files()
             self._maybe_recover_patterns_from_legacy_files()
             self.cleanup_old_data()
             logger.info(
@@ -282,6 +283,89 @@ class SQLiteStore:
                     legacy_conn.close()
             except Exception as legacy_error:
                 logger.warning("Legacy pattern recovery skipped for %s: %s", legacy_path, legacy_error)
+
+    def _maybe_recover_live_from_legacy_files(self) -> None:
+        """Recover live readings/detections from legacy DB files when current live DB is empty.
+
+        This protects against update/migration scenarios where a new empty target DB exists,
+        causing path-based copy migration to be skipped.
+        """
+        if not self._conn:
+            return
+
+        try:
+            dst_readings = int((self._conn.execute("SELECT COUNT(*) FROM power_readings").fetchone() or [0])[0])
+            dst_detections = int((self._conn.execute("SELECT COUNT(*) FROM detections").fetchone() or [0])[0])
+            if dst_readings > 0 or dst_detections > 0:
+                return
+        except Exception:
+            return
+
+        legacy_candidates = [
+            "/addon_configs/ha_nilm_detector/nilm_live.sqlite3",
+            "/data/nilm_live.sqlite3",
+        ]
+
+        for legacy_path in legacy_candidates:
+            try:
+                legacy_abs = os.path.abspath(str(legacy_path))
+                if legacy_abs == os.path.abspath(self.db_path):
+                    continue
+                if not os.path.exists(legacy_abs):
+                    continue
+
+                legacy_conn = sqlite3.connect(legacy_abs, timeout=5)
+                try:
+                    tables = {
+                        str(row[0])
+                        for row in legacy_conn.execute(
+                            "SELECT name FROM sqlite_master WHERE type='table'"
+                        ).fetchall()
+                    }
+
+                    readings_rows: List[Tuple[Any, ...]] = []
+                    detections_rows: List[Tuple[Any, ...]] = []
+
+                    if "power_readings" in tables:
+                        src_readings_count = int((legacy_conn.execute("SELECT COUNT(*) FROM power_readings").fetchone() or [0])[0])
+                        if src_readings_count > 0:
+                            readings_rows = legacy_conn.execute(
+                                "SELECT ts, power_w, phase, metadata FROM power_readings"
+                            ).fetchall()
+
+                    if "detections" in tables:
+                        src_detections_count = int((legacy_conn.execute("SELECT COUNT(*) FROM detections").fetchone() or [0])[0])
+                        if src_detections_count > 0:
+                            detections_rows = legacy_conn.execute(
+                                "SELECT ts, device_name, state, power_w, confidence, details FROM detections"
+                            ).fetchall()
+
+                    if not readings_rows and not detections_rows:
+                        continue
+
+                    with self._conn:
+                        if readings_rows:
+                            self._conn.executemany(
+                                "INSERT INTO power_readings (ts, power_w, phase, metadata) VALUES (?, ?, ?, ?)",
+                                readings_rows,
+                            )
+                        if detections_rows:
+                            self._conn.executemany(
+                                "INSERT INTO detections (ts, device_name, state, power_w, confidence, details) VALUES (?, ?, ?, ?, ?, ?)",
+                                detections_rows,
+                            )
+
+                    logger.warning(
+                        "Recovered live DB from legacy file %s (readings=%s, detections=%s)",
+                        legacy_abs,
+                        len(readings_rows),
+                        len(detections_rows),
+                    )
+                    return
+                finally:
+                    legacy_conn.close()
+            except Exception as legacy_error:
+                logger.warning("Legacy live recovery skipped for %s: %s", legacy_path, legacy_error)
 
     def close(self) -> None:
         # Flush any pending batches before closing connections
