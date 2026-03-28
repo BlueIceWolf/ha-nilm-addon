@@ -11,7 +11,7 @@
 
 <p align="center">
   <img src="https://img.shields.io/badge/Status-BETA-orange" alt="BETA" />
-   <img src="https://img.shields.io/badge/Version-0.6.9-blue" alt="Version" />
+   <img src="https://img.shields.io/badge/Version-0.6.10-blue" alt="Version" />
 </p>
 
 > ⚠️ **EXPERIMENTELLES PROJEKT (BETA)**: Dieses Add-on befindet sich in aktiver Entwicklung. Viele Features funktionieren bereits gut, aber es ist **nicht production-ready**. Erwarte Bugs, unvollständige Features und Breaking Changes zwischen Versionen. Nutze es zum Experimentieren und Testen, aber nicht für kritische Automatisierungen.
@@ -27,9 +27,9 @@
 
 ---
 
-**Aktuell:** `v0.6.9` — UI-Sprachumschaltung weiter vervollstaendigt + `/addon_configs`-Kompatibilitaet verbessert
+**Aktuell:** `v0.6.10` — Speichert wieder explizit unter `/addon_configs/ha_nilm_detector` wie klassische Add-ons
 
-> ℹ️ **v0.6.9 Hinweis**: Mehr UI-Texte (Dialoge/Tooltips/Pattern-Details) schalten jetzt korrekt zwischen DE/EN. Zusaetzlich wird der Legacy-Ordner `/addon_configs/ha_nilm_detector` best-effort angelegt.
+> ℹ️ **v0.6.10 Hinweis**: Standard-Speicherpfad ist jetzt wieder `/addon_configs/ha_nilm_detector`. Bestehende Dateien aus `/data` werden beim Start automatisch in den neuen Zielpfad uebernommen, wenn dort noch nichts liegt.
 
 <a id="features"></a>
 ## ✨ Features
@@ -206,8 +206,9 @@ logging:
 - **Transparent** – Open-Source Code, dokumentierte Algorithmen
 
 **Storage:**
-- Live-Daten: `/data/nilm_live.sqlite3` (Auto-Rotation nach 30 Tagen)
-- Patterns: `/data/nilm_patterns.sqlite3` (Persistent)
+- Live-Daten: `/addon_configs/ha_nilm_detector/nilm_live.sqlite3` (Auto-Rotation nach 30 Tagen)
+- Patterns: `/addon_configs/ha_nilm_detector/nilm_patterns.sqlite3` (Persistent)
+- Log: `/addon_configs/ha_nilm_detector/nilm.log`
 
 ---
 

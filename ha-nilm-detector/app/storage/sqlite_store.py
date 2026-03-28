@@ -170,6 +170,8 @@ class SQLiteStore:
         legacy_candidates = [
             "/addon_configs/ha_nilm_detector/nilm_patterns.sqlite3",
             "/addon_configs/ha_nilm_detector/nilm_live.sqlite3",
+            "/data/nilm_patterns.sqlite3",
+            "/data/nilm_live.sqlite3",
         ]
 
         for legacy_path in legacy_candidates:

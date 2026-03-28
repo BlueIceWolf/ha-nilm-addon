@@ -4,6 +4,18 @@
 
 ---
 
+# Release 0.6.10 (BETA)
+
+## Store Kurztext
+- **Speichert wieder sichtbar im klassischen Add-on-Pfad**: `/addon_configs/ha_nilm_detector`.
+- **Automatische Uebernahme aus `/data`**: Vorhandene DBs/Logs werden beim Start migriert, wenn im Ziel noch nichts liegt.
+
+## Highlights
+- Neue Default-Pfade: `/addon_configs/ha_nilm_detector/nilm_live.sqlite3`, `/addon_configs/ha_nilm_detector/nilm_patterns.sqlite3`, `/addon_configs/ha_nilm_detector/nilm.log`
+- Recovery/Migration prueft jetzt sowohl alte `/data`- als auch `/addon_configs`-Dateien
+
+---
+
 # Release 0.6.9 (BETA)
 
 ## Store Kurztext

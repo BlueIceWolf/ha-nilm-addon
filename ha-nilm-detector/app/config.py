@@ -47,18 +47,17 @@ class Config:
         self.ha_url = "http://supervisor/core/api"
         self.ha_phase_entities: Dict[str, str] = {}
         self.ha_token = ""
-        self.storage_path = "/data"
+        self.storage_path = "/addon_configs/ha_nilm_detector"
         self.storage_enabled = True
-        # Use /data defaults because this is the guaranteed persistent volume in HA add-ons.
-        self.storage_db_path = "/data/nilm_live.sqlite3"
-        self.storage_patterns_db_path = "/data/nilm_patterns.sqlite3"
+        self.storage_db_path = "/addon_configs/ha_nilm_detector/nilm_live.sqlite3"
+        self.storage_patterns_db_path = "/addon_configs/ha_nilm_detector/nilm_patterns.sqlite3"
         self.storage_retention_days = 30
         self.learning_warmup_minutes = 120
         self.processing_smoothing_window = 5
         self.processing_noise_threshold = 2.0
         self.processing_adaptive_correction = True
         self.confidence_threshold = 0.6
-        self.log_file = "/data/nilm.log"  # Log file path (rotated on startup)
+        self.log_file = "/addon_configs/ha_nilm_detector/nilm.log"  # Log file path (rotated on startup)
         self.max_log_backups = 3  # Keep max 3 old log files (.log.1, .log.2, .log.3)
         
         if config_path:
@@ -113,7 +112,7 @@ class Config:
         )
 
         self.power_source = "home_assistant_rest"
-        self.storage_path = config_dict.get('storage_path', '/data')
+        self.storage_path = config_dict.get('storage_path', '/addon_configs/ha_nilm_detector')
         
         # MQTT settings
         mqtt_config = config_dict.get('mqtt', {})
@@ -231,45 +230,57 @@ class Config:
                 os.makedirs(db_dir, exist_ok=True)
 
     def _migrate_legacy_storage_files(self) -> None:
-        """Move legacy /addon_configs files to /data defaults when needed."""
-        migration_pairs = [
-            ("/addon_configs/ha_nilm_detector/nilm_live.sqlite3", self.storage_db_path),
-            ("/addon_configs/ha_nilm_detector/nilm_patterns.sqlite3", self.storage_patterns_db_path),
-            ("/addon_configs/ha_nilm_detector/nilm.log", self.log_file),
-        ]
+        """Migrate known previous storage locations into current target paths when needed."""
+        migration_sources = {
+            self.storage_db_path: [
+                "/data/nilm_live.sqlite3",
+                "/addon_configs/ha_nilm_detector/nilm_live.sqlite3",
+            ],
+            self.storage_patterns_db_path: [
+                "/data/nilm_patterns.sqlite3",
+                "/addon_configs/ha_nilm_detector/nilm_patterns.sqlite3",
+            ],
+            self.log_file: [
+                "/data/nilm.log",
+                "/addon_configs/ha_nilm_detector/nilm.log",
+            ],
+        }
 
-        for legacy_path, target_path in migration_pairs:
-            legacy = str(legacy_path or "").strip()
+        for target_path, source_candidates in migration_sources.items():
             target = str(target_path or "").strip()
-            if not legacy or not target:
-                continue
-            if os.path.abspath(legacy) == os.path.abspath(target):
-                continue
-            if not os.path.exists(legacy):
-                continue
-            if os.path.exists(target):
+            if not target or os.path.exists(target):
                 continue
 
-            try:
-                target_dir = os.path.dirname(target)
-                if target_dir:
-                    os.makedirs(target_dir, exist_ok=True)
+            for source_path in source_candidates:
+                source = str(source_path or "").strip()
+                if not source:
+                    continue
+                if os.path.abspath(source) == os.path.abspath(target):
+                    continue
+                if not os.path.exists(source):
+                    continue
 
-                shutil.copy2(legacy, target)
-                for suffix in ("-wal", "-shm"):
-                    legacy_sidecar = f"{legacy}{suffix}"
-                    target_sidecar = f"{target}{suffix}"
-                    if os.path.exists(legacy_sidecar) and not os.path.exists(target_sidecar):
-                        shutil.copy2(legacy_sidecar, target_sidecar)
+                try:
+                    target_dir = os.path.dirname(target)
+                    if target_dir:
+                        os.makedirs(target_dir, exist_ok=True)
 
-                logger.info(f"Migrated legacy storage file: {legacy} -> {target}")
-            except Exception as migration_error:
-                logger.warning(
-                    "Legacy storage migration failed for %s -> %s: %s",
-                    legacy,
-                    target,
-                    migration_error,
-                )
+                    shutil.copy2(source, target)
+                    for suffix in ("-wal", "-shm"):
+                        source_sidecar = f"{source}{suffix}"
+                        target_sidecar = f"{target}{suffix}"
+                        if os.path.exists(source_sidecar) and not os.path.exists(target_sidecar):
+                            shutil.copy2(source_sidecar, target_sidecar)
+
+                    logger.info(f"Migrated storage file: {source} -> {target}")
+                    break
+                except Exception as migration_error:
+                    logger.warning(
+                        "Storage migration failed for %s -> %s: %s",
+                        source,
+                        target,
+                        migration_error,
+                    )
 
 
 def load_options_from_file(options_path: str = "/data/options.json") -> Dict[str, Any]:

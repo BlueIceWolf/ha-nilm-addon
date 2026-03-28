@@ -2,6 +2,13 @@
 
 > ⚠️ **Hinweis**: Dieses Projekt ist experimentell (BETA) - Breaking Changes und Bugs können auftreten.
 
+## 0.6.10 (BETA)
+
+**Speicherort wieder explizit unter `/addon_configs`**
+- Standardpfade wurden wieder auf `/addon_configs/ha_nilm_detector/` umgestellt (`nilm_live.sqlite3`, `nilm_patterns.sqlite3`, `nilm.log`).
+- Bestehende Daten aus frueheren `/data`-Versionen werden beim Start automatisch in den neuen Zielpfad uebernommen, wenn dort noch keine Datei liegt.
+- Pattern-Recovery prueft jetzt sowohl `/addon_configs/...` als auch `/data/...`, damit Upgrades robust bleiben.
+
 ## 0.6.9 (BETA)
 
 **UI Sprache DE/EN weiter vervollstaendigt**
