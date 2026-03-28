@@ -22,6 +22,12 @@ class SQLiteStore:
         self.retention_days = max(int(retention_days), 1)
         self._conn: sqlite3.Connection | None = None
         self._patterns_conn: sqlite3.Connection | None = None
+        
+        # Batch writing for improved performance
+        self._reading_batch: List[PowerReading] = []
+        self._detection_batch: List[DetectionResult] = []
+        self._max_batch_size = 100  # Flush after this many items
+        self._batch_ops_since_flush = 0
 
     def _open_connection(self, path: str) -> sqlite3.Connection:
         conn = sqlite3.connect(
@@ -229,6 +235,10 @@ class SQLiteStore:
                 logger.warning("Legacy pattern recovery skipped for %s: %s", legacy_path, legacy_error)
 
     def close(self) -> None:
+        # Flush any pending batches before closing connections
+        self._flush_reading_batch()
+        self._flush_detection_batch()
+        
         if self._patterns_conn and self._patterns_conn is not self._conn:
             try:
                 self._patterns_conn.execute("PRAGMA wal_checkpoint(TRUNCATE);")
@@ -559,49 +569,93 @@ class SQLiteStore:
     def store_reading(self, reading: PowerReading) -> None:
         if not self._conn:
             return
+        
+        self._reading_batch.append(reading)
+        self._batch_ops_since_flush += 1
+        
+        if len(self._reading_batch) >= self._max_batch_size:
+            self._flush_reading_batch()
+    
+    def _flush_reading_batch(self) -> None:
+        if not self._conn or not self._reading_batch:
+            return
+        
         try:
-            with self._conn:
-                self._conn.execute(
-                    "INSERT INTO power_readings (ts, power_w, phase, metadata) VALUES (?, ?, ?, ?)",
-                    (
-                        reading.timestamp.isoformat(),
-                        float(reading.power_w),
-                        reading.phase,
-                        json.dumps(reading.metadata or {}),
-                    ),
+            batch_copy = self._reading_batch[:]
+            self._reading_batch.clear()
+            
+            rows = [
+                (
+                    reading.timestamp.isoformat(),
+                    float(reading.power_w),
+                    reading.phase,
+                    json.dumps(reading.metadata or {}),
                 )
+                for reading in batch_copy
+            ]
+            
+            with self._conn:
+                self._conn.executemany(
+                    "INSERT INTO power_readings (ts, power_w, phase, metadata) VALUES (?, ?, ?, ?)",
+                    rows,
+                )
+            
+            if len(rows) > 1:
+                logger.debug(f"Flushed {len(rows)} power readings to SQLite")
         except sqlite3.DatabaseError as db_error:
-            logger.error(f"SQLite DB error while persisting reading: {db_error}", exc_info=True)
+            logger.error(f"SQLite DB error while flushing readings: {db_error}", exc_info=True)
             if "malformed" in str(db_error).lower():
                 self._reinitialize_database()
         except Exception as e:
-            logger.error(f"Failed to persist power reading: {e}", exc_info=True)
+            logger.error(f"Failed to flush power readings: {e}", exc_info=True)
 
     def store_detection(self, result: DetectionResult) -> None:
         if not self._conn:
             return
+        
+        self._detection_batch.append(result)
+        self._batch_ops_since_flush += 1
+        
+        if len(self._detection_batch) >= self._max_batch_size:
+            self._flush_detection_batch()
+    
+    def _flush_detection_batch(self) -> None:
+        if not self._conn or not self._detection_batch:
+            return
+        
         try:
+            batch_copy = self._detection_batch[:]
+            self._detection_batch.clear()
+            
+            rows = [
+                (
+                    result.timestamp.isoformat(),
+                    result.device_name,
+                    result.state.value,
+                    float(result.power_w),
+                    float(result.confidence),
+                    json.dumps(result.details or {}),
+                )
+                for result in batch_copy
+            ]
+            
             with self._conn:
-                self._conn.execute(
+                self._conn.executemany(
                     """
                     INSERT INTO detections (ts, device_name, state, power_w, confidence, details)
                     VALUES (?, ?, ?, ?, ?, ?)
                     """,
-                    (
-                        result.timestamp.isoformat(),
-                        result.device_name,
-                        result.state.value,
-                        float(result.power_w),
-                        float(result.confidence),
-                        json.dumps(result.details or {}),
-                    ),
+                    rows,
                 )
+            
+            if len(rows) > 1:
+                logger.debug(f"Flushed {len(rows)} detection results to SQLite")
         except sqlite3.DatabaseError as db_error:
-            logger.error(f"SQLite DB error while persisting detection: {db_error}", exc_info=True)
+            logger.error(f"SQLite DB error while flushing detections: {db_error}", exc_info=True)
             if "malformed" in str(db_error).lower():
                 self._reinitialize_database()
         except Exception as e:
-            logger.error(f"Failed to persist detection result: {e}", exc_info=True)
+            logger.error(f"Failed to flush detection results: {e}", exc_info=True)
 
     def get_recent_power_values(self, minutes: int = 60, limit: int = 300) -> List[float]:
         if not self._conn:
