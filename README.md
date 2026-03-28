@@ -27,7 +27,7 @@
 
 ---
 
-**Aktuell:** `v0.6.21` — Persistenz & Warmstart stabilisiert (Schema-/Migrationschecks + Startdiagnose)
+**Aktuell:** `v0.6.22` — Lernlauf-Fallback verbessert (edge-basierte Segmentierung bei 0 Zyklen)
 
 > ℹ️ **v0.6.11 Hinweis**: Auch die oberen Dashboard-Karten (`Gesamtleistung`, `Durchschnitt`, `Messwerte`, `Gelernte Muster`) schalten jetzt sauber zwischen DE/EN um.
 

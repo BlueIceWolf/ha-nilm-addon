@@ -12,6 +12,13 @@
 - Warmstart repariert: diagnostischer Ladepfad mit SQL-Transparenz und Fallback auf letzte Werte ausserhalb des Zeitfensters
 - Shutdown-Reihenfolge gehaertet: erst Flush/Commit/Close fuer Storage, dann restliche Dienste
 
+## 0.6.22 (BETA)
+
+**Lernlauf erkennt Zyklen robuster bei schwieriger Historie**
+- Neuer Replay-Fallback: Wenn adaptive Replay-Paesse 0 Zyklen liefern, wird eine edge-basierte Segmentierung ausgefuehrt
+- Segmentierung nutzt Baseline + Delta-On/Off inkl. Sparse-Gap-Handling fuer Recorder-Historie
+- Verhindert den Fall `Messpunkte > 0` aber `Zyklen gelernt: 0` in vielen Praxis-Szenarien
+
 ## 0.6.20 (BETA)
 
 **Datenpersistenz-Hotfix nach Updates**

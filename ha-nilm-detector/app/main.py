@@ -710,6 +710,170 @@ class NILMDetectionSystem:
             cycles_detected = int(retry_result.get("cycles_detected", 0) or 0)
             cycles_by_phase = dict(retry_result.get("cycles_by_phase", {}))
 
+        def _run_edge_based_fallback() -> Dict[str, int]:
+            """Detect cycles from sparse historical data using simple threshold edges.
+
+            This fallback is intentionally conservative and only used when both
+            PatternLearner replay passes produce zero cycles.
+            """
+            local_cycles_by_phase: Dict[str, int] = {phase_name: 0 for phase_name in replay_phases}
+            min_duration = max(5.0, float(self.config.learning_min_cycle_seconds) * 0.5)
+            sparse_gap_s = max(90.0, float(self.config.update_interval_seconds) * 30.0)
+
+            def _build_profile(segment: List[tuple[datetime, float]]) -> List[Dict[str, float]]:
+                if len(segment) < 2:
+                    return []
+                start_ts = segment[0][0]
+                end_ts = segment[-1][0]
+                duration = max((end_ts - start_ts).total_seconds(), 1.0)
+
+                # Keep profile compact for storage and UI.
+                if len(segment) <= 64:
+                    sampled = segment
+                else:
+                    sampled = []
+                    for i in range(64):
+                        idx = int(i * (len(segment) - 1) / 63)
+                        sampled.append(segment[idx])
+
+                out: List[Dict[str, float]] = []
+                for ts, power in sampled:
+                    t_s = max((ts - start_ts).total_seconds(), 0.0)
+                    out.append(
+                        {
+                            "t_s": float(round(t_s, 3)),
+                            "power_w": float(round(power, 3)),
+                            "t_norm": float(round(min(max(t_s / duration, 0.0), 1.0), 6)),
+                        }
+                    )
+                return out
+
+            for phase_name in replay_phases:
+                series: List[tuple[datetime, float]] = []
+                for point in points:
+                    ts_raw = str(point.get("timestamp") or "").strip()
+                    if not ts_raw:
+                        continue
+                    try:
+                        ts = datetime.fromisoformat(ts_raw.replace("Z", "+00:00"))
+                    except ValueError:
+                        continue
+                    if ts.tzinfo is not None:
+                        ts = ts.astimezone(timezone.utc).replace(tzinfo=None)
+
+                    phases = point.get("phases") if isinstance(point.get("phases"), dict) else {}
+                    phase_power = 0.0
+                    if phase_name in phases:
+                        try:
+                            phase_power = float(phases[phase_name])
+                        except (TypeError, ValueError):
+                            phase_power = 0.0
+                    elif len(replay_phases) == 1:
+                        try:
+                            phase_power = float(point.get("power_w") or 0.0)
+                        except (TypeError, ValueError):
+                            phase_power = 0.0
+                    series.append((ts, phase_power))
+
+                if len(series) < 6:
+                    continue
+
+                values = [p for _, p in series]
+                sorted_values = sorted(values)
+                low_idx = max(0, int(len(sorted_values) * 0.2) - 1)
+                baseline = float(sorted_values[low_idx]) if sorted_values else 0.0
+                on_threshold = baseline + float(self.config.learning_delta_on_w)
+                off_threshold = baseline + float(self.config.learning_delta_off_w)
+
+                in_cycle = False
+                segment: List[tuple[datetime, float]] = []
+                prev_ts: Optional[datetime] = None
+                prev_power = 0.0
+
+                def _store_segment(seg: List[tuple[datetime, float]]) -> bool:
+                    if len(seg) < 2:
+                        return False
+                    start_ts = seg[0][0]
+                    end_ts = seg[-1][0]
+                    duration_s = max((end_ts - start_ts).total_seconds(), 0.0)
+                    if duration_s < min_duration:
+                        return False
+
+                    powers = [float(v) for _, v in seg]
+                    avg_power = sum(powers) / len(powers)
+                    peak_power = max(powers)
+
+                    energy_ws = 0.0
+                    for i in range(1, len(seg)):
+                        p_ts, p_val = seg[i - 1]
+                        c_ts, c_val = seg[i]
+                        dt = max((c_ts - p_ts).total_seconds(), 0.0)
+                        energy_ws += (p_val + c_val) * 0.5 * dt
+
+                    cycle_payload = {
+                        "start_ts": start_ts.isoformat(),
+                        "end_ts": end_ts.isoformat(),
+                        "duration_s": duration_s,
+                        "avg_power_w": avg_power,
+                        "peak_power_w": peak_power,
+                        "energy_wh": energy_ws / 3600.0,
+                        "operating_modes": [],
+                        "has_multiple_modes": False,
+                        "active_phase_count": 1,
+                        "phase_mode": "single_phase",
+                        "phase": phase_name,
+                        "power_variance": 0.0,
+                        "rise_rate_w_per_s": 0.0,
+                        "fall_rate_w_per_s": 0.0,
+                        "duty_cycle": 0.0,
+                        "peak_to_avg_ratio": (peak_power / max(avg_power, 1.0)),
+                        "num_substates": 0,
+                        "has_heating_pattern": False,
+                        "has_motor_pattern": False,
+                        "profile_points": _build_profile(seg),
+                    }
+                    model_suggestion = self.storage.suggest_cycle_label(cycle_payload, fallback="unknown")
+                    suggestion = str(model_suggestion.get("label") or "unknown")
+                    self.storage.learn_cycle_pattern(cycle=cycle_payload, suggestion_type=suggestion)
+                    return True
+
+                for ts, power in series:
+                    if not in_cycle:
+                        if power >= on_threshold:
+                            in_cycle = True
+                            segment = [(ts, power)]
+                    else:
+                        segment.append((ts, power))
+
+                        gap_s = max((ts - prev_ts).total_seconds(), 0.0) if prev_ts else 0.0
+                        drop_close = (prev_power - power) >= float(self.config.learning_delta_off_w)
+                        should_close = power <= off_threshold or drop_close or (gap_s >= sparse_gap_s and power < on_threshold)
+
+                        if should_close:
+                            if _store_segment(segment):
+                                local_cycles_by_phase[phase_name] = local_cycles_by_phase.get(phase_name, 0) + 1
+                            in_cycle = False
+                            segment = []
+
+                    prev_ts = ts
+                    prev_power = power
+
+                # Finalize trailing cycle at end of series.
+                if in_cycle and segment:
+                    if _store_segment(segment):
+                        local_cycles_by_phase[phase_name] = local_cycles_by_phase.get(phase_name, 0) + 1
+
+            return local_cycles_by_phase
+
+        if cycles_detected == 0 and len(points) > 20:
+            logger.info("Replay still found no cycles; running edge-based fallback segmentation")
+            edge_cycles_by_phase = _run_edge_based_fallback()
+            edge_total = sum(int(v or 0) for v in edge_cycles_by_phase.values())
+            if edge_total > 0:
+                cycles_detected = edge_total
+                cycles_by_phase = edge_cycles_by_phase
+                logger.info("Edge-based fallback learned cycles: total=%s by_phase=%s", edge_total, edge_cycles_by_phase)
+
         return {
             "cycles_detected": cycles_detected,
             "points_processed": len(points),

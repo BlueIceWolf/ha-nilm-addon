@@ -4,6 +4,18 @@
 
 ---
 
+# Release 0.6.22 (BETA)
+
+## Store Kurztext
+- **Lernlauf-Fix**: Bei schwieriger Historie wird jetzt ein robuster Fallback genutzt, damit trotz vieler Messpunkte auch wirklich Zyklen gelernt werden koennen.
+
+## Highlights
+- Edge-basierter Replay-Fallback, wenn Standard-Replay 0 Zyklen liefert
+- Delta-On/Off + Baseline + Sparse-Gap-Handling fuer Recorder-Historie
+- Verbesserte Lernquote bei importierten Verlaufspunkten
+
+---
+
 # Release 0.6.21 (BETA)
 
 ## Store Kurztext
