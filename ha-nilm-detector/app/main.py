@@ -86,6 +86,16 @@ class NILMDetectionSystem:
                     pattern_match_threshold=self.config.pattern_match_threshold,
                     ml_confidence_threshold=self.config.ml_confidence_threshold,
                 )
+                try:
+                    patterns_loaded = len(self.storage.list_patterns(limit=1000))
+                    summary = self.storage.get_summary(hours=24)
+                    logger.info(
+                        "Startup storage state: patterns_loaded=%s readings_24h=%s",
+                        patterns_loaded,
+                        int(summary.get("reading_count", 0) or 0),
+                    )
+                except Exception as startup_diag_error:
+                    logger.warning("Startup storage state diagnostics failed: %s", startup_diag_error)
 
         self.processing_pipeline = ProcessingPipeline(
             smoothing_window=self.config.processing_smoothing_window,
@@ -192,9 +202,23 @@ class NILMDetectionSystem:
         if not self.storage:
             return
 
-        history = self.storage.get_recent_power_values(
+        warmstart_result = self.storage.get_warmstart_power_values(
             minutes=self.config.learning_warmup_minutes,
             limit=300,
+            fallback_limit=300,
+        )
+        diagnostics = warmstart_result.get("diagnostics", {}) if isinstance(warmstart_result, dict) else {}
+        history = warmstart_result.get("values", []) if isinstance(warmstart_result, dict) else []
+        logger.info(
+            "Warmstart diagnostics: db_exists=%s size=%sB tables=%s power_rows=%s recent_rows=%s fallback_rows=%s source=%s reason=%s",
+            bool((diagnostics.get("live_db") or {}).get("exists", False)),
+            int((diagnostics.get("live_db") or {}).get("size_bytes", 0) or 0),
+            ",".join(diagnostics.get("tables", []) or []) or "<none>",
+            int(diagnostics.get("power_readings_rows", 0) or 0),
+            int(diagnostics.get("recent_rows", 0) or 0),
+            int(diagnostics.get("fallback_rows", 0) or 0),
+            str(warmstart_result.get("source", "unknown") if isinstance(warmstart_result, dict) else "unknown"),
+            str(diagnostics.get("reason", "")),
         )
         if not history:
             logger.info("No historical readings available for detector warm start")
@@ -1003,13 +1027,20 @@ class NILMDetectionSystem:
 
     def stop(self) -> None:
         self.running = False
+        if self.storage:
+            try:
+                self.storage.flush_pending_buffers()
+            except Exception as flush_error:
+                logger.warning("Storage pre-shutdown flush failed: %s", flush_error)
+            try:
+                self.storage.close()
+            except Exception as close_error:
+                logger.warning("Storage close failed: %s", close_error)
         self.collector.disconnect()
         if self.publisher:
             self.publisher.disconnect()
         if self.web_server:
             self.web_server.stop()
-        if self.storage:
-            self.storage.close()
         logger.info("Detection system stopped")
         sys.exit(0)
 

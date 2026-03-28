@@ -4,6 +4,21 @@
 
 ---
 
+# Release 0.6.21 (BETA)
+
+## Store Kurztext
+- **Persistenz stabilisiert**: Daten bleiben nach Neustarts/Updates deutlich robuster erhalten, Warmstart und Migrationen sind jetzt transparent diagnostizierbar.
+
+## Highlights
+- Zentraler Storage-Standardpfad: `/data/ha_nilm_detector` (konfigurierbar via `storage.base_path`)
+- Robuste Legacy-Migration auch bei leeren Ziel-Dateien
+- Erweiterte Startup-Diagnose: DB-Dateien, Groessen, Tabellen, Row-Counts, Schema-Versionen
+- Migration ohne irrefuehrende Warnungen bei fehlender Legacy-Tabelle
+- Warmstart mit Fallback auf letzte Messwerte + detaillierter Ursache im Log
+- Saubere Shutdown-Reihenfolge mit explizitem Flush/Commit/Close vor Service-Stop
+
+---
+
 # Release 0.6.20 (BETA)
 
 ## Store Kurztext

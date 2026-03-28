@@ -2,12 +2,15 @@
 
 > ⚠️ **Hinweis**: Dieses Projekt ist experimentell (BETA) - Breaking Changes und Bugs können auftreten.
 
-## 0.6.19 (BETA)
+## 0.6.21 (BETA)
 
-**Manueller Lernlauf robuster bei importierten Verlaufsdaten**
-- Manueller Lernlauf nutzt jetzt 48h Replay-Fenster statt 24h
-- Replay fuehrt einen Fallback-Pass ohne Baseline-Priming aus, falls im ersten Pass keine Zyklen gefunden werden
-- Verbessert Erkennung bei unruhigen/lastigen Importverlaeufen, in denen adaptive Baseline zuvor zu konservativ war
+**Persistenz-, Migration- und Warmstart-Stabilisierung**
+- Speicherpfade zentralisiert (Standard jetzt unter `/data/ha_nilm_detector`) inkl. neuer Option `storage.base_path`
+- Legacy-Dateimigration robuster: migriert auch wenn Ziel-Datei bereits existiert aber leer ist
+- SQLite Startup-Diagnose erweitert: Dateiexistenz, Dateigroesse, Tabellenliste, Row-Counts und `PRAGMA user_version`
+- Migrationen robust gemacht: `learned_patterns`-Migration prueft Tabellenexistenz und loggt erwartete Faelle als Info statt Warnfehler
+- Warmstart repariert: diagnostischer Ladepfad mit SQL-Transparenz und Fallback auf letzte Werte ausserhalb des Zeitfensters
+- Shutdown-Reihenfolge gehaertet: erst Flush/Commit/Close fuer Storage, dann restliche Dienste
 
 ## 0.6.20 (BETA)
 
@@ -15,6 +18,13 @@
 - Startup-Recovery fuer Live-Daten ergaenzt: `power_readings` und `detections` werden aus Legacy-DBs wiederhergestellt, wenn die aktuelle Live-DB leer ist
 - Schuetzt gegen Update-Szenarien, in denen eine leere Ziel-DB existiert und reine Dateimigration deshalb nicht greift
 - Verhindert, dass Verlauf nach Update "verschwunden" wirkt, obwohl Daten in alten Pfaden noch vorhanden sind
+
+## 0.6.19 (BETA)
+
+**Manueller Lernlauf robuster bei importierten Verlaufsdaten**
+- Manueller Lernlauf nutzt jetzt 48h Replay-Fenster statt 24h
+- Replay fuehrt einen Fallback-Pass ohne Baseline-Priming aus, falls im ersten Pass keine Zyklen gefunden werden
+- Verbessert Erkennung bei unruhigen/lastigen Importverlaeufen, in denen adaptive Baseline zuvor zu konservativ war
 
 ## 0.6.18 (BETA)
 

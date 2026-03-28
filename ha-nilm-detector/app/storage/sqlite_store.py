@@ -20,6 +20,9 @@ logger = get_logger(__name__)
 class SQLiteStore:
     """Persists readings/detections for diagnostics and future learning."""
 
+    LIVE_SCHEMA_VERSION = 1
+    PATTERNS_SCHEMA_VERSION = 1
+
     def __init__(self, db_path: str, retention_days: int = 30, patterns_db_path: str | None = None):
         self.db_path = db_path
         self.patterns_db_path = str(patterns_db_path or db_path)
@@ -103,6 +106,104 @@ class SQLiteStore:
             logger.error(f"SQLite integrity check error: {e}", exc_info=True)
             return False
 
+    @staticmethod
+    def _table_exists(conn: sqlite3.Connection, table_name: str) -> bool:
+        try:
+            row = conn.execute(
+                "SELECT 1 FROM sqlite_master WHERE type='table' AND name=? LIMIT 1",
+                (str(table_name),),
+            ).fetchone()
+            return bool(row)
+        except Exception:
+            return False
+
+    @staticmethod
+    def _list_tables(conn: sqlite3.Connection) -> List[str]:
+        try:
+            rows = conn.execute(
+                "SELECT name FROM sqlite_master WHERE type='table' ORDER BY name"
+            ).fetchall()
+            return [str(r[0]) for r in rows]
+        except Exception:
+            return []
+
+    @staticmethod
+    def _safe_row_count(conn: sqlite3.Connection, table_name: str) -> int:
+        try:
+            if not SQLiteStore._table_exists(conn, table_name):
+                return 0
+            row = conn.execute(f"SELECT COUNT(*) FROM {table_name}").fetchone()
+            return int((row or [0])[0])
+        except Exception:
+            return 0
+
+    @staticmethod
+    def _db_file_stats(path: str) -> Dict[str, Any]:
+        exists = os.path.exists(path)
+        size_bytes = 0
+        if exists:
+            try:
+                size_bytes = int(os.path.getsize(path))
+            except OSError:
+                size_bytes = 0
+        return {
+            "path": path,
+            "exists": exists,
+            "size_bytes": size_bytes,
+        }
+
+    @staticmethod
+    def _ensure_schema_version(conn: sqlite3.Connection, target: int) -> int:
+        try:
+            current = int((conn.execute("PRAGMA user_version").fetchone() or [0])[0])
+        except Exception:
+            current = 0
+
+        if current < int(target):
+            try:
+                conn.execute(f"PRAGMA user_version={int(target)}")
+                current = int(target)
+            except Exception:
+                pass
+        return current
+
+    def _log_startup_diagnostics(self, stage: str) -> None:
+        """Emit startup diagnostics so persistence issues are visible in logs."""
+        live_stats = self._db_file_stats(self.db_path)
+        patterns_stats = self._db_file_stats(self.patterns_db_path)
+
+        logger.info(
+            "Storage diagnostics (%s): live_exists=%s live_size=%sB patterns_exists=%s patterns_size=%sB",
+            stage,
+            live_stats["exists"],
+            live_stats["size_bytes"],
+            patterns_stats["exists"],
+            patterns_stats["size_bytes"],
+        )
+
+        if self._conn:
+            live_tables = self._list_tables(self._conn)
+            live_user_version = int((self._conn.execute("PRAGMA user_version").fetchone() or [0])[0])
+            logger.info("Live DB tables (%s): %s", stage, ", ".join(live_tables) if live_tables else "<none>")
+            logger.info(
+                "Live DB row counts (%s): power_readings=%s detections=%s user_version=%s",
+                stage,
+                self._safe_row_count(self._conn, "power_readings"),
+                self._safe_row_count(self._conn, "detections"),
+                live_user_version,
+            )
+
+        if self._patterns_conn:
+            pattern_tables = self._list_tables(self._patterns_conn)
+            pattern_user_version = int((self._patterns_conn.execute("PRAGMA user_version").fetchone() or [0])[0])
+            logger.info("Pattern DB tables (%s): %s", stage, ", ".join(pattern_tables) if pattern_tables else "<none>")
+            logger.info(
+                "Pattern DB row counts (%s): learned_patterns=%s user_version=%s",
+                stage,
+                self._safe_row_count(self._patterns_conn, "learned_patterns"),
+                pattern_user_version,
+            )
+
     def _quarantine_corrupt_db(self) -> None:
         if not os.path.exists(self.db_path):
             return
@@ -135,6 +236,7 @@ class SQLiteStore:
             if db_dir:
                 os.makedirs(db_dir, exist_ok=True)
             self._conn = self._open_connection(self.db_path)
+            self._log_startup_diagnostics(stage="pre-init")
 
             if not self._check_integrity(self._conn):
                 if not self._reinitialize_database():
@@ -155,6 +257,7 @@ class SQLiteStore:
             self._maybe_recover_live_from_legacy_files()
             self._maybe_recover_patterns_from_legacy_files()
             self.cleanup_old_data()
+            self._log_startup_diagnostics(stage="post-init")
             logger.info(
                 "SQLite storage initialized: "
                 f"live={self.db_path}, patterns={self.patterns_db_path}"
@@ -172,6 +275,12 @@ class SQLiteStore:
             return
 
         try:
+            if not self._table_exists(self._conn, "learned_patterns"):
+                if self._table_exists(self._conn, "patterns"):
+                    logger.info("Legacy table 'patterns' exists but 'learned_patterns' is missing; skipping auto-migration")
+                logger.info("No legacy learned_patterns table found in live DB, skipping pattern migration")
+                return
+
             dst_count = int((self._patterns_conn.execute("SELECT COUNT(*) FROM learned_patterns").fetchone() or [0])[0])
             if dst_count > 0:
                 return
@@ -240,10 +349,7 @@ class SQLiteStore:
 
                 legacy_conn = sqlite3.connect(legacy_abs, timeout=5)
                 try:
-                    tables = legacy_conn.execute(
-                        "SELECT name FROM sqlite_master WHERE type='table' AND name='learned_patterns'"
-                    ).fetchall()
-                    if not tables:
+                    if not self._table_exists(legacy_conn, "learned_patterns"):
                         continue
 
                     src_count = int((legacy_conn.execute("SELECT COUNT(*) FROM learned_patterns").fetchone() or [0])[0])
@@ -283,6 +389,103 @@ class SQLiteStore:
                     legacy_conn.close()
             except Exception as legacy_error:
                 logger.warning("Legacy pattern recovery skipped for %s: %s", legacy_path, legacy_error)
+
+    def get_warmstart_power_values(
+        self,
+        minutes: int = 120,
+        limit: int = 300,
+        fallback_limit: int = 300,
+    ) -> Dict[str, Any]:
+        """Load warmstart readings with diagnostics and fallback beyond time window.
+
+        Returns:
+            {
+              "values": List[float],
+              "source": "window"|"latest_fallback"|"none"|"error",
+              "diagnostics": {...}
+            }
+        """
+        diagnostics: Dict[str, Any] = {
+            "live_db": self._db_file_stats(self.db_path),
+            "query": {
+                "minutes": int(max(minutes, 1)),
+                "limit": int(max(limit, 1)),
+                "fallback_limit": int(max(fallback_limit, 1)),
+            },
+            "tables": [],
+            "power_readings_rows": 0,
+            "recent_rows": 0,
+            "fallback_rows": 0,
+            "reason": "",
+            "recent_sql": "SELECT power_w FROM power_readings WHERE ts >= ? ORDER BY ts DESC LIMIT ?",
+            "fallback_sql": "SELECT power_w FROM power_readings ORDER BY ts DESC LIMIT ?",
+        }
+
+        if not self._conn:
+            diagnostics["reason"] = "storage_not_connected"
+            return {"values": [], "source": "error", "diagnostics": diagnostics}
+
+        try:
+            diagnostics["tables"] = self._list_tables(self._conn)
+            if not self._table_exists(self._conn, "power_readings"):
+                diagnostics["reason"] = "power_readings_table_missing"
+                return {"values": [], "source": "none", "diagnostics": diagnostics}
+
+            diagnostics["power_readings_rows"] = self._safe_row_count(self._conn, "power_readings")
+            if diagnostics["power_readings_rows"] <= 0:
+                diagnostics["reason"] = "power_readings_empty"
+                return {"values": [], "source": "none", "diagnostics": diagnostics}
+
+            safe_minutes = int(max(minutes, 1))
+            safe_limit = int(max(limit, 1))
+            cutoff = (datetime.now() - timedelta(minutes=safe_minutes)).isoformat()
+            logger.debug(
+                "Warmstart SQL recent: %s ; cutoff=%s ; limit=%s",
+                diagnostics["recent_sql"],
+                cutoff,
+                safe_limit,
+            )
+
+            recent_rows = self._conn.execute(
+                """
+                SELECT power_w FROM power_readings
+                WHERE ts >= ?
+                ORDER BY ts DESC
+                LIMIT ?
+                """,
+                (cutoff, safe_limit),
+            ).fetchall()
+            diagnostics["recent_rows"] = len(recent_rows)
+            if recent_rows:
+                values = [float(row[0]) for row in reversed(recent_rows)]
+                diagnostics["reason"] = "window_data_found"
+                return {"values": values, "source": "window", "diagnostics": diagnostics}
+
+            fallback_rows = self._conn.execute(
+                """
+                SELECT power_w FROM power_readings
+                ORDER BY ts DESC
+                LIMIT ?
+                """,
+                (int(max(fallback_limit, 1)),),
+            ).fetchall()
+            logger.debug(
+                "Warmstart SQL fallback: %s ; limit=%s",
+                diagnostics["fallback_sql"],
+                int(max(fallback_limit, 1)),
+            )
+            diagnostics["fallback_rows"] = len(fallback_rows)
+            if fallback_rows:
+                values = [float(row[0]) for row in reversed(fallback_rows)]
+                diagnostics["reason"] = "window_empty_using_latest_fallback"
+                return {"values": values, "source": "latest_fallback", "diagnostics": diagnostics}
+
+            diagnostics["reason"] = "no_rows_found"
+            return {"values": [], "source": "none", "diagnostics": diagnostics}
+        except Exception as e:
+            diagnostics["reason"] = f"query_failed: {e}"
+            logger.error("Warmstart query failed: %s", e, exc_info=True)
+            return {"values": [], "source": "error", "diagnostics": diagnostics}
 
     def _maybe_recover_live_from_legacy_files(self) -> None:
         """Recover live readings/detections from legacy DB files when current live DB is empty.
@@ -368,9 +571,8 @@ class SQLiteStore:
                 logger.warning("Legacy live recovery skipped for %s: %s", legacy_path, legacy_error)
 
     def close(self) -> None:
-        # Flush any pending batches before closing connections
-        self._flush_reading_batch()
-        self._flush_detection_batch()
+        # Flush and commit pending writes before closing connections.
+        self.flush_pending_buffers()
         
         if self._patterns_conn and self._patterns_conn is not self._conn:
             try:
@@ -383,6 +585,7 @@ class SQLiteStore:
 
         if self._conn:
             try:
+                self._conn.commit()
                 # Flush WAL changes into main DB before shutdown.
                 self._conn.execute("PRAGMA wal_checkpoint(TRUNCATE);")
             except Exception as e:
@@ -390,6 +593,23 @@ class SQLiteStore:
             finally:
                 self._conn.close()
                 self._conn = None
+
+    def flush_pending_buffers(self) -> None:
+        """Flush batched readings/detections and force a durable commit."""
+        self._flush_reading_batch()
+        self._flush_detection_batch()
+
+        if self._conn:
+            try:
+                self._conn.commit()
+            except Exception as e:
+                logger.warning("Live DB commit failed during flush: %s", e)
+
+        if self._patterns_conn and self._patterns_conn is not self._conn:
+            try:
+                self._patterns_conn.commit()
+            except Exception as e:
+                logger.warning("Pattern DB commit failed during flush: %s", e)
 
     def export_data(self) -> Dict:
         """Export learned patterns and recent readings as JSON."""
@@ -542,6 +762,7 @@ class SQLiteStore:
             self._conn.execute(
                 "CREATE INDEX IF NOT EXISTS idx_detections_ts ON detections(ts)"
             )
+            self._ensure_schema_version(self._conn, self.LIVE_SCHEMA_VERSION)
 
         if not self._patterns_conn:
             return
@@ -595,6 +816,7 @@ class SQLiteStore:
             self._ensure_column(self._patterns_conn, "learned_patterns", "hour_distribution_json", "TEXT DEFAULT '{}'")  # Hour frequency map
             self._ensure_column(self._patterns_conn, "learned_patterns", "profile_points_json", "TEXT DEFAULT '[]'")
             self._ensure_column(self._patterns_conn, "learned_patterns", "quality_score_avg", "REAL DEFAULT 0.5")
+            self._ensure_schema_version(self._patterns_conn, self.PATTERNS_SCHEMA_VERSION)
 
     def _ensure_column(
         self,
@@ -909,6 +1131,9 @@ class SQLiteStore:
     def get_recent_power_values(self, minutes: int = 60, limit: int = 300) -> List[float]:
         if not self._conn:
             return []
+        if not self._table_exists(self._conn, "power_readings"):
+            logger.info("Warmstart skipped: table power_readings is missing")
+            return []
 
         try:
             cutoff = (datetime.now() - timedelta(minutes=max(minutes, 1))).isoformat()
@@ -929,6 +1154,9 @@ class SQLiteStore:
 
     def get_power_series(self, limit: int = 300, offset: int = 0, max_limit: int = 2000) -> List[Dict]:
         if not self._conn:
+            return []
+        if not self._table_exists(self._conn, "power_readings"):
+            logger.info("Power series unavailable: table power_readings is missing")
             return []
 
         try:
@@ -1000,6 +1228,13 @@ class SQLiteStore:
 
     def get_summary(self, hours: int = 24) -> Dict:
         if not self._conn:
+            return {
+                "reading_count": 0,
+                "avg_power_w": 0.0,
+                "min_power_w": 0.0,
+                "max_power_w": 0.0,
+            }
+        if not self._table_exists(self._conn, "power_readings"):
             return {
                 "reading_count": 0,
                 "avg_power_w": 0.0,
@@ -1460,6 +1695,9 @@ class SQLiteStore:
 
     def list_patterns(self, limit: int = 100) -> List[Dict]:
         if not self._patterns_conn:
+            return []
+        if not self._table_exists(self._patterns_conn, "learned_patterns"):
+            logger.info("Pattern list unavailable: table learned_patterns is missing")
             return []
         try:
             cur = self._patterns_conn.execute(

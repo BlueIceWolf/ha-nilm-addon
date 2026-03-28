@@ -12,6 +12,10 @@ from app.utils.logging import get_logger
 logger = get_logger(__name__)
 
 
+DEFAULT_STORAGE_BASE = "/data/ha_nilm_detector"
+LEGACY_STORAGE_BASE = "/addon_configs/ha_nilm_detector"
+
+
 class Config:
     """Application configuration."""
     
@@ -58,17 +62,17 @@ class Config:
         self.ha_url = "http://supervisor/core/api"
         self.ha_phase_entities: Dict[str, str] = {}
         self.ha_token = ""
-        self.storage_path = "/addon_configs/ha_nilm_detector"
+        self.storage_path = DEFAULT_STORAGE_BASE
         self.storage_enabled = True
-        self.storage_db_path = "/addon_configs/ha_nilm_detector/nilm_live.sqlite3"
-        self.storage_patterns_db_path = "/addon_configs/ha_nilm_detector/nilm_patterns.sqlite3"
+        self.storage_db_path = f"{DEFAULT_STORAGE_BASE}/nilm_live.sqlite3"
+        self.storage_patterns_db_path = f"{DEFAULT_STORAGE_BASE}/nilm_patterns.sqlite3"
         self.storage_retention_days = 30
         self.learning_warmup_minutes = 120
         self.processing_smoothing_window = 5
         self.processing_noise_threshold = 2.0
         self.processing_adaptive_correction = True
         self.confidence_threshold = 0.6
-        self.log_file = "/addon_configs/ha_nilm_detector/nilm.log"  # Log file path (rotated on startup)
+        self.log_file = f"{DEFAULT_STORAGE_BASE}/nilm.log"  # Log file path (rotated on startup)
         self.max_log_backups = 3  # Keep max 3 old log files (.log.1, .log.2, .log.3)
         
         if config_path:
@@ -157,7 +161,7 @@ class Config:
             self.learning_auto_pipeline_interval_minutes = 5
 
         self.power_source = "home_assistant_rest"
-        self.storage_path = config_dict.get('storage_path', '/addon_configs/ha_nilm_detector')
+        self.storage_path = str(config_dict.get('storage_path', self.storage_path)).strip() or self.storage_path
         
         # MQTT settings
         mqtt_config = config_dict.get('mqtt', {})
@@ -187,10 +191,25 @@ class Config:
 
         storage_config = config_dict.get('storage', {})
         self.storage_enabled = bool(storage_config.get('enabled', self.storage_enabled))
-        self.storage_db_path = str(storage_config.get('db_path', self.storage_db_path))
+        storage_base_path = str(
+            storage_config.get('base_path', self.storage_path)
+        ).strip()
+        if storage_base_path:
+            self.storage_path = storage_base_path
+
+        default_live_db = os.path.join(self.storage_path, "nilm_live.sqlite3")
+        default_patterns_db = os.path.join(self.storage_path, "nilm_patterns.sqlite3")
+        self.storage_db_path = str(storage_config.get('db_path', default_live_db)).strip() or default_live_db
         self.storage_patterns_db_path = str(
-            storage_config.get('patterns_db_path', self.storage_patterns_db_path)
-        )
+            storage_config.get('patterns_db_path', default_patterns_db)
+        ).strip() or default_patterns_db
+
+        # Keep log file colocated with storage by default unless explicitly configured.
+        configured_log_file = str(config_dict.get('log_file', '')).strip()
+        if configured_log_file:
+            self.log_file = configured_log_file
+        else:
+            self.log_file = os.path.join(self.storage_path, "nilm.log")
         self.storage_retention_days = int(storage_config.get('retention_days', self.storage_retention_days))
         self.learning_warmup_minutes = int(storage_config.get('learning_warmup_minutes', self.learning_warmup_minutes))
         
@@ -265,7 +284,7 @@ class Config:
         os.makedirs(self.storage_path, exist_ok=True)
         # Compatibility: keep legacy addon config folder available for users/tools.
         try:
-            os.makedirs("/addon_configs/ha_nilm_detector", exist_ok=True)
+            os.makedirs(LEGACY_STORAGE_BASE, exist_ok=True)
         except Exception as legacy_dir_error:
             logger.debug(f"Legacy addon_configs directory not available: {legacy_dir_error}")
         self._migrate_legacy_storage_files()
@@ -276,24 +295,46 @@ class Config:
 
     def _migrate_legacy_storage_files(self) -> None:
         """Migrate known previous storage locations into current target paths when needed."""
+        storage_base_candidates = [
+            "/data",
+            LEGACY_STORAGE_BASE,
+            DEFAULT_STORAGE_BASE,
+        ]
+
         migration_sources = {
             self.storage_db_path: [
                 "/data/nilm_live.sqlite3",
-                "/addon_configs/ha_nilm_detector/nilm_live.sqlite3",
+                f"{LEGACY_STORAGE_BASE}/nilm_live.sqlite3",
+                f"{DEFAULT_STORAGE_BASE}/nilm_live.sqlite3",
             ],
             self.storage_patterns_db_path: [
                 "/data/nilm_patterns.sqlite3",
-                "/addon_configs/ha_nilm_detector/nilm_patterns.sqlite3",
+                f"{LEGACY_STORAGE_BASE}/nilm_patterns.sqlite3",
+                f"{DEFAULT_STORAGE_BASE}/nilm_patterns.sqlite3",
             ],
             self.log_file: [
                 "/data/nilm.log",
-                "/addon_configs/ha_nilm_detector/nilm.log",
+                f"{LEGACY_STORAGE_BASE}/nilm.log",
+                f"{DEFAULT_STORAGE_BASE}/nilm.log",
             ],
         }
 
+        for base in storage_base_candidates:
+            migration_sources[self.storage_db_path].append(f"{base}/ha_nilm_detector/nilm_live.sqlite3")
+            migration_sources[self.storage_patterns_db_path].append(f"{base}/ha_nilm_detector/nilm_patterns.sqlite3")
+            migration_sources[self.log_file].append(f"{base}/ha_nilm_detector/nilm.log")
+
+        def _target_is_missing_or_empty(path: str) -> bool:
+            if not os.path.exists(path):
+                return True
+            try:
+                return os.path.getsize(path) <= 0
+            except OSError:
+                return False
+
         for target_path, source_candidates in migration_sources.items():
             target = str(target_path or "").strip()
-            if not target or os.path.exists(target):
+            if not target or not _target_is_missing_or_empty(target):
                 continue
 
             for source_path in source_candidates:

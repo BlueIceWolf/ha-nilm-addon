@@ -27,7 +27,7 @@
 
 ---
 
-**Aktuell:** `v0.6.20` — Datenpersistenz-Hotfix: Live-DB-Recovery aus Legacy-Pfaden nach Update
+**Aktuell:** `v0.6.21` — Persistenz & Warmstart stabilisiert (Schema-/Migrationschecks + Startdiagnose)
 
 > ℹ️ **v0.6.11 Hinweis**: Auch die oberen Dashboard-Karten (`Gesamtleistung`, `Durchschnitt`, `Messwerte`, `Gelernte Muster`) schalten jetzt sauber zwischen DE/EN um.
 
