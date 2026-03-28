@@ -4,6 +4,19 @@
 
 ---
 
+# Release 0.6.8 (BETA)
+
+## Store Kurztext
+- **Hotfix Muster weg nach Update**: Wenn die aktuelle Pattern-DB leer ist, werden Legacy-Muster automatisch aus `/addon_configs/ha_nilm_detector/` wiederhergestellt.
+- **Sicherer Fallback**: Recovery prueft `nilm_patterns.sqlite3` und danach `nilm_live.sqlite3`.
+- **Keine manuelle SQL-Aktion noetig**: Muster werden beim Start automatisch nachgeladen.
+
+## Highlights
+- Neuer Startup-Recovery-Pfad in `SQLiteStore.connect()`
+- Nur aktiv, wenn Ziel-DB leer ist (keine Ueberschreibung bestehender Muster)
+
+---
+
 # Release 0.6.7 (BETA)
 
 ## Store Kurztext

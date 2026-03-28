@@ -11,7 +11,7 @@
 
 <p align="center">
   <img src="https://img.shields.io/badge/Status-BETA-orange" alt="BETA" />
-   <img src="https://img.shields.io/badge/Version-0.6.7-blue" alt="Version" />
+   <img src="https://img.shields.io/badge/Version-0.6.8-blue" alt="Version" />
 </p>
 
 > ⚠️ **EXPERIMENTELLES PROJEKT (BETA)**: Dieses Add-on befindet sich in aktiver Entwicklung. Viele Features funktionieren bereits gut, aber es ist **nicht production-ready**. Erwarte Bugs, unvollständige Features und Breaking Changes zwischen Versionen. Nutze es zum Experimentieren und Testen, aber nicht für kritische Automatisierungen.
@@ -27,9 +27,9 @@
 
 ---
 
-**Aktuell:** `v0.6.7` — Device-Gruppen + variablere Lasten werden ueber Mode-Clustering besser zusammengefuehrt
+**Aktuell:** `v0.6.8` — Hotfix fuer verschwundene Muster nach Update (Legacy-Recovery beim Start)
 
-> ℹ️ **v0.6.7 Hinweis**: Vorschlagslogik votet jetzt gruppenbasiert (statt Pattern-fragmentiert), und Betriebsmodi werden beim Lernen als Cluster zusammengefuehrt.
+> ℹ️ **v0.6.8 Hinweis**: Wenn nach einem Update keine Muster angezeigt werden, versucht das Add-on jetzt automatisch die Wiederherstellung aus alten Legacy-DBs unter `/addon_configs/ha_nilm_detector`.
 
 <a id="features"></a>
 ## ✨ Features

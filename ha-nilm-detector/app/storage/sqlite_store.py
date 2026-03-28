@@ -97,6 +97,7 @@ class SQLiteStore:
 
             self._create_tables()
             self._maybe_migrate_patterns_from_live()
+            self._maybe_recover_patterns_from_legacy_files()
             self.cleanup_old_data()
             logger.info(
                 "SQLite storage initialized: "
@@ -153,6 +154,77 @@ class SQLiteStore:
             logger.info(f"Migrated {len(src_rows)} pattern(s) into dedicated patterns DB")
         except Exception as e:
             logger.warning(f"Pattern migration to dedicated DB skipped: {e}")
+
+    def _maybe_recover_patterns_from_legacy_files(self) -> None:
+        """Recover patterns from legacy addon paths if current patterns DB is empty."""
+        if not self._patterns_conn:
+            return
+
+        try:
+            dst_count = int((self._patterns_conn.execute("SELECT COUNT(*) FROM learned_patterns").fetchone() or [0])[0])
+            if dst_count > 0:
+                return
+        except Exception:
+            return
+
+        legacy_candidates = [
+            "/addon_configs/ha_nilm_detector/nilm_patterns.sqlite3",
+            "/addon_configs/ha_nilm_detector/nilm_live.sqlite3",
+        ]
+
+        for legacy_path in legacy_candidates:
+            try:
+                legacy_abs = os.path.abspath(str(legacy_path))
+                if legacy_abs == os.path.abspath(self.patterns_db_path):
+                    continue
+                if not os.path.exists(legacy_abs):
+                    continue
+
+                legacy_conn = sqlite3.connect(legacy_abs, timeout=5)
+                try:
+                    tables = legacy_conn.execute(
+                        "SELECT name FROM sqlite_master WHERE type='table' AND name='learned_patterns'"
+                    ).fetchall()
+                    if not tables:
+                        continue
+
+                    src_count = int((legacy_conn.execute("SELECT COUNT(*) FROM learned_patterns").fetchone() or [0])[0])
+                    if src_count <= 0:
+                        continue
+
+                    rows = legacy_conn.execute(
+                        """
+                        SELECT created_at, updated_at, first_seen, last_seen, seen_count,
+                               avg_power_w, peak_power_w, duration_s, energy_wh,
+                               suggestion_type, user_label, status
+                        FROM learned_patterns
+                        """
+                    ).fetchall()
+                    if not rows:
+                        continue
+
+                    with self._patterns_conn:
+                        self._patterns_conn.executemany(
+                            """
+                            INSERT INTO learned_patterns (
+                                created_at, updated_at, first_seen, last_seen, seen_count,
+                                avg_power_w, peak_power_w, duration_s, energy_wh,
+                                suggestion_type, user_label, status
+                            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                            """,
+                            rows,
+                        )
+
+                    logger.warning(
+                        "Recovered %s learned pattern(s) from legacy DB: %s",
+                        len(rows),
+                        legacy_abs,
+                    )
+                    return
+                finally:
+                    legacy_conn.close()
+            except Exception as legacy_error:
+                logger.warning("Legacy pattern recovery skipped for %s: %s", legacy_path, legacy_error)
 
     def close(self) -> None:
         if self._patterns_conn and self._patterns_conn is not self._conn:

@@ -2,6 +2,13 @@
 
 > ⚠️ **Hinweis**: Dieses Projekt ist experimentell (BETA) - Breaking Changes und Bugs können auftreten.
 
+## 0.6.8 (BETA)
+
+**Hotfix: gelernte Muster nach Update wiederherstellen**
+- Beim Start wird jetzt automatisch ein Legacy-Recovery ausgefuehrt, wenn die aktuelle Pattern-DB leer ist.
+- Recovery liest Muster aus alten Dateien unter `/addon_configs/ha_nilm_detector/` (`nilm_patterns.sqlite3` und Fallback `nilm_live.sqlite3`).
+- Dadurch bleiben bestehende gelernte Muster auch nach Pfad-/Versionswechsel sichtbar statt "weg" zu wirken.
+
 ## 0.6.7 (BETA)
 
 **Device-Gruppen umgesetzt**
