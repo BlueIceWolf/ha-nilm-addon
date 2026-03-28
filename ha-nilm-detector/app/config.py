@@ -45,7 +45,7 @@ class Config:
         self.learning_delta_off_w = 12.0
         self.learning_max_gap_s = 6.0
         self.ai_enabled = True
-        self.ml_enabled = False
+        self.ml_enabled = True
         self.shape_matching_enabled = True
         self.online_learning_enabled = True
         self.pattern_match_threshold = 0.45

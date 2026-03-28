@@ -22,7 +22,7 @@ options:
     auto_pipeline_enabled: true
     auto_pipeline_interval_minutes: 30
     ai_enabled: true
-    ml_enabled: false
+    ml_enabled: true
     shape_matching_enabled: true
     online_learning_enabled: true
     delta_on_w: 30.0
