@@ -4,6 +4,20 @@
 
 ---
 
+# Release 0.6.7 (BETA)
+
+## Store Kurztext
+- **Device-Gruppen aktiv**: Mehrere Pattern eines Geraets werden gruppiert und konsistenter benannt.
+- **Variable Lasten robuster**: Betriebsmodi werden beim Lernen als Cluster gepflegt statt zu stark zu fragmentieren.
+- **UI-Transparenz**: Neue Gruppen-Spalte + Sortierung `Gruppe ↓` in der Muster-Tabelle.
+
+## Highlights
+- Backend liefert `device_group_key`, `device_group_label`, `device_group_size`
+- Gruppenbasiertes Voting in der Label-Suggestion
+- Operating-Mode-Merge im Lernpfad (`operating_modes`, `has_multiple_modes`)
+
+---
+
 # Release 0.6.6 (BETA)
 
 ## Store Kurztext

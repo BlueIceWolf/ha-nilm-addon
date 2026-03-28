@@ -18,6 +18,8 @@ Was funktioniert bereits, was ist noch in Arbeit und wo soll das Projekt hin.
 - **Zeitliche Muster**: Lernt typische Tageszeiten und Intervalle zwischen Zyklen
 - **Dashboard Sprache DE/EN**: UI kann zwischen Deutsch und Englisch umgeschaltet werden
 - **Sichtbarer Pattern-Confidence-Score**: Tabelle zeigt Erkennungssicherheit pro Muster
+- **Device-Gruppen**: Mehrere Pattern werden pro Geraet gruppiert dargestellt
+- **Mode-Clustering verbessert**: Variable Lasten werden besser als Betriebsmodi zusammengehalten
 
 ---
 
@@ -39,8 +41,8 @@ Was funktioniert bereits, was ist noch in Arbeit und wo soll das Projekt hin.
 
 ### Kurzfristig (nächste Versionen)
 - Bessere Erkennung für stark variable Lasten (Induktionsherd, Staubsauger) weiter ausbauen
-- Device-Gruppen: Mehrere Patterns unter einem Gerätenamen zusammenfassen
 - Täglicher Summary: Top Geräte, Trends, Anomalien
+- Optionales manuelles Merge/Split fuer Device-Gruppen im UI
 
 ### Mittelfristig
 - MQTT Integration für Home Assistant
@@ -107,7 +109,7 @@ Damit das Projekt irgendwann "produktiv-ready" ist sollte gelten:
 - Gute Dokumentation damit neue User nicht völlig verloren sind
 - Ein paar Video-Guides zum Einrichten
 
-**Aktuell (v0.6.6):** Etwa 60-70% davon erreicht. Core + UI sind deutlich reifer, Fokus bleibt variable Lasten und Device-Gruppierung.
+**Aktuell (v0.6.7):** Etwa 65-75% davon erreicht. Core + UI sind deutlich reifer; Fokus liegt jetzt auf Edge-Cases bei stark variablen Lasten und Gruppen-Feintuning.
 
 ---
 

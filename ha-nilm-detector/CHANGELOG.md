@@ -2,6 +2,20 @@
 
 > ⚠️ **Hinweis**: Dieses Projekt ist experimentell (BETA) - Breaking Changes und Bugs können auftreten.
 
+## 0.6.7 (BETA)
+
+**Device-Gruppen umgesetzt**
+- Patterns werden jetzt mit `device_group_key`/`device_group_size` angereichert und als Gruppe darstellbar.
+- Vorschlagslogik votet gruppenbasiert statt nur pro Einzelpattern, wodurch Label-Fragmente reduziert werden.
+
+**Variable Lasten besser gebuendelt**
+- Lernpfad fuehrt jetzt `operating_modes` aktiv zusammen (Mode-Clustering beim Update eines Patterns).
+- Neue Zyklen werden in bestehende Betriebsmodi gemergt oder als neuer Modus angehaengt statt sofort als komplett neues Geraet zu fragmentieren.
+
+**Web-UI erweitert**
+- Muster-Tabelle zeigt neue Spalte `Gruppe` inkl. Gruppengroesse.
+- Neue Sortieroption `Gruppe ↓` fuer schnelle Cluster-Pruefung.
+
 ## 0.6.6 (BETA)
 
 **Confidence-Score jetzt sichtbar**

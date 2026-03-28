@@ -363,6 +363,97 @@ class SQLiteStore:
         return max(0.0, min(1.0, score))
 
     @staticmethod
+    def _parse_operating_modes(raw: object) -> List[Dict]:
+        """Parse persisted operating modes safely from JSON string/list."""
+        if isinstance(raw, list):
+            base = raw
+        elif isinstance(raw, str):
+            try:
+                parsed = json.loads(raw)
+                base = parsed if isinstance(parsed, list) else []
+            except Exception:
+                base = []
+        else:
+            base = []
+
+        out: List[Dict] = []
+        for item in base:
+            if not isinstance(item, dict):
+                continue
+            try:
+                out.append(
+                    {
+                        "avg_power_w": float(item.get("avg_power_w", 0.0)),
+                        "duration_s": float(item.get("duration_s", 0.0)),
+                        "peak_power_w": float(item.get("peak_power_w", 0.0)),
+                        "seen_count": max(1, int(item.get("seen_count", 1))),
+                        "last_seen": str(item.get("last_seen", "")),
+                    }
+                )
+            except (TypeError, ValueError):
+                continue
+        return out[:12]
+
+    @staticmethod
+    def _build_mode_signature(cycle: Dict, end_ts: str) -> Dict:
+        """Create a compact mode signature from a learned cycle."""
+        return {
+            "avg_power_w": float(cycle.get("avg_power_w", 0.0)),
+            "duration_s": float(cycle.get("duration_s", 0.0)),
+            "peak_power_w": float(cycle.get("peak_power_w", 0.0)),
+            "seen_count": 1,
+            "last_seen": str(end_ts),
+        }
+
+    @staticmethod
+    def _merge_operating_modes(existing_modes: List[Dict], candidate_mode: Dict, max_modes: int = 6) -> List[Dict]:
+        """Merge candidate cycle into nearest operating mode or create a new mode cluster."""
+
+        def rel(a: float, b: float) -> float:
+            base = max(abs(a), abs(b), 1.0)
+            return abs(a - b) / base
+
+        modes = [dict(m) for m in existing_modes]
+        if not candidate_mode:
+            return modes[:max_modes]
+
+        best_idx = -1
+        best_dist = 999.0
+        for idx, mode in enumerate(modes):
+            dist = (
+                rel(float(mode.get("avg_power_w", 0.0)), float(candidate_mode.get("avg_power_w", 0.0))) * 0.55
+                + rel(float(mode.get("duration_s", 0.0)), float(candidate_mode.get("duration_s", 0.0))) * 0.35
+                + rel(float(mode.get("peak_power_w", 0.0)), float(candidate_mode.get("peak_power_w", 0.0))) * 0.10
+            )
+            if dist < best_dist:
+                best_dist = dist
+                best_idx = idx
+
+        # Slightly relaxed threshold helps variable-load devices cluster better.
+        if best_idx >= 0 and best_dist <= 0.30:
+            mode = modes[best_idx]
+            seen = max(1, int(mode.get("seen_count", 1)))
+            alpha = 1.0 / float(seen + 1)
+            mode["avg_power_w"] = float(mode.get("avg_power_w", 0.0)) * (1.0 - alpha) + float(candidate_mode.get("avg_power_w", 0.0)) * alpha
+            mode["duration_s"] = float(mode.get("duration_s", 0.0)) * (1.0 - alpha) + float(candidate_mode.get("duration_s", 0.0)) * alpha
+            mode["peak_power_w"] = float(mode.get("peak_power_w", 0.0)) * (1.0 - alpha) + float(candidate_mode.get("peak_power_w", 0.0)) * alpha
+            mode["seen_count"] = seen + 1
+            mode["last_seen"] = str(candidate_mode.get("last_seen", mode.get("last_seen", "")))
+            modes[best_idx] = mode
+        else:
+            modes.append(dict(candidate_mode))
+
+        modes.sort(key=lambda item: int(item.get("seen_count", 1)), reverse=True)
+        return modes[:max_modes]
+
+    @staticmethod
+    def _device_group_key(item: Dict) -> str:
+        """Build a stable group key so multiple patterns can belong to one device group."""
+        raw = str(item.get("user_label") or item.get("suggestion_type") or "").strip()
+        key = SQLiteStore._normalize_pattern_name(raw)
+        return key or "unbekannt"
+
+    @staticmethod
     def _incremental_rise_w(signature: Dict) -> float:
         """Estimate added load above baseline (incremental rise) from profile/metrics."""
         points = SQLiteStore._normalize_profile_points(signature.get("profile_points", []))
@@ -738,7 +829,8 @@ class SQLiteStore:
         if not patterns:
             return {"label": fallback, "confidence": 0.0, "source": "fallback"}
 
-        score_by_label: Dict[str, float] = {}
+        score_by_group: Dict[str, float] = {}
+        group_display_label: Dict[str, str] = {}
         total_score = 0.0
         cycle_phase_mode = str(cycle.get("phase_mode") or "unknown")
         cycle_phase = str(cycle.get("phase") or "L1")
@@ -767,6 +859,11 @@ class SQLiteStore:
             label_raw = str(item.get("user_label") or item.get("suggestion_type") or "").strip()
             if not label_raw:
                 continue
+            group_key = self._device_group_key(item)
+            if group_key not in group_display_label or str(item.get("user_label") or "").strip():
+                # Prefer explicit user label for display, fallback to normalized key.
+                display = str(item.get("user_label") or "").strip() or group_key
+                group_display_label[group_key] = display
 
             distance = self._pattern_distance(item, cycle)
             if best_distance_overall is None or distance < best_distance_overall:
@@ -808,13 +905,14 @@ class SQLiteStore:
             if vote <= 0.0:
                 continue
 
-            score_by_label[label_raw] = score_by_label.get(label_raw, 0.0) + vote
+            score_by_group[group_key] = score_by_group.get(group_key, 0.0) + vote
             total_score += vote
 
-        if not score_by_label or total_score <= 0.0:
+        if not score_by_group or total_score <= 0.0:
             return {"label": fallback, "confidence": 0.0, "source": "fallback"}
 
-        best_label, best_score = max(score_by_label.items(), key=lambda pair: pair[1])
+        best_group, best_score = max(score_by_group.items(), key=lambda pair: pair[1])
+        best_label = group_display_label.get(best_group, best_group)
         confidence = float(best_score / total_score)
 
         # Guard against label collapse: if the nearest prototype is still too far,
@@ -1115,6 +1213,20 @@ class SQLiteStore:
                         "is_confirmed": bool(str(row[11] or "").strip()),
                     }
                 )
+
+            # Build device groups: multiple patterns/modes that likely belong to one device label.
+            group_meta: Dict[str, Dict[str, int]] = {}
+            for item in out:
+                key = self._device_group_key(item)
+                item["device_group_key"] = key
+                group_info = group_meta.setdefault(key, {"size": 0})
+                group_info["size"] += 1
+
+            for item in out:
+                key = str(item.get("device_group_key") or "unbekannt")
+                item["device_group_label"] = key
+                item["device_group_size"] = int(group_meta.get(key, {}).get("size", 1))
+
             return out
         except Exception as e:
             logger.error(f"Failed to list learned patterns: {e}", exc_info=True)
@@ -1184,6 +1296,13 @@ class SQLiteStore:
                     profile_points = self._normalize_profile_points(best.get("profile_points", []))
                 profile_points_json = json.dumps(profile_points)
                 quality_score_avg = float(best.get("quality_score_avg", 0.5)) * (1.0 - alpha) + quality_score * alpha
+                candidate_mode = self._build_mode_signature(cycle, str(cycle.get("end_ts", now)))
+                merged_modes = self._merge_operating_modes(
+                    self._parse_operating_modes(best.get("operating_modes", [])),
+                    candidate_mode,
+                )
+                operating_modes_json = json.dumps(merged_modes)
+                has_multiple_modes = 1 if len(merged_modes) >= 2 else 0
                 
                 # Temporal pattern tracking - calculate interval since last occurrence
                 last_seen_str = best.get("last_seen", cycle["end_ts"])
@@ -1239,6 +1358,8 @@ class SQLiteStore:
                             has_heating_pattern = ?, has_motor_pattern = ?,
                             profile_points_json = ?,
                             quality_score_avg = ?,
+                            operating_modes = ?,
+                            has_multiple_modes = ?,
                             typical_interval_s = ?, avg_hour_of_day = ?,
                             last_intervals_json = ?, hour_distribution_json = ?
                         WHERE id = ?
@@ -1264,6 +1385,8 @@ class SQLiteStore:
                             has_motor,
                             profile_points_json,
                             quality_score_avg,
+                            operating_modes_json,
+                            has_multiple_modes,
                             typical_interval_s,
                             avg_hour_of_day,
                             last_intervals_json,
@@ -1294,6 +1417,8 @@ class SQLiteStore:
                         "has_motor_pattern": has_motor,
                         "profile_points": profile_points,
                         "quality_score_avg": quality_score_avg,
+                        "operating_modes": merged_modes,
+                        "has_multiple_modes": bool(has_multiple_modes),
                     }
                 )
                 return {
@@ -1316,8 +1441,11 @@ class SQLiteStore:
                 profile_points_json = json.dumps(profile_points)
                 
                 # Multi-mode learning
-                operating_modes_json = json.dumps(cycle.get("operating_modes", []))
-                has_multiple_modes = 1 if cycle.get("has_multiple_modes", False) else 0
+                initial_mode = self._build_mode_signature(cycle, str(cycle.get("end_ts", now)))
+                seed_modes = self._parse_operating_modes(cycle.get("operating_modes", []))
+                merged_seed_modes = self._merge_operating_modes(seed_modes, initial_mode)
+                operating_modes_json = json.dumps(merged_seed_modes)
+                has_multiple_modes = 1 if len(merged_seed_modes) >= 2 else 0
                 
                 # Temporal pattern tracking - initialize for new pattern
                 try:

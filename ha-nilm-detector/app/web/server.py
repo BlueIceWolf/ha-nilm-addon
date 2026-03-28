@@ -367,6 +367,7 @@ def _html_page(default_language: str = "de") -> str:
       <select id=\"patternSort\" style=\"padding: 6px 10px; border: 1px solid var(--line); border-radius: 6px; background: var(--card); color: var(--ink);\">
         <option id=\"sortSeenCount\" value=\"seen_count\">Sortieren: Häufigkeit ↓</option>
         <option id=\"sortConfidence\" value=\"confidence_score\">Sortieren: Confidence ↓</option>
+        <option id=\"sortGroupSize\" value=\"device_group_size\">Sortieren: Gruppe ↓</option>
         <option id=\"sortPower\" value=\"avg_power_w\">Sortieren: Leistung ↓</option>
         <option id=\"sortDuration\" value=\"duration_s\">Sortieren: Dauer ↓</option>
         <option id=\"sortStability\" value=\"stability_score\">Sortieren: Stabilität ↓</option>
@@ -376,7 +377,7 @@ def _html_page(default_language: str = "de") -> str:
     </div>
     <table>
       <thead>
-        <tr><th id=\"pthId\">ID</th><th id=\"pthType\">Typ</th><th id=\"pthLabel\">Label</th><th id=\"pthFrequency\" style="font-size:0.85rem;">Häufig.</th><th id=\"pthInterval\" style="font-size:0.85rem;">Intervall</th><th id=\"pthTime\" style="font-size:0.85rem;">Uhrzeit</th><th id=\"pthStability\" style="font-size:0.85rem;">Stabilit.</th><th id=\"pthConfidence\" style="font-size:0.85rem;">Conf.</th><th id=\"pthPhases\">Phasen</th><th id=\"pthAvg\">Ø (W)</th><th id=\"pthPeak\">Spitze (W)</th><th id=\"pthDuration\">Dauer (s)</th><th id=\"pthCount\">Anzahl</th><th id=\"pthAction\">Aktion</th></tr>
+        <tr><th id=\"pthId\">ID</th><th id=\"pthType\">Typ</th><th id=\"pthLabel\">Label</th><th id=\"pthGroup\" style="font-size:0.85rem;">Gruppe</th><th id=\"pthFrequency\" style="font-size:0.85rem;">Häufig.</th><th id=\"pthInterval\" style="font-size:0.85rem;">Intervall</th><th id=\"pthTime\" style="font-size:0.85rem;">Uhrzeit</th><th id=\"pthStability\" style="font-size:0.85rem;">Stabilit.</th><th id=\"pthConfidence\" style="font-size:0.85rem;">Conf.</th><th id=\"pthPhases\">Phasen</th><th id=\"pthAvg\">Ø (W)</th><th id=\"pthPeak\">Spitze (W)</th><th id=\"pthDuration\">Dauer (s)</th><th id=\"pthCount\">Anzahl</th><th id=\"pthAction\">Aktion</th></tr>
       </thead>
       <tbody id=\"patternRows\"></tbody>
     </table>
@@ -442,6 +443,7 @@ const I18N = {
     thCycles: 'Zyklen',
     thRuntime: 'Laufzeit (s)',
     pthType: 'Typ',
+    pthGroup: 'Gruppe',
     pthFrequency: 'Häufig.',
     pthInterval: 'Intervall',
     pthTime: 'Uhrzeit',
@@ -462,6 +464,7 @@ const I18N = {
     patternSearchPlaceholder: 'Muster suchen...',
     sortSeenCount: 'Sortieren: Häufigkeit ↓',
     sortConfidence: 'Sortieren: Confidence ↓',
+    sortGroupSize: 'Sortieren: Gruppe ↓',
     sortPower: 'Sortieren: Leistung ↓',
     sortDuration: 'Sortieren: Dauer ↓',
     sortStability: 'Sortieren: Stabilität ↓',
@@ -507,6 +510,7 @@ const I18N = {
     thCycles: 'Cycles',
     thRuntime: 'Runtime (s)',
     pthType: 'Type',
+    pthGroup: 'Group',
     pthFrequency: 'Freq.',
     pthInterval: 'Interval',
     pthTime: 'Time',
@@ -527,6 +531,7 @@ const I18N = {
     patternSearchPlaceholder: 'Search patterns...',
     sortSeenCount: 'Sort: frequency ↓',
     sortConfidence: 'Sort: confidence ↓',
+    sortGroupSize: 'Sort: group ↓',
     sortPower: 'Sort: power ↓',
     sortDuration: 'Sort: duration ↓',
     sortStability: 'Sort: stability ↓',
@@ -595,6 +600,7 @@ function applyLanguage() {
   assignText('thCycles', 'thCycles');
   assignText('thRuntime', 'thRuntime');
   assignText('pthType', 'pthType');
+  assignText('pthGroup', 'pthGroup');
   assignText('pthFrequency', 'pthFrequency');
   assignText('pthInterval', 'pthInterval');
   assignText('pthTime', 'pthTime');
@@ -612,6 +618,7 @@ function applyLanguage() {
   assignText('newerBtn', 'newerBtn');
   assignText('sortSeenCount', 'sortSeenCount');
   assignText('sortConfidence', 'sortConfidence');
+  assignText('sortGroupSize', 'sortGroupSize');
   assignText('sortPower', 'sortPower');
   assignText('sortDuration', 'sortDuration');
   assignText('sortStability', 'sortStability');
@@ -1007,7 +1014,7 @@ function renderPatterns(patterns) {
   tbody.innerHTML = '';
   if (!patterns || !patterns.length) {
     const tr = document.createElement('tr');
-    tr.innerHTML = `<td colspan="15">${t('noPatterns')}</td>`;
+    tr.innerHTML = `<td colspan="16">${t('noPatterns')}</td>`;
     tbody.appendChild(tr);
     return;
   }
@@ -1030,6 +1037,9 @@ function renderPatterns(patterns) {
     const confidence = Number.isFinite(Number(p.confidence_score)) ? Number(p.confidence_score) : 50;
     const confColor = confidence >= 80 ? '#2e7d32' : (confidence >= 60 ? '#f9a825' : '#c62828');
     const confidenceChip = `<span style="display:inline-block;padding:2px 6px;border-radius:999px;font-size:0.78rem;font-weight:600;background:rgba(0,0,0,0.04);color:${confColor};">${confidence.toFixed(0)}%</span>`;
+    const groupLabel = String(p.device_group_label || candidate || t('unknown'));
+    const groupSize = Number.isFinite(Number(p.device_group_size)) ? Number(p.device_group_size) : 1;
+    const groupChip = `<span style="display:inline-block;padding:2px 6px;border-radius:999px;font-size:0.76rem;font-weight:600;background:rgba(3,169,244,0.12);color:#0277bd;">${groupLabel} (${groupSize})</span>`;
     
     // Temporale Muster - Intervall
     const typicalInterval = p.typical_interval_s || 0;
@@ -1096,7 +1106,7 @@ function renderPatterns(patterns) {
       ? `<td><div class="tooltip" style="font-size:0.85rem;color:#666;">${timeText}<span class="tooltiptext">${timeTooltip}</span></div></td>`
       : `<td style="font-size:0.85rem;color:#666;">${timeText}</td>`;
     
-    tr.innerHTML = `<td>${p.id}</td><td>${typeText}</td><td>${label}</td><td style="font-size:0.85rem;color:#666;">${frequency}</td>${intervalCell}${timeCell}<td style="padding:4px 2px;">${stabilityBar}</td><td>${confidenceChip}</td><td>${phaseDisplay}</td><td>${fmt(p.avg_power_w)}</td><td>${fmt(p.peak_power_w)}</td><td>${fmt(p.duration_s)}</td><td>${p.seen_count ?? 0}</td><td><button data-id="${p.id}" class="btn-label">Label</button> <button data-id="${p.id}" class="btn-delete">Löschen</button></td>`;
+    tr.innerHTML = `<td>${p.id}</td><td>${typeText}</td><td>${label}</td><td>${groupChip}</td><td style="font-size:0.85rem;color:#666;">${frequency}</td>${intervalCell}${timeCell}<td style="padding:4px 2px;">${stabilityBar}</td><td>${confidenceChip}</td><td>${phaseDisplay}</td><td>${fmt(p.avg_power_w)}</td><td>${fmt(p.peak_power_w)}</td><td>${fmt(p.duration_s)}</td><td>${p.seen_count ?? 0}</td><td><button data-id="${p.id}" class="btn-label">Label</button> <button data-id="${p.id}" class="btn-delete">Löschen</button></td>`;
     tr.style.cursor = 'pointer';
     tr.addEventListener('click', (e) => {
       if (e.target.tagName === 'BUTTON') return;
