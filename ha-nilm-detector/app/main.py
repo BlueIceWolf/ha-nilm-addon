@@ -235,6 +235,12 @@ class NILMDetectionSystem:
                 "last_update": state.last_update.isoformat() if state.last_update else None,
             }
 
+        learned_devices = self._build_learned_devices_payload(
+            latest=latest,
+            existing_names=set(device_payload.keys()),
+        )
+        device_payload.update(learned_devices)
+
         # Extract phase information from latest reading
         phase_powers = {}
         phase_entities = {}
@@ -257,6 +263,157 @@ class NILMDetectionSystem:
             "phases": phases_info,
             "devices": device_payload,
         }
+
+    def _select_representative_patterns(self, limit: int = 100) -> List[Dict]:
+        if not self.storage:
+            return []
+
+        try:
+            patterns = self.storage.list_patterns(limit=limit)
+        except Exception as pattern_error:
+            logger.debug("Failed to load learned patterns for device view: %s", pattern_error)
+            return []
+
+        representatives: Dict[str, tuple] = {}
+        for item in patterns:
+            label = str(
+                item.get("device_group_label")
+                or item.get("user_label")
+                or item.get("candidate_name")
+                or item.get("suggestion_type")
+                or ""
+            ).strip()
+            if not label:
+                continue
+
+            seen_count = max(int(item.get("seen_count", 0) or 0), 0)
+            base_confidence = max(0.0, min(float(item.get("confidence_score", 0.0) or 0.0) / 100.0, 1.0))
+            is_unknown = label.lower() in {"unknown", "unbekannt"}
+            if seen_count < 2 and base_confidence < 0.45:
+                continue
+            if is_unknown and seen_count < 4 and base_confidence < 0.65:
+                continue
+
+            rank = (
+                1 if item.get("is_confirmed") else 0,
+                base_confidence,
+                seen_count,
+                float(item.get("avg_power_w", 0.0) or 0.0),
+            )
+            current = representatives.get(label)
+            if current is None or rank > current[0]:
+                representatives[label] = (rank, item)
+
+        ranked = sorted(representatives.values(), key=lambda entry: entry[0], reverse=True)
+        return [item for _, item in ranked]
+
+    def _build_learned_devices_payload(self, latest, existing_names: set[str] | None = None) -> Dict[str, Dict]:
+        existing_names = existing_names or set()
+        patterns = self._select_representative_patterns(limit=100)
+        if not patterns:
+            return {}
+
+        phase_powers: Dict[str, float] = {}
+        if latest and isinstance(latest.metadata, dict):
+            raw_phase_powers = latest.metadata.get("phase_powers_w", {})
+            if isinstance(raw_phase_powers, dict):
+                for phase_name, value in raw_phase_powers.items():
+                    try:
+                        phase_powers[str(phase_name).upper()] = float(value)
+                    except (TypeError, ValueError):
+                        continue
+
+        total_power = float(latest.power_w) if latest else 0.0
+        candidates_by_bucket: Dict[str, List[Dict]] = {}
+        pattern_runtime_meta: List[Dict] = []
+
+        for pattern in patterns:
+            base_name = str(
+                pattern.get("device_group_label")
+                or pattern.get("user_label")
+                or pattern.get("candidate_name")
+                or pattern.get("suggestion_type")
+                or "gelerntes geraet"
+            ).strip()
+            if not base_name:
+                continue
+
+            display_name = base_name if base_name not in existing_names else f"{base_name} (learned)"
+            avg_power_w = max(float(pattern.get("avg_power_w", 0.0) or 0.0), 1.0)
+            peak_power_w = max(float(pattern.get("peak_power_w", avg_power_w) or avg_power_w), avg_power_w)
+            phase_name = str(pattern.get("phase") or "TOTAL").upper()
+            bucket = phase_name if phase_name in phase_powers else "TOTAL"
+            observed_power = float(phase_powers.get(bucket, total_power)) if bucket != "TOTAL" else total_power
+            base_confidence = max(0.0, min(float(pattern.get("confidence_score", 0.0) or 0.0) / 100.0, 1.0))
+
+            lower_bound = max(25.0, avg_power_w * 0.45)
+            upper_bound = max(80.0, avg_power_w * 1.90, peak_power_w * 1.35)
+            closeness = 0.0
+            if observed_power >= lower_bound:
+                delta_ratio = abs(observed_power - avg_power_w) / max(avg_power_w, 1.0)
+                closeness = max(0.0, 1.0 - delta_ratio)
+                if observed_power > upper_bound:
+                    overload_ratio = min((observed_power - upper_bound) / max(upper_bound, 1.0), 1.0)
+                    closeness *= (1.0 - overload_ratio)
+
+            runtime_meta = {
+                "name": display_name,
+                "bucket": bucket,
+                "phase": phase_name,
+                "avg_power_w": avg_power_w,
+                "observed_power": observed_power,
+                "base_confidence": base_confidence,
+                "live_match_score": base_confidence * closeness,
+                "seen_count": int(pattern.get("seen_count", 0) or 0),
+                "pattern": pattern,
+            }
+            pattern_runtime_meta.append(runtime_meta)
+            if runtime_meta["live_match_score"] > 0.0:
+                candidates_by_bucket.setdefault(bucket, []).append(runtime_meta)
+
+        active_names: set[str] = set()
+        for bucket, candidates in candidates_by_bucket.items():
+            remaining_power = float(phase_powers.get(bucket, total_power)) if bucket != "TOTAL" else total_power
+            ordered = sorted(
+                candidates,
+                key=lambda item: (item["live_match_score"], item["seen_count"], item["avg_power_w"]),
+                reverse=True,
+            )
+            for candidate in ordered:
+                if candidate["live_match_score"] < 0.33:
+                    break
+                expected = float(candidate["avg_power_w"])
+                tolerance = max(25.0, expected * 0.35)
+                if remaining_power + tolerance < expected:
+                    continue
+                active_names.add(str(candidate["name"]))
+                remaining_power = max(0.0, remaining_power - min(remaining_power, expected))
+
+        payload: Dict[str, Dict] = {}
+        for item in pattern_runtime_meta:
+            name = str(item["name"])
+            pattern = item["pattern"]
+            is_active = name in active_names
+            match_score = float(item["live_match_score"])
+            base_confidence = float(item["base_confidence"])
+            display_confidence = max(0.0, min(0.99, (base_confidence * 0.55) + (match_score * 0.45))) if is_active else max(0.0, min(0.75, base_confidence * 0.40))
+            payload[name] = {
+                "state": "on" if is_active else "off",
+                "power_w": float(item["observed_power"] if is_active else 0.0),
+                "estimated_power_w": float(item["observed_power"] if is_active else 0.0),
+                "phase_total_w": float(item["observed_power"]),
+                "confidence": round(display_confidence, 2),
+                "daily_cycles": None,
+                "daily_runtime_seconds": None,
+                "last_update": latest.timestamp.isoformat() if latest else None,
+                "source": "learned_pattern",
+                "phase": item["phase"],
+                "pattern_id": pattern.get("id"),
+                "pattern_seen_count": item["seen_count"],
+                "pattern_label": pattern.get("user_label") or pattern.get("candidate_name") or pattern.get("suggestion_type"),
+            }
+
+        return payload
 
     def _build_summary_payload(self) -> Dict:
         if not self.storage:

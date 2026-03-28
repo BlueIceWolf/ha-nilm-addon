@@ -4,6 +4,20 @@
 
 ---
 
+# Release 0.6.12 (BETA)
+
+## Store Kurztext
+- **Gelernte Geräte sind jetzt live sichtbar**: Muster erscheinen automatisch als Geräte-Einträge im Dashboard – echtes Self-Learning ohne Konfiguration!
+
+## Highlights
+- Automatische Gerätesynthese aus repräsentativen Mustergruppen
+- Live-Status pro Gerät wird aus aktueller Phasenleistung geschätzt
+- Intelligente Filterung: zu unsichere/seltene Muster ausgeblendet
+- Robuste Benennung bei Kollisionen mit manuellen Detektoren (`(learned)`-Suffix)
+- Dashboard wird sauberer und aussagekräftiger ohne manuelle Konfiguration
+
+---
+
 # Release 0.6.11 (BETA)
 
 ## Store Kurztext

@@ -2,6 +2,17 @@
 
 > ⚠️ **Hinweis**: Dieses Projekt ist experimentell (BETA) - Breaking Changes und Bugs können auftreten.
 
+## 0.6.12 (BETA)
+
+**Gelernte Geräte automatisch im Dashboard sichtbar**
+- Repräsentative Mustergruppen werden jetzt als virtuelle Geräte im Live-Geräteblock angezeigt,
+  auch wenn keine manuellen Detektoren konfiguriert sind.
+- Gerätestatus wird aus aktueller Phasenleistung gegen gelernte Muster geschätzt (Confidence-Score).
+- Namenskollisionen mit konfigurierten Geräten werden durch `(learned)`-Suffix gelöst.
+- Schwache, unsichere oder sehr selten gelernte Muster werden gefiltert, um das Dashboard sauber zu halten.
+- Damit ist das System nun wirklich selbstlernend: Muster erscheinen nicht nur in der Musterliste,
+  sondern auch als aktive Geräteeinträge, die den aktuellen Verbrauch abbilden.
+
 ## 0.6.11 (BETA)
 
 **UI Sprach-Hotfix**
