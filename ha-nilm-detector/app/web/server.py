@@ -585,13 +585,13 @@ function buildLiveStatusMessage(live) {
   return `Aktiv: ${fmt(power, ' W')} (aktualisiert: ${now})`;
 }
 
-function drawChart(series) {
+function drawChart(series, forceRedraw = false) {
   // Store previous series length to detect changes
   const prevLength = currentSeriesData ? currentSeriesData.length : 0;
   const newLength = series ? series.length : 0;
   
   // Skip redraw if data hasn't changed (same length and last point identical)
-  if (prevLength === newLength && newLength > 0 && currentSeriesData) {
+  if (!forceRedraw && prevLength === newLength && newLength > 0 && currentSeriesData) {
     const lastOld = currentSeriesData[prevLength - 1];
     const lastNew = series[newLength - 1];
     if (lastOld && lastNew && 
@@ -991,7 +991,8 @@ document.querySelectorAll('.phase-toggle').forEach(btn => {
     visiblePhases[phase] = !visiblePhases[phase];
     btn.classList.toggle('active', visiblePhases[phase]);
     if (currentSeriesData) {
-      drawChart(currentSeriesData);
+      // Force redraw on visibility changes so the chart updates immediately.
+      drawChart(currentSeriesData, true);
     }
   });
 });
