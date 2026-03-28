@@ -260,6 +260,7 @@ class SQLiteStore:
             self._ensure_column(self._patterns_conn, "learned_patterns", "avg_hour_of_day", "REAL DEFAULT 12.0")  # Typical hour (0-24)
             self._ensure_column(self._patterns_conn, "learned_patterns", "last_intervals_json", "TEXT DEFAULT '[]'")  # Last N intervals
             self._ensure_column(self._patterns_conn, "learned_patterns", "hour_distribution_json", "TEXT DEFAULT '{}'")  # Hour frequency map
+            self._ensure_column(self._patterns_conn, "learned_patterns", "profile_points_json", "TEXT DEFAULT '[]'")
 
     def _ensure_column(
         self,
@@ -277,6 +278,32 @@ class SQLiteStore:
             conn.execute(f"ALTER TABLE {table_name} ADD COLUMN {column_name} {column_def}")
         except Exception as e:
             logger.warning(f"Failed to ensure column {table_name}.{column_name}: {e}")
+
+    @staticmethod
+    def _normalize_profile_points(points: object) -> List[Dict[str, float]]:
+        """Return a compact, safe profile point list for DB/UI usage."""
+        if not isinstance(points, list):
+            return []
+
+        out: List[Dict[str, float]] = []
+        for item in points:
+            if not isinstance(item, dict):
+                continue
+            try:
+                t_s = float(item.get("t_s", 0.0))
+                p_w = float(item.get("power_w", 0.0))
+                t_norm = float(item.get("t_norm", 0.0))
+            except (TypeError, ValueError):
+                continue
+            out.append(
+                {
+                    "t_s": round(max(t_s, 0.0), 3),
+                    "power_w": round(p_w, 3),
+                    "t_norm": round(min(max(t_norm, 0.0), 1.0), 6),
+                }
+            )
+
+        return out[:128]
 
     def store_reading(self, reading: PowerReading) -> None:
         if not self._conn:
@@ -805,7 +832,8 @@ class SQLiteStore:
                       COALESCE(typical_interval_s, 0.0), COALESCE(avg_hour_of_day, 12.0),
                       COALESCE(last_intervals_json, '[]'), COALESCE(hour_distribution_json, '{}'),
                       COALESCE(rise_rate_w_per_s, 0.0), COALESCE(fall_rate_w_per_s, 0.0),
-                      COALESCE(num_substates, 0), COALESCE(has_heating_pattern, 0), COALESCE(has_motor_pattern, 0)
+                        COALESCE(num_substates, 0), COALESCE(has_heating_pattern, 0), COALESCE(has_motor_pattern, 0),
+                        COALESCE(profile_points_json, '[]')
                 FROM learned_patterns
                 ORDER BY seen_count DESC, last_seen DESC
                 LIMIT ?
@@ -871,6 +899,11 @@ class SQLiteStore:
                     operating_modes = []
                 
                 has_multiple_modes = bool(int(row[20] or 0))
+                profile_points = []
+                try:
+                    profile_points = self._normalize_profile_points(json.loads(str(row[30] or "[]")))
+                except Exception:
+                    profile_points = []
                 raw_phase_mode = str(row[14] or "unknown")
                 phase_label = str(row[15] or "L1")
                 avg_active_phases = float(row[13] or 1.0)
@@ -913,6 +946,7 @@ class SQLiteStore:
                         "num_substates": int(row[27] or 0),
                         "has_heating_pattern": int(row[28] or 0),
                         "has_motor_pattern": int(row[29] or 0),
+                        "profile_points": profile_points,
                         "candidate_name": self._normalize_pattern_name(row[11] or row[10]),
                         "is_confirmed": bool(str(row[11] or "").strip()),
                     }
@@ -966,6 +1000,10 @@ class SQLiteStore:
                 num_substates = int(round(float(best.get("num_substates", 0)) * (1.0 - alpha) + float(cycle.get("num_substates", 0)) * alpha))
                 has_heating = 1 if (bool(best.get("has_heating_pattern", 0)) or bool(cycle.get("has_heating_pattern", False))) else 0
                 has_motor = 1 if (bool(best.get("has_motor_pattern", 0)) or bool(cycle.get("has_motor_pattern", False))) else 0
+                profile_points = self._normalize_profile_points(cycle.get("profile_points", []))
+                if not profile_points:
+                    profile_points = self._normalize_profile_points(best.get("profile_points", []))
+                profile_points_json = json.dumps(profile_points)
                 
                 # Temporal pattern tracking - calculate interval since last occurrence
                 last_seen_str = best.get("last_seen", cycle["end_ts"])
@@ -1019,6 +1057,7 @@ class SQLiteStore:
                             power_variance = ?, rise_rate_w_per_s = ?, fall_rate_w_per_s = ?,
                             duty_cycle = ?, peak_to_avg_ratio = ?, num_substates = ?,
                             has_heating_pattern = ?, has_motor_pattern = ?,
+                            profile_points_json = ?,
                             typical_interval_s = ?, avg_hour_of_day = ?,
                             last_intervals_json = ?, hour_distribution_json = ?
                         WHERE id = ?
@@ -1042,6 +1081,7 @@ class SQLiteStore:
                             num_substates,
                             has_heating,
                             has_motor,
+                            profile_points_json,
                             typical_interval_s,
                             avg_hour_of_day,
                             last_intervals_json,
@@ -1070,6 +1110,7 @@ class SQLiteStore:
                         "num_substates": num_substates,
                         "has_heating_pattern": has_heating,
                         "has_motor_pattern": has_motor,
+                        "profile_points": profile_points,
                     }
                 )
                 return {
@@ -1088,6 +1129,8 @@ class SQLiteStore:
                 num_substates = int(cycle.get("num_substates", 0))
                 has_heating = 1 if cycle.get("has_heating_pattern", False) else 0
                 has_motor = 1 if cycle.get("has_motor_pattern", False) else 0
+                profile_points = self._normalize_profile_points(cycle.get("profile_points", []))
+                profile_points_json = json.dumps(profile_points)
                 
                 # Multi-mode learning
                 operating_modes_json = json.dumps(cycle.get("operating_modes", []))
@@ -1113,9 +1156,10 @@ class SQLiteStore:
                         power_variance, rise_rate_w_per_s, fall_rate_w_per_s,
                         duty_cycle, peak_to_avg_ratio, num_substates,
                         has_heating_pattern, has_motor_pattern,
+                        profile_points_json,
                         operating_modes, has_multiple_modes,
                         typical_interval_s, avg_hour_of_day, last_intervals_json, hour_distribution_json
-                    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                     """,
                     (
                         now,
@@ -1141,6 +1185,7 @@ class SQLiteStore:
                         num_substates,
                         has_heating,
                         has_motor,
+                        profile_points_json,
                         operating_modes_json,
                         has_multiple_modes,
                         0.0,  # typical_interval_s - no interval yet for new pattern
@@ -1177,6 +1222,7 @@ class SQLiteStore:
                 "num_substates": int(cycle.get("num_substates", 0)),
                 "has_heating_pattern": 1 if cycle.get("has_heating_pattern", False) else 0,
                 "has_motor_pattern": 1 if cycle.get("has_motor_pattern", False) else 0,
+                "profile_points": self._normalize_profile_points(cycle.get("profile_points", [])),
                 "candidate_name": self._normalize_pattern_name(suggestion_type),
                 "is_confirmed": False,
             }
@@ -1325,6 +1371,19 @@ class SQLiteStore:
             num_substates = features.num_substates if features else 0
             has_heating = 1 if (features and features.has_heating_pattern) else 0
             has_motor = 1 if (features and features.has_motor_pattern) else 0
+            total_s = max(duration_s, 1.0)
+            raw_profile_points = []
+            for reading in power_readings:
+                t_rel = max((reading.timestamp - start_dt).total_seconds(), 0.0)
+                raw_profile_points.append(
+                    {
+                        "t_s": t_rel,
+                        "power_w": float(reading.power_w),
+                        "t_norm": t_rel / total_s,
+                    }
+                )
+            profile_points = self._normalize_profile_points(raw_profile_points)
+            profile_points_json = json.dumps(profile_points)
             
             # Erstelle neues Muster mit erweiterten Features
             now = datetime.now().isoformat()
@@ -1338,8 +1397,9 @@ class SQLiteStore:
                         first_seen, last_seen, created_at, updated_at,
                         power_variance, rise_rate_w_per_s, fall_rate_w_per_s,
                         duty_cycle, peak_to_avg_ratio, num_substates,
-                        has_heating_pattern, has_motor_pattern
-                    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                        has_heating_pattern, has_motor_pattern,
+                        profile_points_json
+                    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                     """,
                     (
                         avg_power, peak_power, duration_s, energy_wh, phase_mode, dominant_phase,
@@ -1347,7 +1407,8 @@ class SQLiteStore:
                         start_time, end_time, now, now,
                         power_variance, rise_rate, fall_rate,
                         duty_cycle_val, peak_to_avg, num_substates,
-                        has_heating, has_motor
+                        has_heating, has_motor,
+                        profile_points_json,
                     )
                 )
                 pattern_id = cursor.lastrowid

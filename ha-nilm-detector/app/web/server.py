@@ -1130,6 +1130,28 @@ function renderPatternChart(pattern) {
   const duration = pattern.duration_s || 60;
   const riseRate = pattern.rise_rate_w_per_s || peak / 5;
   const fallRate = pattern.fall_rate_w_per_s || peak / 5;
+  const storedProfile = Array.isArray(pattern.profile_points) ? pattern.profile_points : [];
+
+  let chartDuration = duration;
+  let chartPeak = peak;
+  let chartPoints = [];
+
+  if (storedProfile.length >= 2) {
+    const normalized = storedProfile
+      .map(p => ({
+        t_s: Number(p.t_s),
+        power_w: Number(p.power_w)
+      }))
+      .filter(p => Number.isFinite(p.t_s) && Number.isFinite(p.power_w))
+      .sort((a, b) => a.t_s - b.t_s);
+
+    if (normalized.length >= 2) {
+      chartDuration = Math.max(1, normalized[normalized.length - 1].t_s);
+      const maxFromProfile = Math.max(...normalized.map(p => p.power_w));
+      chartPeak = Math.max(maxFromProfile, 1);
+      chartPoints = normalized;
+    }
+  }
   
   // Achsen zeichnen
   ctx.strokeStyle = lineColor;
@@ -1159,7 +1181,7 @@ function renderPatternChart(pattern) {
   ctx.font = '10px sans-serif';
   ctx.textAlign = 'right';
   for (let i = 0; i <= 5; i++) {
-    const watts = Math.round(i * peak / 5);
+    const watts = Math.round(i * chartPeak / 5);
     const y = height - padding - (i * (height - padding - 20) / 5);
     ctx.fillText(watts + 'W', padding - 5, y + 4);
   }
@@ -1167,35 +1189,42 @@ function renderPatternChart(pattern) {
   // Legende Zeit
   ctx.textAlign = 'center';
   for (let i = 0; i <= 4; i++) {
-    const timeS = Math.round(i * duration / 4);
+    const timeS = Math.round(i * chartDuration / 4);
     const x = padding + (i * (width - padding - 20) / 4);
     ctx.fillText(timeS + 's', x, height - padding + 15);
   }
-  
-  // Kurve rekonstruieren: 0 → peak (riseRate) → peak (plateau) → 0 (fallRate)
-  const riseTime = riseRate > 0 ? peak / riseRate : duration / 3;
-  const fallTime = fallRate > 0 ? peak / fallRate : duration / 3;
-  const plateauTime = Math.max(0, duration - riseTime - fallTime);
-  
+
+  // Prefer real stored profile points. Fallback to reconstructed curve for legacy patterns.
   const points = [];
-  const samples = 200;
-  
-  for (let i = 0; i <= samples; i++) {
-    const t = (i / samples) * duration;
-    let power;
-    
-    if (t < riseTime) {
-      power = (t / riseTime) * peak;
-    } else if (t < riseTime + plateauTime) {
-      power = peak;
-    } else {
-      const fallProgress = (t - riseTime - plateauTime) / fallTime;
-      power = peak * Math.max(0, 1 - fallProgress);
+  if (chartPoints.length >= 2) {
+    chartPoints.forEach(point => {
+      const x = padding + (point.t_s / chartDuration) * (width - padding - 20);
+      const y = height - padding - (point.power_w / chartPeak) * (height - padding - 20);
+      points.push({ x, y });
+    });
+  } else {
+    const riseTime = riseRate > 0 ? peak / riseRate : duration / 3;
+    const fallTime = fallRate > 0 ? peak / fallRate : duration / 3;
+    const plateauTime = Math.max(0, duration - riseTime - fallTime);
+    const samples = 200;
+
+    for (let i = 0; i <= samples; i++) {
+      const t = (i / samples) * duration;
+      let power;
+
+      if (t < riseTime) {
+        power = (t / riseTime) * peak;
+      } else if (t < riseTime + plateauTime) {
+        power = peak;
+      } else {
+        const fallProgress = (t - riseTime - plateauTime) / fallTime;
+        power = peak * Math.max(0, 1 - fallProgress);
+      }
+
+      const x = padding + (t / duration) * (width - padding - 20);
+      const y = height - padding - (power / peak) * (height - padding - 20);
+      points.push({ x, y });
     }
-    
-    const x = padding + (t / duration) * (width - padding - 20);
-    const y = height - padding - (power / peak) * (height - padding - 20);
-    points.push({ x, y });
   }
   
   // Kurve zeichnen

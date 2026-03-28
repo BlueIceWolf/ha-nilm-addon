@@ -38,6 +38,9 @@ class LearnedCycle:
     # Phase information
     phase_mode: str = "single_phase"  # "single_phase" or "multi_phase"
 
+    # Compact profile used for UI visualization (real learned curve).
+    profile_points: List[Dict[str, float]] = field(default_factory=list)
+
 
 class PatternLearner:
     """Detects repeated ON/OFF cycles and extracts stable signatures with adaptive thresholds."""
@@ -318,6 +321,8 @@ class PatternLearner:
         else:
             phase_mode = "single_phase"  # Single phase only
 
+        profile_points = self._build_profile_points(self._cycle_samples)
+
         return LearnedCycle(
             start_ts=self._cycle_start,
             end_ts=end_ts,
@@ -330,7 +335,45 @@ class PatternLearner:
             operating_modes=operating_modes,
             has_multiple_modes=has_multiple_modes,
             phase_mode=phase_mode,
+            profile_points=profile_points,
         )
+
+    @staticmethod
+    def _build_profile_points(samples: List[PowerReading], max_points: int = 96) -> List[Dict[str, float]]:
+        """Create a compact normalized profile from cycle samples for visualization."""
+        if len(samples) < 2:
+            return []
+
+        start_ts = samples[0].timestamp
+        end_ts = samples[-1].timestamp
+        total_s = max((end_ts - start_ts).total_seconds(), 1.0)
+        step = max(1, int(len(samples) / max(max_points, 1)))
+
+        points: List[Dict[str, float]] = []
+        for idx in range(0, len(samples), step):
+            sample = samples[idx]
+            t_rel = max((sample.timestamp - start_ts).total_seconds(), 0.0)
+            points.append(
+                {
+                    "t_s": round(t_rel, 3),
+                    "power_w": round(float(sample.power_w), 3),
+                    "t_norm": round(min(max(t_rel / total_s, 0.0), 1.0), 6),
+                }
+            )
+
+        # Ensure last sample is always included.
+        last = samples[-1]
+        t_rel_last = max((last.timestamp - start_ts).total_seconds(), 0.0)
+        if not points or points[-1].get("t_s") != round(t_rel_last, 3):
+            points.append(
+                {
+                    "t_s": round(t_rel_last, 3),
+                    "power_w": round(float(last.power_w), 3),
+                    "t_norm": 1.0,
+                }
+            )
+
+        return points
 
     @staticmethod
     def suggest_device_type(cycle: LearnedCycle) -> str:

@@ -443,6 +443,7 @@ class NILMDetectionSystem:
                     "num_substates": int(cycle_features.num_substates) if cycle_features else 0,
                     "has_heating_pattern": bool(cycle_features.has_heating_pattern) if cycle_features else False,
                     "has_motor_pattern": bool(cycle_features.has_motor_pattern) if cycle_features else False,
+                    "profile_points": list(cycle.profile_points or []),
                 }
                 heuristic_suggestion = replay_learner.suggest_device_type(cycle)
                 model_suggestion = self.storage.suggest_cycle_label(cycle_payload, fallback=heuristic_suggestion)
@@ -660,6 +661,7 @@ class NILMDetectionSystem:
                                 "num_substates": int(cycle.features.num_substates) if cycle.features else 0,
                                 "has_heating_pattern": bool(cycle.features.has_heating_pattern) if cycle.features else False,
                                 "has_motor_pattern": bool(cycle.features.has_motor_pattern) if cycle.features else False,
+                                "profile_points": list(cycle.profile_points or []),
                             }
                             heuristic_suggestion = learner.suggest_device_type(cycle)
                             model_suggestion = self.storage.suggest_cycle_label(
