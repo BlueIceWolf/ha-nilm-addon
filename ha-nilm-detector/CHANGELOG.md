@@ -4,6 +4,14 @@
 
 ## 0.6.1 (BETA)
 
+## 0.6.2 (BETA)
+
+**Pattern-UI + Speicherung verbessert**
+- Gelernte Muster speichern jetzt echte Profilpunkte (`profile_points_json`) statt nur aggregierter Kennwerte.
+- Muster-Modal zeigt die Datenquelle explizit an: `Echte Messkurve` oder `Rekonstruierte Kurve (Legacy)`.
+- Profil-Visualisierung robust gemacht (kein fehlerhafter Marker-Zugriff mehr bei gespeicherten Echtprofilen).
+- Replay-, Live- und manuelle Bereichs-Lernpfade schreiben nun Profilpunkte in die Pattern-DB.
+
 **Reliability-Update: Import + Mustererkennung stabilisiert**
 - Replay- und Live-Learning uebergeben jetzt vollstaendige Zyklus-Features (`power_variance`, Rise/Fall-Rate, Duty-Cycle, Substates, Heating/Motor-Flags), damit Matching nicht mehr durch Fallback-Penalties entgleist.
 - Zeitstempel aus HA-History und Replay werden konsistent auf naive UTC normalisiert, um stille Fehler bei Datetime-Arithmetik zu vermeiden.

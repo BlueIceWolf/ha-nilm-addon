@@ -4,6 +4,20 @@
 
 ---
 
+# Release 0.6.2 (BETA)
+
+## Store Kurztext
+- **Echte Musterkurven**: Gelernte Patterns speichern jetzt echte Profilpunkte und zeigen diese im Modal.
+- **Transparenz im UI**: Modal kennzeichnet klar `Echte Messkurve` vs `Rekonstruierte Kurve (Legacy)`.
+- **Stabileres Rendering**: Chart-Marker-Logik fuer gespeicherte Profile robuster gemacht.
+
+## Highlights
+- Neue persistente Pattern-Spalte `profile_points_json` (kompaktes Zeit/Leistungs-Profil)
+- Profilpunkte werden in allen Lernpfaden geschrieben: live, replay und manuelle Bereichsauswahl
+- Legacy-Muster ohne Profil bleiben kompatibel (automatischer Fallback auf Rekonstruktion)
+
+---
+
 # Release 0.6.1 (BETA)
 
 ## Store Kurztext

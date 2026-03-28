@@ -382,6 +382,7 @@ def _html_page() -> str:
           <button onclick=\"document.getElementById('patternModal').style.display='none'\" style=\"background:none;border:none;font-size:1.5rem;cursor:pointer;color:var(--muted);\">✕</button>
         </div>
         <div style=\"margin-bottom:12px;\">
+          <div id=\"patternProfileSource\" class=\"muted\" style=\"margin-bottom:6px;font-size:0.82rem;\">Quelle: Rekonstruierte Kurve</div>
           <canvas id=\"patternChart\" width=\"800\" height=\"300\" style=\"border:1px solid var(--line);border-radius:6px;background:var(--bg-elev);width:100%;\"></canvas>
         </div>
         <div id=\"patternStats\" style=\"display:grid;grid-template-columns:repeat(auto-fit,minmax(150px,1fr));gap:8px;font-size:0.85rem;\">
@@ -1111,21 +1112,21 @@ function showPatternChart(pattern) {
 function renderPatternChart(pattern) {
   const canvas = document.getElementById('patternChart');
   const ctx = canvas.getContext('2d');
+  const sourceEl = document.getElementById('patternProfileSource');
   const width = canvas.width;
   const height = canvas.height;
   const padding = 40;
-  
-  // Farben von CSS Variablen auslesen
+
   const styles = getComputedStyle(document.documentElement);
   const bgColor = styles.getPropertyValue('--bg-elev').trim() || '#ffffff';
   const lineColor = styles.getPropertyValue('--line').trim() || '#cccccc';
   const inkColor = styles.getPropertyValue('--ink').trim() || '#000000';
   const accentColor = '#03a9f4';
-  
+
   ctx.clearRect(0, 0, width, height);
   ctx.fillStyle = bgColor;
   ctx.fillRect(0, 0, width, height);
-  
+
   const peak = pattern.peak_power_w || 1000;
   const duration = pattern.duration_s || 60;
   const riseRate = pattern.rise_rate_w_per_s || peak / 5;
@@ -1135,25 +1136,28 @@ function renderPatternChart(pattern) {
   let chartDuration = duration;
   let chartPeak = peak;
   let chartPoints = [];
+  let usedStoredProfile = false;
 
   if (storedProfile.length >= 2) {
     const normalized = storedProfile
-      .map(p => ({
-        t_s: Number(p.t_s),
-        power_w: Number(p.power_w)
-      }))
+      .map(p => ({ t_s: Number(p.t_s), power_w: Number(p.power_w) }))
       .filter(p => Number.isFinite(p.t_s) && Number.isFinite(p.power_w))
       .sort((a, b) => a.t_s - b.t_s);
 
     if (normalized.length >= 2) {
       chartDuration = Math.max(1, normalized[normalized.length - 1].t_s);
-      const maxFromProfile = Math.max(...normalized.map(p => p.power_w));
-      chartPeak = Math.max(maxFromProfile, 1);
+      chartPeak = Math.max(Math.max(...normalized.map(p => p.power_w)), 1);
       chartPoints = normalized;
+      usedStoredProfile = true;
     }
   }
-  
-  // Achsen zeichnen
+
+  if (sourceEl) {
+    sourceEl.textContent = usedStoredProfile
+      ? `Quelle: Echte Messkurve (${chartPoints.length} Punkte)`
+      : 'Quelle: Rekonstruierte Kurve (Legacy-Muster ohne Profilpunkte)';
+  }
+
   ctx.strokeStyle = lineColor;
   ctx.lineWidth = 1;
   ctx.beginPath();
@@ -1164,8 +1168,7 @@ function renderPatternChart(pattern) {
   ctx.moveTo(padding, height - padding);
   ctx.lineTo(padding, 20);
   ctx.stroke();
-  
-  // Gitter
+
   ctx.strokeStyle = 'rgba(128, 128, 128, 0.15)';
   ctx.lineWidth = 0.5;
   for (let i = 0; i <= 5; i++) {
@@ -1175,8 +1178,7 @@ function renderPatternChart(pattern) {
     ctx.lineTo(width - 20, y);
     ctx.stroke();
   }
-  
-  // Legende Watt
+
   ctx.fillStyle = inkColor;
   ctx.font = '10px sans-serif';
   ctx.textAlign = 'right';
@@ -1185,8 +1187,7 @@ function renderPatternChart(pattern) {
     const y = height - padding - (i * (height - padding - 20) / 5);
     ctx.fillText(watts + 'W', padding - 5, y + 4);
   }
-  
-  // Legende Zeit
+
   ctx.textAlign = 'center';
   for (let i = 0; i <= 4; i++) {
     const timeS = Math.round(i * chartDuration / 4);
@@ -1194,14 +1195,21 @@ function renderPatternChart(pattern) {
     ctx.fillText(timeS + 's', x, height - padding + 15);
   }
 
-  // Prefer real stored profile points. Fallback to reconstructed curve for legacy patterns.
   const points = [];
+  let riseEndX = null;
+  let fallStartX = null;
+  let peakY = null;
+
   if (chartPoints.length >= 2) {
     chartPoints.forEach(point => {
       const x = padding + (point.t_s / chartDuration) * (width - padding - 20);
       const y = height - padding - (point.power_w / chartPeak) * (height - padding - 20);
       points.push({ x, y });
     });
+    const maxPoint = chartPoints.reduce((best, item) => (item.power_w > best.power_w ? item : best), chartPoints[0]);
+    peakY = height - padding - (maxPoint.power_w / chartPeak) * (height - padding - 20);
+    riseEndX = padding + (maxPoint.t_s / chartDuration) * (width - padding - 20);
+    fallStartX = riseEndX;
   } else {
     const riseTime = riseRate > 0 ? peak / riseRate : duration / 3;
     const fallTime = fallRate > 0 ? peak / fallRate : duration / 3;
@@ -1211,7 +1219,6 @@ function renderPatternChart(pattern) {
     for (let i = 0; i <= samples; i++) {
       const t = (i / samples) * duration;
       let power;
-
       if (t < riseTime) {
         power = (t / riseTime) * peak;
       } else if (t < riseTime + plateauTime) {
@@ -1220,14 +1227,16 @@ function renderPatternChart(pattern) {
         const fallProgress = (t - riseTime - plateauTime) / fallTime;
         power = peak * Math.max(0, 1 - fallProgress);
       }
-
       const x = padding + (t / duration) * (width - padding - 20);
       const y = height - padding - (power / peak) * (height - padding - 20);
       points.push({ x, y });
     }
+
+    riseEndX = padding + (riseTime / duration) * (width - padding - 20);
+    peakY = height - padding - (peak / peak) * (height - padding - 20);
+    fallStartX = padding + ((riseTime + plateauTime) / duration) * (width - padding - 20);
   }
-  
-  // Kurve zeichnen
+
   ctx.strokeStyle = accentColor;
   ctx.lineWidth = 3;
   ctx.beginPath();
@@ -1236,8 +1245,7 @@ function renderPatternChart(pattern) {
     else ctx.lineTo(p.x, p.y);
   });
   ctx.stroke();
-  
-  // Fläche unter der Kurve
+
   ctx.fillStyle = 'rgba(3, 169, 244, 0.15)';
   ctx.beginPath();
   points.forEach((p, idx) => {
@@ -1247,15 +1255,12 @@ function renderPatternChart(pattern) {
   ctx.lineTo(points[points.length - 1].x, height - padding);
   ctx.lineTo(points[0].x, height - padding);
   ctx.fill();
-  
-  // Eckige Punkte für wichtige Ereignisse
-  ctx.fillStyle = '#0288d1';
-  const riseEndX = padding + (riseTime / duration) * (width - padding - 20);
-  const peakY = height - padding - (peak / peak) * (height - padding - 20);
-  ctx.fillRect(riseEndX - 3, peakY - 3, 6, 6);
-  
-  const fallStartX = padding + ((riseTime + plateauTime) / duration) * (width - padding - 20);
-  ctx.fillRect(fallStartX - 3, peakY - 3, 6, 6);
+
+  if (riseEndX !== null && fallStartX !== null && peakY !== null) {
+    ctx.fillStyle = '#0288d1';
+    ctx.fillRect(riseEndX - 3, peakY - 3, 6, 6);
+    ctx.fillRect(fallStartX - 3, peakY - 3, 6, 6);
+  }
 }
 
 function renderPatternStats(pattern) {
