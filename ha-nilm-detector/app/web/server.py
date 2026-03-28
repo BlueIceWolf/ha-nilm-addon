@@ -2058,19 +2058,19 @@ class StatsWebServer:
                         self._send_json({"error": str(e)}, status=500)
                     return
 
-                    if parsed.path == "/api/debug/hybrid-status":
-                      if not parent.storage:
+                if parsed.path == "/api/debug/hybrid-status":
+                    if not parent.storage:
                         self._send_json({"label": "unknown", "confidence": 0.0, "source": "storage_disabled"})
                         return
-                      try:
+                    try:
                         if hasattr(parent.storage, "get_hybrid_debug_status"):
-                          self._send_json(parent.storage.get_hybrid_debug_status())
+                            self._send_json(parent.storage.get_hybrid_debug_status())
                         else:
-                          self._send_json({"label": "unknown", "confidence": 0.0, "source": "not_supported"})
-                      except Exception as e:
+                            self._send_json({"label": "unknown", "confidence": 0.0, "source": "not_supported"})
+                    except Exception as e:
                         logger.error(f"Hybrid status fetch failed: {e}", exc_info=True)
                         self._send_json({"label": "unknown", "confidence": 0.0, "source": "error", "error": str(e)}, status=500)
-                      return
+                    return
 
                 self._send_json({"error": "not found"}, status=404)
 

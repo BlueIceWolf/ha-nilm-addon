@@ -4,6 +4,18 @@
 
 ---
 
+# Release 0.6.19 (BETA)
+
+## Store Kurztext
+- **Lernlauf-Hotfix**: Manueller Lernlauf erkennt wieder mehr Zyklen aus importierten HA-Verlaufsdaten (48h Replay + Fallback-Pass).
+
+## Highlights
+- Manueller Trigger (`Lernen jetzt ausfuehren`) replayt 48h statt 24h
+- Zweiter Replay-Fallback ohne Baseline-Priming, wenn erster Pass 0 Zyklen findet
+- Stabilerer Lernlauf bei importierter Historie und schwankender Grundlast
+
+---
+
 # Release 0.6.18 (BETA)
 
 ## Store Kurztext

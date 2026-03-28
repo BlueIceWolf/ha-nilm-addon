@@ -2,6 +2,13 @@
 
 > ⚠️ **Hinweis**: Dieses Projekt ist experimentell (BETA) - Breaking Changes und Bugs können auftreten.
 
+## 0.6.19 (BETA)
+
+**Manueller Lernlauf robuster bei importierten Verlaufsdaten**
+- Manueller Lernlauf nutzt jetzt 48h Replay-Fenster statt 24h
+- Replay fuehrt einen Fallback-Pass ohne Baseline-Priming aus, falls im ersten Pass keine Zyklen gefunden werden
+- Verbessert Erkennung bei unruhigen/lastigen Importverlaeufen, in denen adaptive Baseline zuvor zu konservativ war
+
 ## 0.6.18 (BETA)
 
 **Hybrid-AI Debug Panel im Dashboard**

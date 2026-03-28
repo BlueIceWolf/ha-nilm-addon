@@ -27,7 +27,7 @@
 
 ---
 
-**Aktuell:** `v0.6.18` — Hybrid-AI Debug Panel im Dashboard mit Explain-Scores + ML Top-Kandidaten
+**Aktuell:** `v0.6.19` — Lernlauf-Robustheit verbessert (Replay-Fallback + 48h bei manuellem Trigger)
 
 > ℹ️ **v0.6.11 Hinweis**: Auch die oberen Dashboard-Karten (`Gesamtleistung`, `Durchschnitt`, `Messwerte`, `Gelernte Muster`) schalten jetzt sauber zwischen DE/EN um.
 
