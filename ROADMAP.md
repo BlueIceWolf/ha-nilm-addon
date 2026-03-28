@@ -25,6 +25,8 @@ Was funktioniert bereits, was ist noch in Arbeit und wo soll das Projekt hin.
 - **Echte Feature-Extraction (v0.6.24)**: Rise/Fall-Edge-Raten, Plateau/Substates und `step_count` werden gelernt
 - **Deterministische Erstklassifikation (v0.6.24)**: First-Level-Regeln (`heater`, `motor`, `electronics`, `long_running`) vor ML-Fallback
 - **Frequency-Refinement (v0.6.24)**: Label-Verfeinerung nach Nutzungshäufigkeit reduziert `unknown`-Anteil
+- **Machine Learning mit RandomForest (v0.6.27)**: System trainiert sich selbst auf deinen Labels! Hybrid aus Prototype + Shape + ML → höhere Accuracy
+- **Automatisches ML-Training**: RandomForest trainiert sich automatisch wenn ≥8 Samples mit ≥2 Klassen vorhanden sind
 
 ---
 
@@ -45,7 +47,8 @@ Was funktioniert bereits, was ist noch in Arbeit und wo soll das Projekt hin.
 **Was demnächst kommt oder schon angedacht ist:**
 
 ### Kurzfristig (nächste Versionen)
-- Bessere Erkennung für stark variable Lasten (Induktionsherd, Staubsauger) weiter ausbauen
+- ML-Modell-Metriken anzeigen: Training Samples, Accuracy, Feature-Importance
+- Bessere Erkennung für stark variable Lasten (Induktionsherd, Staubsauger) durch erweiterte Features
 - Rule-Engine je Gerätetyp verfeinern (z. B. mehr klare Regeln für Heizung/Pumpe/Küche)
 - Bewertung der `unknown`-Quote im Live-Betrieb mit Zielwert und Telemetrie im Debug-Panel
 - Täglicher Summary: Top Geräte, Trends, Anomalien
@@ -116,7 +119,7 @@ Damit das Projekt irgendwann "produktiv-ready" ist sollte gelten:
 - Gute Dokumentation damit neue User nicht völlig verloren sind
 - Ein paar Video-Guides zum Einrichten
 
-**Aktuell (v0.6.24):** Etwa 75-82% davon erreicht. Core, Persistenz und Lernpipeline sind deutlich stabiler; Fokus liegt jetzt auf variablen Lasten, Feinklassifikation und UI-gestuetztem Pattern-Curation.
+**Aktuell (v0.6.27):** Etwa 80-87% davon erreicht. Core, Persistenz, Lernpipeline und ML-Training sind stabil; Fokus liegt jetzt auf erweiterten ML-Features, variablen Lasten und UI-Verbesserungen.
 
 ---
 

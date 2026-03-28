@@ -2,6 +2,23 @@
 
 > ⚠️ **Hinweis**: Dieses Projekt ist experimentell (BETA) - Breaking Changes und Bugs können auftreten.
 
+## 0.6.27 (BETA)
+
+**Machine Learning aktiviert: RandomForest-Klassifikator lernt von deinen Labels**
+
+- ML-System `LocalMLClassifier` aktiviert mit scikit-learn RandomForest (80 Estimators)
+- Standardmäßig an: `ml_enabled=true` in config.yaml und app/config.py
+- scikit-learn>=1.0 hinzugefügt zu Abhängigkeiten (both requirements.txt-Dateien)
+- **Wie es funktioniert:**
+  - System sammelt alle bestätigten Labels deiner Muster
+  - RandomForest trainiert sich automatisch, sobald ≥8 Samples mit ≥2 Klassen vorhanden
+  - Neue Zyklen werden durch 3er-Hybrid klassifiziert: Prototype-Matching + Shape-Similarity + **ML-Vorhersage**
+  - Confidence-Score wird aus allen 3 Quellen kombiniert → höhere Genauigkeit
+- Intelligente Fallbacks: Wenn ML unsicher (<0.55 confidence) → nutzt regelbasierte Klassifikation
+- Features für ML: avg_power, peak_power, duration, energy, power_variance, rise/fall rates, duty_cycle, num_substates, boolesche Pattern-Flags
+- ML-Score sichtbar im Web-UI unter "Hybrid AI Debug" → "ML" Feld zeigt top-3 Vorhersagen
+- Tests weiterhin grün: `10 passed`
+
 ## 0.6.26 (BETA)
 
 **NILM-Wissensbasis erweitert: Events, Devices, Entscheidungslog und Label-Historie**

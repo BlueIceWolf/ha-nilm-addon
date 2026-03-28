@@ -4,6 +4,24 @@
 
 ---
 
+# Release 0.6.27 (BETA)
+
+## Store Kurztext
+- **🤖 Machine Learning aktiviert**: RandomForest trainiert sich selbst auf deinen Labels! Hybrid-Klassifikation kombiniert Prototype + Shape + ML für bessere Genauigkeit.
+
+## Highlights
+- ML-System `LocalMLClassifier` mit scikit-learn RandomForest (80 Estimators) aktiviert
+- Standard-aktiviert: `ml_enabled=true` in allen Konfigurationen
+- **Automatisches Training**: RandomForest trainiert sich selbst wenn ≥8 bestätigte Samples mit ≥2 Klassen vorhanden
+- **3er-Hybrid-Klassifikation**: Prototype-Matching + Shape-Similarity + ML-Vorhersage kombiniert
+- **Intelligente Fallbacks**: Wenn ML unsicher (<0.55 confidence) → nutzt regelbasierte Klassifikation
+- ML-Features umfassen: avg/peak power, duration, energy, power_variance, rise/fall rates, duty_cycle, substates, pattern-flags
+- **Web-UI Integration**: ML-Score sichtbar unter "Hybrid AI Debug" mit Top-3 Vorhersagen
+- Confidence-Score wird aus allen 3 Quellen kombiniert → höhere Erkennungsgenauigkeit
+- scikit-learn>=1.0 zu Abhängigkeiten hinzugefügt
+
+---
+
 # Release 0.6.26 (BETA)
 
 ## Store Kurztext
