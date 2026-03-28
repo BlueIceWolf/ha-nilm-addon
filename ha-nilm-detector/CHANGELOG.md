@@ -2,6 +2,13 @@
 
 > ⚠️ **Hinweis**: Dieses Projekt ist experimentell (BETA) - Breaking Changes und Bugs können auftreten.
 
+## 0.6.14 (BETA)
+
+**Test-Release für schnellen Praxistest**
+- Version-Bump auf `0.6.14` fuer schnellen Rollout im Add-on Store
+- Export/Import-Workflow bleibt aktiv fuer Diagnostik und Datenaustausch
+- Neues CLI-Hilfstool `nilm_pattern_analyzer.py` zur strengeren Pattern-Bewertung von Export-Dateien
+
 ## 0.6.13 (BETA)
 
 **Daten-Export/Import für Diagnostik und externe Analyse**

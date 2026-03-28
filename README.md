@@ -11,7 +11,7 @@
 
 <p align="center">
   <img src="https://img.shields.io/badge/Status-BETA-orange" alt="BETA" />
-   <img src="https://img.shields.io/badge/Version-0.6.13-blue" alt="Version" />
+   <img src="https://img.shields.io/badge/Version-0.6.14-blue" alt="Version" />
 </p>
 
 > ⚠️ **EXPERIMENTELLES PROJEKT (BETA)**: Dieses Add-on befindet sich in aktiver Entwicklung. Viele Features funktionieren bereits gut, aber es ist **nicht production-ready**. Erwarte Bugs, unvollständige Features und Breaking Changes zwischen Versionen. Nutze es zum Experimentieren und Testen, aber nicht für kritische Automatisierungen.
@@ -27,7 +27,7 @@
 
 ---
 
-**Aktuell:** `v0.6.13` — Daten-Export/Import für Diagnostik und externe KI-Analyse
+**Aktuell:** `v0.6.14` — Test-Release mit Export/Import-Workflow und NILM-Analyse-Tool
 
 > ℹ️ **v0.6.11 Hinweis**: Auch die oberen Dashboard-Karten (`Gesamtleistung`, `Durchschnitt`, `Messwerte`, `Gelernte Muster`) schalten jetzt sauber zwischen DE/EN um.
 

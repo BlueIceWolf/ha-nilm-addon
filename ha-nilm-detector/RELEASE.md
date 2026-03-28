@@ -4,6 +4,18 @@
 
 ---
 
+# Release 0.6.14 (BETA)
+
+## Store Kurztext
+- **Test-Release 0.6.14**: Schneller Rollout fuer den Praxistest mit Daten-Export/Import und externem NILM-Analyse-Tool.
+
+## Highlights
+- Versionsupdate auf `0.6.14` fuer sofortigen Test im Add-on Store
+- Export/Import bleibt aktiv: Daten koennen fuer KI-gestuetzte Analyse geteilt werden
+- CLI-Tool `nilm_pattern_analyzer.py` zur robusteren Pattern-Auswertung von Export-JSON
+
+---
+
 # Release 0.6.13 (BETA)
 
 ## Store Kurztext
