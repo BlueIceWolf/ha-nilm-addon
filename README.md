@@ -11,7 +11,7 @@
 
 <p align="center">
   <img src="https://img.shields.io/badge/Status-BETA-orange" alt="BETA" />
-  <img src="https://img.shields.io/badge/Version-0.6.0-blue" alt="Version" />
+   <img src="https://img.shields.io/badge/Version-0.6.3-blue" alt="Version" />
 </p>
 
 > ⚠️ **EXPERIMENTELLES PROJEKT (BETA)**: Dieses Add-on befindet sich in aktiver Entwicklung. Viele Features funktionieren bereits gut, aber es ist **nicht production-ready**. Erwarte Bugs, unvollständige Features und Breaking Changes zwischen Versionen. Nutze es zum Experimentieren und Testen, aber nicht für kritische Automatisierungen.
@@ -27,9 +27,9 @@
 
 ---
 
-**Aktuell:** `v0.6.0` — Per-Phase Pattern Learning (verhindert Geräte-Interferenz zwischen Phasen)
+**Aktuell:** `v0.6.3` — Erweitertes Self-Learning mit phasenbasiertem Replay, Qualitaets-Scoring und zeitpriorisierter Musterwahl
 
-> ℹ️ **v0.6.0 Hinweis**: Fundamentales Architektur-Redesign (Per-Phase Learning). Noch nicht ausführlich getestet - bitte Patterns nach Update überprüfen.
+> ℹ️ **v0.6.3 Hinweis**: Self-Learning wurde deutlich ausgebaut (Replay pro Phase, Profile-Distanz, Qualitaetsfilter). Fuer bestes Ergebnis alte unplausible Muster einmal loeschen und neu lernen lassen.
 
 <a id="features"></a>
 ## ✨ Features
