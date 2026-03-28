@@ -2,6 +2,17 @@
 
 > ⚠️ **Hinweis**: Dieses Projekt ist experimentell (BETA) - Breaking Changes und Bugs können auftreten.
 
+## 0.6.17 (BETA)
+
+**Hybrid-AI Architektur modular erweitert**
+- Neue Lernmodule: `event_detection.py`, `pattern_matching.py`, `shape_similarity.py`, `substate_analysis.py`, `ml_classifier.py`, `online_learning.py`
+- Event Detection verbessert: Hysterese + Gap-Merging jetzt über dedizierte Adaptive-Event-State-Machine
+- Pattern Matching erweitert: Hybrid-Score aus Prototype-Matching, Shape-Similarity und Wiederholbarkeit
+- Optionales lokales ML (RandomForest) integriert, mit `unknown`-Fallback bei Unsicherheit
+- Erklärbare Entscheidungen in der Label-Vorhersage (`explain`-Payload mit Teil-Scores)
+- Neue `learning`-Konfigoptionen für AI/ML/Shape/Online-Learning und Match-/Confidence-Schwellen
+- Export erweitert um `pattern_dataset` für spätere Trainings- und Analyse-Pipelines
+
 ## 0.6.16 (BETA)
 
 **Lernpipeline jetzt automatisch und manuell triggerbar**

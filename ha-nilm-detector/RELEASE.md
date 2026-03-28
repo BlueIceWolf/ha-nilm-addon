@@ -4,6 +4,21 @@
 
 ---
 
+# Release 0.6.17 (BETA)
+
+## Store Kurztext
+- **Hybrid-AI Ausbau**: Modulare Event Detection, Shape Matching und optionales lokales ML fuer deutlich robustere Mustererkennung.
+
+## Highlights
+- Neue Module fuer Event-, Substate- und Shape-Analyse sowie Pattern-Matching
+- Hysterese + Gap-Merging als dedizierte Event-State-Machine integriert
+- Hybrid-Scoring mit explainable Teil-Scores (`prototype`, `shape`, `repeatability`, optional `ml`)
+- Optionales lokales RandomForest-ML mit sicherem `unknown`-Fallback
+- Neue Learning-Optionen: `ai_enabled`, `ml_enabled`, `shape_matching_enabled`, `online_learning_enabled`, `pattern_match_threshold`, `ml_confidence_threshold`
+- Export um `pattern_dataset` erweitert fuer Trainings-/ML-Workflows
+
+---
+
 # Release 0.6.16 (BETA)
 
 ## Store Kurztext

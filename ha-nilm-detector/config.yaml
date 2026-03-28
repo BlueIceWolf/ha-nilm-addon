@@ -1,6 +1,6 @@
 name: "HA NILM Detector"
 description: "Detect appliances from power consumption patterns (BETA - Experimental project in active development)"
-version: "0.6.16"
+version: "0.6.17"
 slug: "ha_nilm_detector"
 startup: application
 boot: auto
@@ -19,6 +19,15 @@ options:
   learning:
     auto_pipeline_enabled: true
     auto_pipeline_interval_minutes: 30
+    ai_enabled: true
+    ml_enabled: false
+    shape_matching_enabled: true
+    online_learning_enabled: true
+    delta_on_w: 30.0
+    delta_off_w: 12.0
+    max_gap_s: 6.0
+    pattern_match_threshold: 0.45
+    ml_confidence_threshold: 0.60
   home_assistant:
     phase_entities:
       l1: ""
@@ -44,6 +53,15 @@ schema:
     min_cycle_seconds: int(1,600)?
     auto_pipeline_enabled: bool?
     auto_pipeline_interval_minutes: int(5,1440)?
+    ai_enabled: bool?
+    ml_enabled: bool?
+    shape_matching_enabled: bool?
+    online_learning_enabled: bool?
+    delta_on_w: float(5,1000)?
+    delta_off_w: float(2,500)?
+    max_gap_s: float(1,120)?
+    pattern_match_threshold: float(0.1,0.95)?
+    ml_confidence_threshold: float(0.1,0.99)?
   storage:
     enabled: bool?
     retention_days: int(1,365)?

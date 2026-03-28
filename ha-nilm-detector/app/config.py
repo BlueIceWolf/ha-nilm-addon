@@ -33,6 +33,15 @@ class Config:
         self.learning_on_threshold_w = 50.0
         self.learning_off_threshold_w = 25.0
         self.learning_min_cycle_seconds = 20
+        self.learning_delta_on_w = 30.0
+        self.learning_delta_off_w = 12.0
+        self.learning_max_gap_s = 6.0
+        self.ai_enabled = True
+        self.ml_enabled = False
+        self.shape_matching_enabled = True
+        self.online_learning_enabled = True
+        self.pattern_match_threshold = 0.45
+        self.ml_confidence_threshold = 0.60
         self.learning_auto_pipeline_enabled = True
         self.learning_auto_pipeline_interval_minutes = 30
         self.power_source = "home_assistant_rest"
@@ -111,6 +120,29 @@ class Config:
         )
         self.learning_min_cycle_seconds = int(
             learning_config.get('min_cycle_seconds', self.learning_min_cycle_seconds)
+        )
+        self.learning_delta_on_w = float(
+            learning_config.get('delta_on_w', self.learning_delta_on_w)
+        )
+        self.learning_delta_off_w = float(
+            learning_config.get('delta_off_w', self.learning_delta_off_w)
+        )
+        self.learning_max_gap_s = float(
+            learning_config.get('max_gap_s', self.learning_max_gap_s)
+        )
+        self.ai_enabled = bool(learning_config.get('ai_enabled', self.ai_enabled))
+        self.ml_enabled = bool(learning_config.get('ml_enabled', self.ml_enabled))
+        self.shape_matching_enabled = bool(
+            learning_config.get('shape_matching_enabled', self.shape_matching_enabled)
+        )
+        self.online_learning_enabled = bool(
+            learning_config.get('online_learning_enabled', self.online_learning_enabled)
+        )
+        self.pattern_match_threshold = float(
+            learning_config.get('pattern_match_threshold', self.pattern_match_threshold)
+        )
+        self.ml_confidence_threshold = float(
+            learning_config.get('ml_confidence_threshold', self.ml_confidence_threshold)
         )
         self.learning_auto_pipeline_enabled = bool(
             learning_config.get('auto_pipeline_enabled', self.learning_auto_pipeline_enabled)

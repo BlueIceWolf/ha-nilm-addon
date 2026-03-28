@@ -7,6 +7,7 @@ from dataclasses import dataclass, field
 from datetime import datetime
 from typing import Deque, Dict, List, Optional
 
+from app.learning.event_detection import AdaptiveEventDetector, EventDetectionConfig
 from app.learning.features import CycleFeatures
 from app.learning.mode_analyzer import ModeAnalyzer
 from app.learning.smart_classifier import SmartDeviceClassifier
@@ -52,11 +53,12 @@ class PatternLearner:
         min_cycle_seconds: float = 5.0,  # Reduced from 20.0 to catch microwaves/toasters
         max_cycle_seconds: float = 8 * 3600.0,
         use_adaptive_thresholds: bool = True,  # Enable adaptive baseline tracking
-        adaptive_on_offset_w: float = 30.0,    # Baseline + 30W = ON
-        adaptive_off_offset_w: float = 10.0,   # Baseline + 10W = OFF (hysteresis!)
+        adaptive_on_offset_w: float = 30.0,    # Baseline + delta_on_w = ON
+        adaptive_off_offset_w: float = 10.0,   # Baseline + delta_off_w = OFF (hysteresis!)
         debounce_samples: int = 2,             # Require 2 consecutive samples for state change
         baseline_window_size: int = 60,        # Track last 60 idle samples
         noise_filter_window: int = 3,          # Median filter window for spike rejection (reduced from 5)
+        max_gap_s: float = 6.0,                # Merge short OFF gaps inside one running cycle
     ):
         # Legacy fixed thresholds (fallback if adaptive disabled)
         self.on_threshold_w = float(on_threshold_w)
@@ -71,6 +73,7 @@ class PatternLearner:
         self.debounce_samples = debounce_samples
         self.baseline_window_size = baseline_window_size
         self.noise_filter_window = noise_filter_window
+        self.max_gap_s = max(1.0, float(max_gap_s))
         
         # Adaptive baseline tracking
         self._baseline_power_w: float = 0.0
@@ -80,9 +83,15 @@ class PatternLearner:
         # Noise filtering (spike rejection)
         self._power_window: Deque[float] = deque(maxlen=noise_filter_window)
         
-        # State machine with debouncing
-        self._is_on = False
-        self._stable_count = 0  # Debounce counter
+        # Shared event detector state machine.
+        self._event_detector = AdaptiveEventDetector(
+            EventDetectionConfig(
+                delta_on_w=self.adaptive_on_offset_w,
+                delta_off_w=self.adaptive_off_offset_w,
+                debounce_samples=self.debounce_samples,
+                max_gap_s=self.max_gap_s,
+            )
+        )
         self._last_ts: Optional[datetime] = None
         self._cycle_start: Optional[datetime] = None
         self._cycle_samples: List[PowerReading] = []
@@ -128,54 +137,43 @@ class PatternLearner:
             on_threshold = self.on_threshold_w
             off_threshold = self.off_threshold_w
         
-        # State: OFF -> waiting for ON transition
-        if not self._is_on:
-            if power >= on_threshold:
-                self._stable_count += 1
-                if self._stable_count >= self.debounce_samples:
-                    # Confirmed ON transition
-                    self._is_on = True
-                    self._cycle_start = reading.timestamp
-                    self._cycle_samples = [reading]
-                    self._last_ts = reading.timestamp
-                    self._stable_count = 0
-                    logger.debug(f"Cycle START: {power:.1f}W (threshold={on_threshold:.1f}W, baseline={self._baseline_power_w:.1f}W)")
-            else:
-                # Still idle - update baseline
-                self._stable_count = 0
-                self._update_baseline(power)
-            return None
-        
-        # State: ON -> collecting samples, waiting for OFF
-        if self._is_on:
-            self._cycle_samples.append(reading)
+        transition = self._event_detector.ingest(
+            ts=reading.timestamp,
+            power_w=power,
+            baseline_w=self._baseline_power_w,
+        )
+
+        if transition.started:
+            self._cycle_start = reading.timestamp
+            self._cycle_samples = [reading]
             self._last_ts = reading.timestamp
-            
-            if power <= off_threshold:
-                self._stable_count += 1
-                if self._stable_count >= self.debounce_samples:
-                    # Confirmed OFF transition - build cycle
-                    cycle = self._build_cycle(reading.timestamp)
-                    self._is_on = False
-                    self._cycle_start = None
-                    self._cycle_samples = []
-                    self._stable_count = 0
-                    logger.debug(f"Cycle END: {power:.1f}W (threshold={off_threshold:.1f}W)")
-                    return cycle
-            else:
-                # Still ON - reset debounce counter
-                self._stable_count = 0
-            
-            # Failsafe for very long runs that never drop below threshold
-            if self._cycle_start:
-                runtime = (reading.timestamp - self._cycle_start).total_seconds()
-                if runtime > self.max_cycle_seconds:
-                    logger.debug(f"Cycle exceeded max duration ({self.max_cycle_seconds}s); resetting")
-                    self._is_on = False
-                    self._cycle_start = None
-                    self._cycle_samples = []
-                    self._stable_count = 0
-        
+            logger.debug(f"Cycle START: {power:.1f}W (threshold={on_threshold:.1f}W, baseline={self._baseline_power_w:.1f}W)")
+            return None
+
+        if not self._event_detector.is_on:
+            self._update_baseline(power)
+            return None
+
+        # ON state: keep collecting samples.
+        self._cycle_samples.append(reading)
+        self._last_ts = reading.timestamp
+
+        if transition.ended:
+            cycle = self._build_cycle(reading.timestamp)
+            self._cycle_start = None
+            self._cycle_samples = []
+            logger.debug(f"Cycle END: {power:.1f}W (threshold={off_threshold:.1f}W)")
+            return cycle
+
+        # Failsafe for very long runs that never drop below threshold.
+        if self._cycle_start:
+            runtime = (reading.timestamp - self._cycle_start).total_seconds()
+            if runtime > self.max_cycle_seconds:
+                logger.debug(f"Cycle exceeded max duration ({self.max_cycle_seconds}s); resetting")
+                self._event_detector.reset()
+                self._cycle_start = None
+                self._cycle_samples = []
+
         return None
     
     def _get_filtered_power(self) -> float:

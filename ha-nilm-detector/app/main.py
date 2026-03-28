@@ -77,6 +77,15 @@ class NILMDetectionSystem:
             if not self.storage.connect():
                 logger.warning("SQLite storage initialization failed; continuing without persistence")
                 self.storage = None
+            elif self.storage:
+                self.storage.configure_hybrid_ai(
+                    ai_enabled=self.config.ai_enabled,
+                    ml_enabled=self.config.ml_enabled,
+                    shape_matching_enabled=self.config.shape_matching_enabled,
+                    online_learning_enabled=self.config.online_learning_enabled,
+                    pattern_match_threshold=self.config.pattern_match_threshold,
+                    ml_confidence_threshold=self.config.ml_confidence_threshold,
+                )
 
         self.processing_pipeline = ProcessingPipeline(
             smoothing_window=self.config.processing_smoothing_window,
@@ -94,6 +103,9 @@ class NILMDetectionSystem:
                         on_threshold_w=self.config.learning_on_threshold_w,
                         off_threshold_w=self.config.learning_off_threshold_w,
                         min_cycle_seconds=self.config.learning_min_cycle_seconds,
+                        adaptive_on_offset_w=self.config.learning_delta_on_w,
+                        adaptive_off_offset_w=self.config.learning_delta_off_w,
+                        max_gap_s=self.config.learning_max_gap_s,
                     )
                     logger.info(f"Pattern learner initialized for phase {phase_name}")
             
@@ -527,8 +539,11 @@ class NILMDetectionSystem:
                 on_threshold_w=self.config.learning_on_threshold_w,
                 off_threshold_w=self.config.learning_off_threshold_w,
                 min_cycle_seconds=self.config.learning_min_cycle_seconds,
+                adaptive_on_offset_w=self.config.learning_delta_on_w,
+                adaptive_off_offset_w=self.config.learning_delta_off_w,
                 debounce_samples=1,
                 noise_filter_window=1,
+                max_gap_s=self.config.learning_max_gap_s,
             )
 
         # Prime adaptive baseline from initial samples so replay does not start in a false ON state.

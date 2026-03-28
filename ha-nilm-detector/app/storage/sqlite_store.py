@@ -5,8 +5,12 @@ import math
 import os
 import sqlite3
 from datetime import datetime, timedelta, timezone
-from typing import Dict, List, Tuple
+from typing import Any, Dict, List, Optional, Tuple
 
+from app.learning.ml_classifier import LocalMLClassifier
+from app.learning.online_learning import build_pattern_dataset_rows
+from app.learning.pattern_matching import HybridPatternMatcher
+from app.learning.substate_analysis import analyze_profile_substates
 from app.models import DetectionResult, PowerReading
 from app.utils.logging import get_logger
 
@@ -28,6 +32,40 @@ class SQLiteStore:
         self._detection_batch: List[DetectionResult] = []
         self._max_batch_size = 100  # Flush after this many items
         self._batch_ops_since_flush = 0
+
+        # Hybrid-AI tuning switches (configurable from Config/main)
+        self.ai_enabled = True
+        self.ml_enabled = False
+        self.shape_matching_enabled = True
+        self.online_learning_enabled = True
+        self.pattern_match_threshold = 0.45
+        self.ml_confidence_threshold = 0.60
+        self._ml_classifier = LocalMLClassifier()
+        self._pattern_matcher = HybridPatternMatcher(
+            match_threshold=self.pattern_match_threshold,
+            shape_matching_enabled=self.shape_matching_enabled,
+        )
+
+    def configure_hybrid_ai(
+        self,
+        ai_enabled: bool = True,
+        ml_enabled: bool = False,
+        shape_matching_enabled: bool = True,
+        online_learning_enabled: bool = True,
+        pattern_match_threshold: float = 0.45,
+        ml_confidence_threshold: float = 0.60,
+    ) -> None:
+        """Configure hybrid AI scoring behavior at runtime."""
+        self.ai_enabled = bool(ai_enabled)
+        self.ml_enabled = bool(ml_enabled)
+        self.shape_matching_enabled = bool(shape_matching_enabled)
+        self.online_learning_enabled = bool(online_learning_enabled)
+        self.pattern_match_threshold = max(0.05, min(float(pattern_match_threshold), 0.95))
+        self.ml_confidence_threshold = max(0.05, min(float(ml_confidence_threshold), 0.99))
+        self._pattern_matcher = HybridPatternMatcher(
+            match_threshold=self.pattern_match_threshold,
+            shape_matching_enabled=self.shape_matching_enabled,
+        )
 
     def _open_connection(self, path: str) -> sqlite3.Connection:
         conn = sqlite3.connect(
@@ -262,6 +300,7 @@ class SQLiteStore:
         """Export learned patterns and recent readings as JSON."""
         patterns = []
         readings = []
+        dataset = []
         
         try:
             patterns = self.list_patterns(limit=500)
@@ -272,11 +311,17 @@ class SQLiteStore:
             readings = self.get_power_series(limit=1000)
         except Exception as e:
             logger.warning(f"Failed to export readings: {e}")
+
+        try:
+            dataset = build_pattern_dataset_rows(patterns)
+        except Exception as e:
+            logger.warning(f"Failed to export pattern dataset rows: {e}")
         
         return {
             "exported_at": datetime.now().isoformat(),
             "patterns": patterns,
             "readings": readings,
+            "pattern_dataset": dataset,
         }
     
     def import_data(self, data: Dict) -> Dict:
@@ -1054,118 +1099,117 @@ class SQLiteStore:
         return min(total_distance, 1.0)
 
     def suggest_cycle_label(self, cycle: Dict, fallback: str = "unknown") -> Dict:
-        """AI-like nearest-prototype vote based on learned patterns.
+        """Hybrid cycle label suggestion.
 
-        This is not a heavy ML model, but a lightweight weighted similarity model
-        using learned signatures as prototypes.
+        Combines prototype similarity, shape similarity, and optional local ML.
+        Returns an explainable decision payload with score components.
         """
         if not self._patterns_conn:
             return {"label": fallback, "confidence": 0.0, "source": "fallback"}
+
+        if not self.ai_enabled:
+            return {"label": fallback, "confidence": 0.0, "source": "ai_disabled"}
 
         patterns = self.list_patterns(limit=500)
         if not patterns:
             return {"label": fallback, "confidence": 0.0, "source": "fallback"}
 
-        score_by_group: Dict[str, float] = {}
-        group_display_label: Dict[str, str] = {}
-        total_score = 0.0
-        cycle_phase_mode = str(cycle.get("phase_mode") or "unknown")
-        cycle_phase = str(cycle.get("phase") or "L1")
-        best_distance_overall: float | None = None
-        cycle_hour: float | None = None
+        # Enrich cycle with substate-derived features if missing.
+        substate = analyze_profile_substates(cycle.get("profile_points", []))
+        if int(cycle.get("num_substates", 0) or 0) <= 0:
+            cycle["num_substates"] = int(substate.num_substates)
+        if float(cycle.get("peak_to_avg_ratio", 0.0) or 0.0) <= 0.0:
+            avg_power = max(float(cycle.get("avg_power_w", 0.0) or 0.0), 1.0)
+            peak_power = max(float(cycle.get("peak_power_w", 0.0) or 0.0), avg_power)
+            cycle["peak_to_avg_ratio"] = peak_power / avg_power
 
-        def rel(a: float, b: float) -> float:
-            base = max(abs(a), abs(b), 1.0)
-            return abs(a - b) / base
-
-        try:
-            cycle_end_dt = datetime.fromisoformat(str(cycle.get("end_ts") or ""))
-            cycle_hour = float(cycle_end_dt.hour) + (float(cycle_end_dt.minute) / 60.0)
-        except (TypeError, ValueError):
-            cycle_hour = None
-
-        for item in patterns:
-            if item.get("status") != "active":
-                continue
-
-            item_phase_mode = str(item.get("phase_mode") or "unknown")
-            item_phase = str(item.get("phase") or "L1")
-            if cycle_phase_mode == "single_phase" and item_phase_mode == "single_phase" and item_phase != cycle_phase:
-                continue
-
-            label_raw = str(item.get("user_label") or item.get("suggestion_type") or "").strip()
-            if not label_raw:
-                continue
-            group_key = self._device_group_key(item)
-            if group_key not in group_display_label or str(item.get("user_label") or "").strip():
-                # Prefer explicit user label for display, fallback to normalized key.
-                display = str(item.get("user_label") or "").strip() or group_key
-                group_display_label[group_key] = display
-
-            distance = self._pattern_distance(item, cycle)
-            if best_distance_overall is None or distance < best_distance_overall:
-                best_distance_overall = distance
-            similarity = math.exp(-4.0 * max(distance, 0.0))
-            seen_weight = 1.0 + math.log1p(max(int(item.get("seen_count", 1)), 1))
-
-            quality_weight = 0.6 + (max(0.0, min(1.0, float(item.get("quality_score_avg", 0.5)))) * 0.8)
-
-            # Runtime consistency: prefer labels with similar typical cycle length.
-            runtime_weight = 1.0
-            try:
-                runtime_dist = rel(float(item.get("duration_s", 0.0)), float(cycle.get("duration_s", 0.0)))
-                runtime_weight = max(0.75, 1.0 - min(runtime_dist, 1.0) * 0.25)
-            except (TypeError, ValueError):
-                runtime_weight = 1.0
-
-            # Spike consistency: compare peak-vs-average behavior.
-            spike_weight = 1.0
-            try:
-                item_ratio = float(item.get("peak_to_avg_ratio", 1.0))
-                cycle_ratio = float(cycle.get("peak_to_avg_ratio", 1.0))
-                spike_dist = rel(item_ratio, cycle_ratio)
-                spike_weight = max(0.75, 1.0 - min(spike_dist, 1.0) * 0.25)
-            except (TypeError, ValueError):
-                spike_weight = 1.0
-
-            temporal_weight = 1.0
-            if cycle_hour is not None:
-                try:
-                    expected_hour = float(item.get("avg_hour_of_day", 12.0))
-                    hour_diff = abs(cycle_hour - expected_hour)
-                    hour_diff = min(hour_diff, 24.0 - hour_diff)  # wrap-around distance on 24h clock
-                    temporal_weight = max(0.75, 1.0 - ((hour_diff / 12.0) * 0.25))
-                except (TypeError, ValueError):
-                    temporal_weight = 1.0
-
-            vote = similarity * seen_weight * quality_weight * temporal_weight * runtime_weight * spike_weight
-            if vote <= 0.0:
-                continue
-
-            score_by_group[group_key] = score_by_group.get(group_key, 0.0) + vote
-            total_score += vote
-
-        if not score_by_group or total_score <= 0.0:
+        matcher_result = self._pattern_matcher.match(
+            cycle=cycle,
+            patterns=patterns,
+            distance_fn=self._pattern_distance,
+            group_key_fn=self._device_group_key,
+        )
+        if matcher_result is None:
             return {"label": fallback, "confidence": 0.0, "source": "fallback"}
 
-        best_group, best_score = max(score_by_group.items(), key=lambda pair: pair[1])
-        best_label = group_display_label.get(best_group, best_group)
-        confidence = float(best_score / total_score)
+        best_group = matcher_result.best_group
+        best_label = matcher_result.best_label
+        prototype_confidence = matcher_result.prototype_confidence
+        shape_confidence = matcher_result.shape_confidence
+        heuristic_confidence = matcher_result.confidence
+        best_distance_overall = matcher_result.best_distance
+
+        ml_result = None
+        if self.ml_enabled:
+            try:
+                ml_result = self._ml_classifier.predict(
+                    patterns=patterns,
+                    cycle=cycle,
+                    confidence_threshold=self.ml_confidence_threshold,
+                )
+            except Exception as ml_error:
+                logger.debug("Local ML prediction failed: %s", ml_error)
+                ml_result = None
+
+        final_label = best_label
+        final_confidence = heuristic_confidence
+        source = "hybrid_prototype_shape"
+
+        if ml_result and ml_result.source.startswith("ml"):
+            ml_label = str(ml_result.label or "unknown")
+            ml_conf = float(ml_result.confidence)
+            if ml_label != "unknown" and ml_conf >= self.ml_confidence_threshold:
+                # If ML agrees with prototype-ish class, boost confidence strongly.
+                if ml_label == best_group or ml_label == best_label:
+                    final_label = best_label
+                    final_confidence = max(final_confidence, (0.65 * final_confidence) + (0.35 * ml_conf))
+                    source = "hybrid_with_ml_agreement"
+                elif ml_conf > (heuristic_confidence + 0.15):
+                    # ML can override only when significantly more confident.
+                    final_label = ml_label
+                    final_confidence = (0.45 * heuristic_confidence) + (0.55 * ml_conf)
+                    source = "hybrid_ml_override"
+
+        confidence = max(0.0, min(1.0, float(final_confidence)))
 
         # Guard against label collapse: if the nearest prototype is still too far,
         # trust the heuristic fallback even if relative vote confidence is high.
-        if best_distance_overall is None or best_distance_overall > 0.38:
+        match_threshold = max(0.10, min(float(self.pattern_match_threshold), 0.95))
+        if best_distance_overall is None or best_distance_overall > match_threshold:
             return {
                 "label": fallback,
                 "confidence": confidence,
                 "source": "fallback_distance_gate",
+                "explain": dict(matcher_result.explain),
             }
 
         # Keep fallback if confidence is too low.
         if confidence < 0.45:
-            return {"label": fallback, "confidence": confidence, "source": "fallback_low_confidence"}
+            return {
+                "label": fallback,
+                "confidence": confidence,
+                "source": "fallback_low_confidence",
+                "explain": dict(matcher_result.explain),
+            }
 
-        return {"label": best_label, "confidence": confidence, "source": "prototype_similarity"}
+        return {
+            "label": final_label,
+            "confidence": confidence,
+            "source": source,
+            "explain": {
+                **dict(matcher_result.explain),
+                "ml": (
+                    {
+                        "label": ml_result.label,
+                        "confidence": round(float(ml_result.confidence), 4),
+                        "source": ml_result.source,
+                        "top_n": ml_result.top_n,
+                    }
+                    if ml_result
+                    else None
+                ),
+            },
+        }
 
     def run_nightly_learning_pass(self, merge_tolerance: float = 0.20, max_patterns: int = 800) -> Dict:
         """Run a lightweight nightly pattern consolidation pass.
@@ -1473,6 +1517,13 @@ class SQLiteStore:
         """Upsert one cycle into learned_patterns and return the matched/created pattern."""
         if not self._patterns_conn:
             return {"matched": False, "pattern": None}
+        if not self.online_learning_enabled:
+            return {
+                "matched": False,
+                "pattern": None,
+                "skipped": True,
+                "reason": "online_learning_disabled",
+            }
 
         quality_score = self._learning_quality_score(cycle)
         if quality_score < 0.28:
