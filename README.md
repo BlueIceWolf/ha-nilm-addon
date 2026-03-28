@@ -11,7 +11,7 @@
 
 <p align="center">
   <img src="https://img.shields.io/badge/Status-BETA-orange" alt="BETA" />
-   <img src="https://img.shields.io/badge/Version-0.6.10-blue" alt="Version" />
+   <img src="https://img.shields.io/badge/Version-0.6.11-blue" alt="Version" />
 </p>
 
 > ⚠️ **EXPERIMENTELLES PROJEKT (BETA)**: Dieses Add-on befindet sich in aktiver Entwicklung. Viele Features funktionieren bereits gut, aber es ist **nicht production-ready**. Erwarte Bugs, unvollständige Features und Breaking Changes zwischen Versionen. Nutze es zum Experimentieren und Testen, aber nicht für kritische Automatisierungen.
@@ -27,9 +27,9 @@
 
 ---
 
-**Aktuell:** `v0.6.10` — Speichert wieder explizit unter `/addon_configs/ha_nilm_detector` wie klassische Add-ons
+**Aktuell:** `v0.6.11` — Summary-Karten im Dashboard sind jetzt ebenfalls vollstaendig DE/EN-faehig
 
-> ℹ️ **v0.6.10 Hinweis**: Standard-Speicherpfad ist jetzt wieder `/addon_configs/ha_nilm_detector`. Bestehende Dateien aus `/data` werden beim Start automatisch in den neuen Zielpfad uebernommen, wenn dort noch nichts liegt.
+> ℹ️ **v0.6.11 Hinweis**: Auch die oberen Dashboard-Karten (`Gesamtleistung`, `Durchschnitt`, `Messwerte`, `Gelernte Muster`) schalten jetzt sauber zwischen DE/EN um.
 
 <a id="features"></a>
 ## ✨ Features

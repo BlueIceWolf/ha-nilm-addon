@@ -4,6 +4,16 @@
 
 ---
 
+# Release 0.6.11 (BETA)
+
+## Store Kurztext
+- **UI Sprach-Hotfix**: Auch die oberen Dashboard-Karten schalten jetzt korrekt zwischen Deutsch und Englisch um.
+
+## Highlights
+- Summary-Karten an i18n angebunden: Gesamtleistung, Phasen, Durchschnitt, Spitze, Messwerte, Gelernte Muster
+
+---
+
 # Release 0.6.10 (BETA)
 
 ## Store Kurztext

@@ -2,6 +2,11 @@
 
 > ⚠️ **Hinweis**: Dieses Projekt ist experimentell (BETA) - Breaking Changes und Bugs können auftreten.
 
+## 0.6.11 (BETA)
+
+**UI Sprach-Hotfix**
+- Auch die oberen Summary-Karten im Dashboard (`Gesamtleistung`, `Phase L1/L2/L3`, `Durchschnitt (24h)`, `Spitze (24h)`, `Messwerte (24h)`, `Gelernte Muster`) sind jetzt komplett an die DE/EN-Umschaltung angebunden.
+
 ## 0.6.10 (BETA)
 
 **Speicherort wieder explizit unter `/addon_configs`**

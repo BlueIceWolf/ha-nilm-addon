@@ -310,17 +310,17 @@ def _html_page(default_language: str = "de") -> str:
     </div>
 
     <div class=\"grid\">
-      <div class=\"card\"><div class=\"label\">Gesamtleistung</div><div id=\"current_power\" class=\"value\">-</div></div>
-      <div class=\"card\" id=\"phaseL1\" style=\"display:none;\"><div class=\"label\">Phase L1</div><div id=\"power_l1\" class=\"value\">-</div></div>
-      <div class=\"card\" id=\"phaseL2\" style=\"display:none;\"><div class=\"label\">Phase L2</div><div id=\"power_l2\" class=\"value\">-</div></div>
-      <div class=\"card\" id=\"phaseL3\" style=\"display:none;\"><div class=\"label\">Phase L3</div><div id=\"power_l3\" class=\"value\">-</div></div>
+      <div class=\"card\"><div id=\"lblCurrentPower\" class=\"label\">Gesamtleistung</div><div id=\"current_power\" class=\"value\">-</div></div>
+      <div class=\"card\" id=\"phaseL1\" style=\"display:none;\"><div id=\"lblPhaseL1\" class=\"label\">Phase L1</div><div id=\"power_l1\" class=\"value\">-</div></div>
+      <div class=\"card\" id=\"phaseL2\" style=\"display:none;\"><div id=\"lblPhaseL2\" class=\"label\">Phase L2</div><div id=\"power_l2\" class=\"value\">-</div></div>
+      <div class=\"card\" id=\"phaseL3\" style=\"display:none;\"><div id=\"lblPhaseL3\" class=\"label\">Phase L3</div><div id=\"power_l3\" class=\"value\">-</div></div>
     </div>
 
     <div class=\"grid\">
-      <div class=\"card\"><div class=\"label\">Durchschnitt (24h)</div><div id=\"avg_power\" class=\"value\">-</div></div>
-      <div class=\"card\"><div class=\"label\">Spitze (24h)</div><div id=\"peak_power\" class=\"value\">-</div></div>
-      <div class=\"card\"><div class=\"label\">Messwerte (24h)</div><div id=\"reading_count\" class=\"value\">-</div></div>
-      <div class=\"card\"><div class=\"label\">Gelernte Muster</div><div id=\"pattern_count\" class=\"value\">-</div></div>
+      <div class=\"card\"><div id=\"lblAvgPower\" class=\"label\">Durchschnitt (24h)</div><div id=\"avg_power\" class=\"value\">-</div></div>
+      <div class=\"card\"><div id=\"lblPeakPower\" class=\"label\">Spitze (24h)</div><div id=\"peak_power\" class=\"value\">-</div></div>
+      <div class=\"card\"><div id=\"lblReadingCount\" class=\"label\">Messwerte (24h)</div><div id=\"reading_count\" class=\"value\">-</div></div>
+      <div class=\"card\"><div id=\"lblPatternCount\" class=\"label\">Gelernte Muster</div><div id=\"pattern_count\" class=\"value\">-</div></div>
     </div>
 
     <div class=\"chart-wrap\">
@@ -436,6 +436,14 @@ const I18N = {
     darkModeOff: '🌙 Nachtmodus',
     devicesHeading: 'Erkannte Geräte',
     patternsHeading: 'Gelernte Muster',
+    lblCurrentPower: 'Gesamtleistung',
+    lblPhaseL1: 'Phase L1',
+    lblPhaseL2: 'Phase L2',
+    lblPhaseL3: 'Phase L3',
+    lblAvgPower: 'Durchschnitt (24h)',
+    lblPeakPower: 'Spitze (24h)',
+    lblReadingCount: 'Messwerte (24h)',
+    lblPatternCount: 'Gelernte Muster',
     thDevice: 'Gerät',
     thStatus: 'Status',
     thPower: 'Leistung (W)',
@@ -544,6 +552,14 @@ const I18N = {
     darkModeOff: '🌙 Dark mode',
     devicesHeading: 'Detected devices',
     patternsHeading: 'Learned patterns',
+    lblCurrentPower: 'Total power',
+    lblPhaseL1: 'Phase L1',
+    lblPhaseL2: 'Phase L2',
+    lblPhaseL3: 'Phase L3',
+    lblAvgPower: 'Average (24h)',
+    lblPeakPower: 'Peak (24h)',
+    lblReadingCount: 'Readings (24h)',
+    lblPatternCount: 'Learned patterns',
     thDevice: 'Device',
     thStatus: 'Status',
     thPower: 'Power (W)',
@@ -679,6 +695,14 @@ function applyLanguage() {
   assignText('importHistoryBtn', 'importHistoryBtn');
   assignText('devicesHeading', 'devicesHeading');
   assignText('patternsHeading', 'patternsHeading');
+  assignText('lblCurrentPower', 'lblCurrentPower');
+  assignText('lblPhaseL1', 'lblPhaseL1');
+  assignText('lblPhaseL2', 'lblPhaseL2');
+  assignText('lblPhaseL3', 'lblPhaseL3');
+  assignText('lblAvgPower', 'lblAvgPower');
+  assignText('lblPeakPower', 'lblPeakPower');
+  assignText('lblReadingCount', 'lblReadingCount');
+  assignText('lblPatternCount', 'lblPatternCount');
   assignText('thDevice', 'thDevice');
   assignText('thStatus', 'thStatus');
   assignText('thPower', 'thPower');
