@@ -27,6 +27,7 @@ htmlcov/
 
 # Data
 /data
+out/
 *.db
 *.json
 
