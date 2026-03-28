@@ -2,6 +2,17 @@
 
 > ⚠️ **Hinweis**: Dieses Projekt ist experimentell (BETA) - Breaking Changes und Bugs können auftreten.
 
+## 0.6.13 (BETA)
+
+**Daten-Export/Import für Diagnostik und externe Analyse**
+- Neue Buttons im Dashboard: `📥 Daten exportieren` und `📤 Daten importieren`
+- Exportiert alle gelernte Muster und Messwerte als JSON-Datei für externe Analyse
+- Ermöglicht Datenimport nach Modifikation (z.B. durch externe KI zum Tuning)
+- Unterstützt Datenfreigabe mit KI-Tools zur Fehlersuche und Optimierung
+- Export enthält: Alle Muster mit Signaturen, Phasenzuordnung, Lernstatistiken + historische Messwerte
+- SQLite Batch-Write Optimierung: Reduziert DB-Transaktionen um ~90-95% für bessere Schreibperformance
+- Bilingual: Buttons und Fehlermeldungen in DE/EN verfügbar
+
 ## 0.6.12 (BETA)
 
 **Gelernte Geräte automatisch im Dashboard sichtbar**

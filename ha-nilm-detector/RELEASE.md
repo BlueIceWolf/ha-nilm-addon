@@ -4,6 +4,27 @@
 
 ---
 
+# Release 0.6.13 (BETA)
+
+## Store Kurztext
+- **Daten-Export/Import**: Teile deine Mustersignaturen und Messwerte mit externen KI-Tools zur Diagnostik und Optimierung – für besseres Tuning und Fehlersuche!
+
+## Highlights
+- Neue Buttons: `📥 Daten exportieren` / `📤 Daten importieren` im Dashboard
+- Export als JSON mit allen Mustern und historischen Messwerten
+- Ermöglicht Datenanalyse durch externe KI und manuelle Optimierung
+- SQLite Batch-Write Optimierung: 90-95% schnellere Datenbankschreibvorgänge
+- Unterstützt Debugging und Datenfreigabe für Community-Support
+- Bilingual: DE/EN Unterstützung in UI
+
+## Use Cases
+- Teile Muster-Exporte mit Discord/Community für Hilfe
+- Analyse durch GPT/Claude für Pattern-Optimierung
+- Backup und Migration von gelernten Signaturen
+- Performance-Tuning durch Datenanalyse
+
+---
+
 # Release 0.6.12 (BETA)
 
 ## Store Kurztext

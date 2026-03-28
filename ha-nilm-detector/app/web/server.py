@@ -291,6 +291,9 @@ def _html_page(default_language: str = "de") -> str:
       <button id=\"clearReadingsBtn\" title=\"Nur Live-Daten (Readings) löschen\">🗑️ Live-Daten löschen</button>
       <button id=\"clearPatternsBtn\" title=\"Nur gelernte Muster löschen\">🗑️ Muster löschen</button>
       <button id=\"importHistoryBtn\" title=\"Verlauf aus Home Assistant importieren\">HA Verlauf importieren</button>
+      <button id=\"exportDataBtn\" title=\"Muster + Messwerte als JSON exportieren\">📥 Daten exportieren</button>
+      <button id=\"importDataBtn\" title=\"JSON-Datei mit Mustern/Messwerten importieren\">📤 Daten importieren</button>
+      <input type=\"file\" id=\"importDataFile\" accept=\".json\" style=\"display: none;\" />
       <button id=\"darkModeToggle\" title=\"Hell/Dunkel umschalten\">🌙 Nachtmodus</button>
       <label for=\"languageSelect\" id=\"languageLabel\" class=\"muted\" style=\"margin-left: 8px;\">Sprache:</label>
       <select id=\"languageSelect\" style=\"padding: 5px 8px;\">
@@ -432,6 +435,8 @@ const I18N = {
     clearReadingsBtn: 'Live-Daten löschen',
     clearPatternsBtn: 'Muster löschen',
     importHistoryBtn: 'HA Verlauf importieren',
+    exportDataBtn: '📥 Daten exportieren',
+    importDataBtn: '📤 Daten importieren',
     darkModeOn: '☀️ Tagmodus',
     darkModeOff: '🌙 Nachtmodus',
     devicesHeading: 'Erkannte Geräte',
@@ -548,6 +553,8 @@ const I18N = {
     clearReadingsBtn: 'Clear live data',
     clearPatternsBtn: 'Clear patterns',
     importHistoryBtn: 'Import HA history',
+    exportDataBtn: '📥 Export data',
+    importDataBtn: '📤 Import data',
     darkModeOn: '☀️ Light mode',
     darkModeOff: '🌙 Dark mode',
     devicesHeading: 'Detected devices',
@@ -920,6 +927,68 @@ async function importHistoryFromHA() {
     alert(t('importFailed', { err }));
     setStatus(t('importFailed', { err }));
   }
+}
+
+async function exportData() {
+  try {
+    setStatus(t('exportDataBtn'));
+    const response = await fetch(apiPath('api/debug/export'));
+    if (!response.ok) {
+      throw new Error(`HTTP ${response.status}`);
+    }
+    const data = await response.json();
+    
+    const filename = `nilm-export-${new Date().toISOString().slice(0,10)}.json`;
+    const blob = new Blob([JSON.stringify(data, null, 2)], { type: 'application/json' });
+    const url = URL.createObjectURL(blob);
+    const link = document.createElement('a');
+    link.href = url;
+    link.download = filename;
+    document.body.appendChild(link);
+    link.click();
+    document.body.removeChild(link);
+    URL.revokeObjectURL(url);
+    
+    alert(currentLanguage === 'en' 
+      ? `Exported: ${data.patterns?.length || 0} patterns, ${data.readings?.length || 0} readings`
+      : `Exportiert: ${data.patterns?.length || 0} Muster, ${data.readings?.length || 0} Messwerte`);
+  } catch (err) {
+    alert(currentLanguage === 'en' ? `Export failed: ${err}` : `Export fehlgeschlagen: ${err}`);
+  }
+}
+
+function importData() {
+  document.getElementById('importDataFile').click();
+}
+
+async function handleImportDataFile(event) {
+  const file = event.target.files?.[0];
+  if (!file) return;
+  
+  try {
+    setStatus(currentLanguage === 'en' ? 'Importing...' : 'Importiere...');
+    const text = await file.text();
+    const data = JSON.parse(text);
+    
+    const response = await fetch(apiPath('api/debug/import'), {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(data)
+    });
+    
+    const result = await response.json();
+    if (!response.ok || !result.ok) {
+      throw new Error(result.error || `HTTP ${response.status}`);
+    }
+    
+    alert(currentLanguage === 'en'
+      ? `Imported: ${result.patterns_imported || 0} patterns, ${result.readings_imported || 0} readings`
+      : `Importiert: ${result.patterns_imported || 0} Muster, ${result.readings_imported || 0} Messwerte`);
+    await refresh();
+  } catch (err) {
+    alert(currentLanguage === 'en' ? `Import failed: ${err}` : `Import fehlgeschlagen: ${err}`);
+  }
+  event.target.value = '';
 }
 
 function buildLiveStatusMessage(live) {
@@ -1669,6 +1738,9 @@ document.getElementById('runLearningBtn').addEventListener('click', runLearningN
 document.getElementById('clearReadingsBtn').addEventListener('click', clearReadingsOnly);
 document.getElementById('clearPatternsBtn').addEventListener('click', clearPatternsOnly);
 document.getElementById('importHistoryBtn').addEventListener('click', importHistoryFromHA);
+document.getElementById('exportDataBtn').addEventListener('click', exportData);
+document.getElementById('importDataBtn').addEventListener('click', importData);
+document.getElementById('importDataFile').addEventListener('change', handleImportDataFile);
 document.getElementById('darkModeToggle').addEventListener('click', toggleDarkMode);
 document.getElementById('windowSelect').addEventListener('change', async (e) => {
   const val = Number(e.target.value);
@@ -1773,6 +1845,7 @@ class StatsWebServer:
         import_history_from_ha: Optional[Callable[[int], Dict]] = None,
         create_pattern_from_range: Optional[Callable[[str, str, str], Dict]] = None,
         language: str = "de",
+        storage = None,
     ):
         self.host = host
         self.port = int(port)
@@ -1789,6 +1862,7 @@ class StatsWebServer:
         self.import_history_from_ha = import_history_from_ha
         self.create_pattern_from_range = create_pattern_from_range
         self.language = "en" if str(language).strip().lower() == "en" else "de"
+        self.storage = storage
         self._server: Optional[ThreadingHTTPServer] = None
         self._thread: Optional[threading.Thread] = None
 
@@ -1874,6 +1948,19 @@ class StatsWebServer:
                         self._send_json(parent.get_patterns_data())
                     else:
                         self._send_json([])
+                    return
+
+                if parsed.path == "/api/debug/export":
+                    if not parent.storage:
+                        self._send_json({"error": "storage not enabled"}, status=400)
+                        return
+                    
+                    try:
+                        data = parent.storage.export_data()
+                        self._send_json(data)
+                    except Exception as e:
+                        logger.error(f"Export failed: {e}", exc_info=True)
+                        self._send_json({"error": str(e)}, status=500)
                     return
 
                 self._send_json({"error": "not found"}, status=404)
@@ -2064,6 +2151,35 @@ class StatsWebServer:
                         return
 
                     self._send_json(result)
+                    return
+
+                if parsed.path == "/api/debug/export":
+                    if not parent.storage:
+                        self._send_json({"error": "storage not enabled"}, status=400)
+                        return
+                    
+                    try:
+                        data = parent.storage.export_data()
+                        self._send_json(data)
+                    except Exception as e:
+                        logger.error(f"Export failed: {e}", exc_info=True)
+                        self._send_json({"error": str(e)}, status=500)
+                    return
+
+                if parsed.path == "/api/debug/import":
+                    if not parent.storage:
+                        self._send_json({"error": "storage not enabled"}, status=400)
+                        return
+                    
+                    try:
+                        length = int(self.headers.get("Content-Length", "0") or 0)
+                        raw = self.rfile.read(length) if length > 0 else b"{}"
+                        data = json.loads(raw.decode("utf-8")) if raw else {}
+                        result = parent.storage.import_data(data)
+                        self._send_json(result)
+                    except Exception as e:
+                        logger.error(f"Import failed: {e}", exc_info=True)
+                        self._send_json({"ok": False, "error": str(e)}, status=500)
                     return
 
                 self._send_json({"error": "not found"}, status=404)

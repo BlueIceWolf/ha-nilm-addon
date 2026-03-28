@@ -258,6 +258,115 @@ class SQLiteStore:
                 self._conn.close()
                 self._conn = None
 
+    def export_data(self) -> Dict:
+        """Export learned patterns and recent readings as JSON."""
+        patterns = []
+        readings = []
+        
+        try:
+            patterns = self.list_patterns(limit=500)
+        except Exception as e:
+            logger.warning(f"Failed to export patterns: {e}")
+        
+        try:
+            readings = self.get_power_series(limit=1000)
+        except Exception as e:
+            logger.warning(f"Failed to export readings: {e}")
+        
+        return {
+            "exported_at": datetime.now().isoformat(),
+            "patterns": patterns,
+            "readings": readings,
+        }
+    
+    def import_data(self, data: Dict) -> Dict:
+        """Import patterns and readings from JSON export."""
+        if not self._conn or not self._patterns_conn:
+            return {"ok": False, "error": "storage not connected"}
+        
+        patterns_imported = 0
+        readings_imported = 0
+        errors = []
+        
+        try:
+            # Import patterns
+            patterns = data.get("patterns", [])
+            for pattern in patterns:
+                try:
+                    now = datetime.now().isoformat()
+                    with self._patterns_conn:
+                        self._patterns_conn.execute(
+                            """
+                            INSERT OR REPLACE INTO learned_patterns (
+                                id, created_at, updated_at, first_seen, last_seen, seen_count,
+                                avg_power_w, peak_power_w, duration_s, energy_wh,
+                                suggestion_type, user_label, status
+                            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                            """,
+                            (
+                                int(pattern.get("id", 0)) or None,  # Let DB auto-gen if 0
+                                pattern.get("created_at", now),
+                                now,
+                                pattern.get("first_seen", now),
+                                pattern.get("last_seen", now),
+                                max(int(pattern.get("seen_count", 1)), 1),
+                                float(pattern.get("avg_power_w", 0.0)),
+                                float(pattern.get("peak_power_w", 0.0)),
+                                float(pattern.get("duration_s", 0.0)),
+                                float(pattern.get("energy_wh", 0.0)),
+                                str(pattern.get("suggestion_type", "unknown")),
+                                str(pattern.get("user_label", "")),
+                                str(pattern.get("status", "auto_learned")),
+                            ),
+                        )
+                    patterns_imported += 1
+                except Exception as e:
+                    logger.debug(f"Skipped pattern import: {e}")
+                    errors.append(f"pattern {pattern.get('id')}: {e}")
+                    continue
+        except Exception as e:
+            logger.error(f"Pattern import failed: {e}", exc_info=True)
+            errors.append(f"pattern batch: {e}")
+        
+        try:
+            # Import readings
+            readings = data.get("readings", [])
+            batch = []
+            for reading in readings:
+                try:
+                    ts = reading.get("timestamp", "")
+                    power = float(reading.get("power_w", 0.0))
+                    phase = str(reading.get("phase", "TOTAL"))
+                    metadata = reading.get("phases", {})
+                    
+                    batch.append((
+                        ts,
+                        power,
+                        phase,
+                        json.dumps({"phase_powers_w": metadata}),
+                    ))
+                except Exception as e:
+                    logger.debug(f"Skipped reading: {e}")
+                    continue
+            
+            if batch:
+                with self._conn:
+                    self._conn.executemany(
+                        "INSERT INTO power_readings (ts, power_w, phase, metadata) VALUES (?, ?, ?, ?)",
+                        batch,
+                    )
+                readings_imported = len(batch)
+        except Exception as e:
+            logger.error(f"Reading import failed: {e}", exc_info=True)
+            errors.append(f"readings batch: {e}")
+        
+        return {
+            "ok": True,
+            "patterns_imported": patterns_imported,
+            "readings_imported": readings_imported,
+            "errors": errors,
+        }
+
     def _create_tables(self) -> None:
         if not self._conn:
             return

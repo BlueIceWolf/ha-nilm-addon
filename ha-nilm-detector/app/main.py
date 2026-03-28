@@ -148,6 +148,7 @@ class NILMDetectionSystem:
                 import_history_from_ha=self._import_history_from_ha,
                 create_pattern_from_range=self._create_pattern_from_range,
                 language=self.config.language,
+                storage=self.storage,
             )
 
     def _build_power_source(self):
