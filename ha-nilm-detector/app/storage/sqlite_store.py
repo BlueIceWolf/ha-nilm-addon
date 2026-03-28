@@ -607,6 +607,7 @@ class SQLiteStore:
         total_score = 0.0
         cycle_phase_mode = str(cycle.get("phase_mode") or "unknown")
         cycle_phase = str(cycle.get("phase") or "L1")
+        best_distance_overall: float | None = None
 
         for item in patterns:
             if item.get("status") != "active":
@@ -622,6 +623,8 @@ class SQLiteStore:
                 continue
 
             distance = self._pattern_distance(item, cycle)
+            if best_distance_overall is None or distance < best_distance_overall:
+                best_distance_overall = distance
             similarity = math.exp(-4.0 * max(distance, 0.0))
             seen_weight = 1.0 + math.log1p(max(int(item.get("seen_count", 1)), 1))
             vote = similarity * seen_weight
@@ -636,6 +639,15 @@ class SQLiteStore:
 
         best_label, best_score = max(score_by_label.items(), key=lambda pair: pair[1])
         confidence = float(best_score / total_score)
+
+        # Guard against label collapse: if the nearest prototype is still too far,
+        # trust the heuristic fallback even if relative vote confidence is high.
+        if best_distance_overall is None or best_distance_overall > 0.38:
+            return {
+                "label": fallback,
+                "confidence": confidence,
+                "source": "fallback_distance_gate",
+            }
 
         # Keep fallback if confidence is too low.
         if confidence < 0.45:
@@ -824,7 +836,10 @@ class SQLiteStore:
                 avg_power = float(row[6])
                 power_variance = float(row[16] or 0.0)
                 if avg_power > 10:
-                    stability_score = max(0, 100 - (power_variance * 100))  # 100 = sehr stabil
+                    # Normalize by mean power squared so variance in W^2 does not
+                    # collapse almost all patterns to 0% stability.
+                    normalized_variance = power_variance / max(avg_power * avg_power, 1.0)
+                    stability_score = max(0, min(100, 100 - (normalized_variance * 100)))
                 else:
                     stability_score = 50
                 
@@ -856,6 +871,12 @@ class SQLiteStore:
                     operating_modes = []
                 
                 has_multiple_modes = bool(int(row[20] or 0))
+                raw_phase_mode = str(row[14] or "unknown")
+                phase_label = str(row[15] or "L1")
+                avg_active_phases = float(row[13] or 1.0)
+                effective_phase_mode = raw_phase_mode
+                if phase_label in {"L1", "L2", "L3"} and avg_active_phases <= 1.5:
+                    effective_phase_mode = "single_phase"
                 
                 out.append(
                     {
@@ -872,9 +893,9 @@ class SQLiteStore:
                         "suggestion_type": row[10],
                         "user_label": row[11],
                         "status": row[12],
-                        "avg_active_phases": float(row[13] or 1.0),
-                        "phase_mode": row[14] or "unknown",
-                        "phase": str(row[15] or "L1"),
+                        "avg_active_phases": avg_active_phases,
+                        "phase_mode": effective_phase_mode,
+                        "phase": phase_label,
                         "power_variance": power_variance,
                         "duty_cycle": float(row[17] or 0.0),
                         "peak_to_avg_ratio": peak_to_avg,
