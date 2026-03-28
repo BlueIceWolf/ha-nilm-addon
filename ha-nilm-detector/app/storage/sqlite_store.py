@@ -305,6 +305,62 @@ class SQLiteStore:
 
         return out[:128]
 
+    @staticmethod
+    def _profile_shape_distance(existing: Dict, candidate: Dict, sample_count: int = 16) -> float | None:
+        """Compare normalized profile curves if both patterns provide profile points."""
+        existing_points = SQLiteStore._normalize_profile_points(existing.get("profile_points", []))
+        candidate_points = SQLiteStore._normalize_profile_points(candidate.get("profile_points", []))
+        if len(existing_points) < 2 or len(candidate_points) < 2:
+            return None
+
+        def interpolate(points: List[Dict[str, float]], t_norm: float) -> float:
+            left = points[0]
+            for idx in range(1, len(points)):
+                right = points[idx]
+                if right["t_norm"] >= t_norm:
+                    span = max(right["t_norm"] - left["t_norm"], 1e-6)
+                    alpha = (t_norm - left["t_norm"]) / span
+                    return left["power_w"] * (1.0 - alpha) + right["power_w"] * alpha
+                left = right
+            return points[-1]["power_w"]
+
+        existing_peak = max(float(existing.get("peak_power_w", 1.0)), 1.0)
+        candidate_peak = max(float(candidate.get("peak_power_w", 1.0)), 1.0)
+        total = 0.0
+        for i in range(sample_count):
+            t = i / max(sample_count - 1, 1)
+            ev = interpolate(existing_points, t) / existing_peak
+            cv = interpolate(candidate_points, t) / candidate_peak
+            total += abs(ev - cv)
+        return min(total / float(sample_count), 1.0)
+
+    @staticmethod
+    def _learning_quality_score(cycle: Dict) -> float:
+        """Estimate cycle quality (0..1) to suppress noisy self-learning updates."""
+        score = 1.0
+        avg_power = float(cycle.get("avg_power_w", 0.0))
+        duration_s = float(cycle.get("duration_s", 0.0))
+        duty_cycle = float(cycle.get("duty_cycle", 0.0))
+        peak_to_avg = float(cycle.get("peak_to_avg_ratio", 1.0))
+        num_substates = int(cycle.get("num_substates", 0))
+
+        if avg_power < 30.0:
+            score -= 0.22
+        if duration_s < 8.0:
+            score -= 0.25
+        if peak_to_avg > 6.0:
+            score -= 0.18
+        if duration_s > 600 and (duty_cycle < 0.03 or duty_cycle > 0.98):
+            score -= 0.12
+        if num_substates > 10:
+            score -= 0.10
+
+        profile_points = SQLiteStore._normalize_profile_points(cycle.get("profile_points", []))
+        if profile_points and len(profile_points) < 6:
+            score -= 0.08
+
+        return max(0.0, min(1.0, score))
+
     def store_reading(self, reading: PowerReading) -> None:
         if not self._conn:
             return
@@ -611,6 +667,13 @@ class SQLiteStore:
                 pattern_penalty += 0.02
         
         shape_distance += pattern_penalty
+
+        # Curve shape similarity from real stored profile points.
+        profile_dist = SQLiteStore._profile_shape_distance(existing, candidate)
+        if profile_dist is None:
+            shape_distance += 0.05
+        else:
+            shape_distance += profile_dist * 0.12
         
         # Weights are already baked into core_distance (0.6) and shape_distance (0.4)
         # So we combine them directly to get normalized 0-1 distance
@@ -961,6 +1024,16 @@ class SQLiteStore:
         if not self._patterns_conn:
             return {"matched": False, "pattern": None}
 
+        quality_score = self._learning_quality_score(cycle)
+        if quality_score < 0.28:
+            return {
+                "matched": False,
+                "pattern": None,
+                "skipped": True,
+                "reason": "low_quality_cycle",
+                "quality_score": quality_score,
+            }
+
         now = datetime.now().isoformat()
         patterns = self.list_patterns(limit=500)
 
@@ -981,7 +1054,12 @@ class SQLiteStore:
                 best = item
 
         try:
-            if best and best_distance <= tolerance:
+            best_tolerance = tolerance
+            if best:
+                seen = max(int(best.get("seen_count", 1)), 1)
+                best_tolerance = max(0.22, tolerance - min((seen - 1) * 0.005, 0.14))
+
+            if best and best_distance <= best_tolerance:
                 seen_count = int(best["seen_count"]) + 1
                 alpha = 1.0 / seen_count
 

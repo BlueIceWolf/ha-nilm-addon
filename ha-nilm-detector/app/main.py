@@ -343,7 +343,7 @@ class NILMDetectionSystem:
 
     def _replay_learning_from_storage(self, hours: int = 24) -> Dict:
         """Replay recent stored readings through PatternLearner to build cycles on demand."""
-        if not self.storage or not self.pattern_learner:
+        if not self.storage:
             return {"cycles_detected": 0, "points_processed": 0}
 
         # Approximate sample count from configured polling interval.
@@ -353,26 +353,47 @@ class NILMDetectionSystem:
         if not points:
             return {"cycles_detected": 0, "points_processed": 0}
 
-        # Use a fresh learner for replay to avoid state contamination with live stream.
-        replay_learner = PatternLearner(
-            on_threshold_w=self.config.learning_on_threshold_w,
-            off_threshold_w=self.config.learning_off_threshold_w,
-            min_cycle_seconds=self.config.learning_min_cycle_seconds,
-            debounce_samples=1,
-            noise_filter_window=1,
-        )
+        # Use fresh per-phase learners for replay to avoid cross-phase contamination.
+        configured_phases = [str(p).upper() for p in self.config.get_selected_phase_entities().keys()]
+        replay_phases = configured_phases if configured_phases else ["L1"]
+        replay_learners: Dict[str, PatternLearner] = {}
+        for phase_name in replay_phases:
+            replay_learners[phase_name] = PatternLearner(
+                on_threshold_w=self.config.learning_on_threshold_w,
+                off_threshold_w=self.config.learning_off_threshold_w,
+                min_cycle_seconds=self.config.learning_min_cycle_seconds,
+                debounce_samples=1,
+                noise_filter_window=1,
+            )
 
         # Prime adaptive baseline from initial samples so replay does not start in a false ON state.
         baseline_seed_count = min(60, len(points))
-        baseline_values: List[float] = []
+        baseline_by_phase: Dict[str, List[float]] = {phase_name: [] for phase_name in replay_phases}
         for point in points[:baseline_seed_count]:
-            try:
-                baseline_values.append(float(point.get("power_w") or 0.0))
-            except (TypeError, ValueError):
-                continue
-        replay_learner.prime_baseline(baseline_values)
+            phases = point.get("phases") if isinstance(point.get("phases"), dict) else {}
+            normalized_phases: Dict[str, float] = {}
+            for phase_key, phase_val in phases.items():
+                try:
+                    normalized_phases[str(phase_key).upper()] = float(phase_val)
+                except (TypeError, ValueError):
+                    continue
+
+            for phase_name in replay_phases:
+                value = 0.0
+                if phase_name in normalized_phases:
+                    value = float(normalized_phases[phase_name])
+                elif len(replay_phases) == 1:
+                    try:
+                        value = float(point.get("power_w") or 0.0)
+                    except (TypeError, ValueError):
+                        value = 0.0
+                baseline_by_phase[phase_name].append(value)
+
+        for phase_name, learner in replay_learners.items():
+            learner.prime_baseline(baseline_by_phase.get(phase_name, []))
 
         cycles_detected = 0
+        cycles_by_phase: Dict[str, int] = {phase_name: 0 for phase_name in replay_phases}
         for idx, point in enumerate(points):
             try:
                 ts_raw = str(point.get("timestamp") or "").strip()
@@ -387,74 +408,81 @@ class NILMDetectionSystem:
                 if ts.tzinfo is not None:
                     ts = ts.astimezone(timezone.utc).replace(tzinfo=None)
 
-                power_w = float(point.get("power_w") or 0.0)
                 phases = point.get("phases") if isinstance(point.get("phases"), dict) else {}
-                metadata = {"phase_powers_w": phases, "replay_learning": True}
-                reading = PowerReading(timestamp=ts, power_w=power_w, phase="TOTAL", metadata=metadata)
+                normalized_phases: Dict[str, float] = {}
+                for phase_key, phase_val in phases.items():
+                    try:
+                        normalized_phases[str(phase_key).upper()] = float(phase_val)
+                    except (TypeError, ValueError):
+                        continue
 
                 # Skip cycle detection during warmup points used for baseline seeding.
                 if idx < baseline_seed_count:
                     continue
 
-                cycle = replay_learner.ingest(reading)
-                if not cycle:
-                    continue
-
-                active_phase_count = 1
-                dominant_phase = "L1"
-                if phases:
-                    numeric_phase_values = []
-                    for val in phases.values():
+                for phase_name, learner in replay_learners.items():
+                    phase_power = 0.0
+                    if phase_name in normalized_phases:
+                        phase_power = float(normalized_phases[phase_name])
+                    elif len(replay_phases) == 1:
                         try:
-                            numeric_phase_values.append(float(val))
+                            phase_power = float(point.get("power_w") or 0.0)
                         except (TypeError, ValueError):
-                            continue
-                    if numeric_phase_values:
-                        active_phase_count = max(1, sum(1 for v in numeric_phase_values if v > 20.0))
+                            phase_power = 0.0
 
-                    phase_candidates = []
-                    for phase_name, phase_value in phases.items():
-                        try:
-                            phase_candidates.append((str(phase_name), float(phase_value)))
-                        except (TypeError, ValueError):
-                            continue
-                    if phase_candidates:
-                        dominant_phase = max(phase_candidates, key=lambda item: item[1])[0]
+                    phase_reading = PowerReading(
+                        timestamp=ts,
+                        power_w=phase_power,
+                        phase=phase_name,
+                        metadata={
+                            "phase": phase_name,
+                            "phase_powers_w": {phase_name: phase_power},
+                            "replay_learning": True,
+                        },
+                    )
 
-                cycle_features = cycle.features
+                    cycle = learner.ingest(phase_reading)
+                    if not cycle:
+                        continue
 
-                cycle_payload = {
-                    "start_ts": cycle.start_ts.isoformat(),
-                    "end_ts": cycle.end_ts.isoformat(),
-                    "duration_s": cycle.duration_s,
-                    "avg_power_w": cycle.avg_power_w,
-                    "peak_power_w": cycle.peak_power_w,
-                    "energy_wh": cycle.energy_wh,
-                    "operating_modes": cycle.operating_modes,
-                    "has_multiple_modes": cycle.has_multiple_modes,
-                    "active_phase_count": 1,
-                    "phase_mode": "single_phase",
-                    "phase": dominant_phase,
-                    "power_variance": float(cycle_features.power_variance) if cycle_features else 0.0,
-                    "rise_rate_w_per_s": float(cycle_features.rise_rate_w_per_s) if cycle_features else 0.0,
-                    "fall_rate_w_per_s": float(cycle_features.fall_rate_w_per_s) if cycle_features else 0.0,
-                    "duty_cycle": float(cycle_features.duty_cycle) if cycle_features else 0.0,
-                    "peak_to_avg_ratio": float(cycle_features.peak_to_avg_ratio) if cycle_features else 1.0,
-                    "num_substates": int(cycle_features.num_substates) if cycle_features else 0,
-                    "has_heating_pattern": bool(cycle_features.has_heating_pattern) if cycle_features else False,
-                    "has_motor_pattern": bool(cycle_features.has_motor_pattern) if cycle_features else False,
-                    "profile_points": list(cycle.profile_points or []),
-                }
-                heuristic_suggestion = replay_learner.suggest_device_type(cycle)
-                model_suggestion = self.storage.suggest_cycle_label(cycle_payload, fallback=heuristic_suggestion)
-                suggestion = str(model_suggestion.get("label") or heuristic_suggestion)
-                self.storage.learn_cycle_pattern(cycle=cycle_payload, suggestion_type=suggestion)
-                cycles_detected += 1
+                    cycle_features = cycle.features
+                    cycle_payload = {
+                        "start_ts": cycle.start_ts.isoformat(),
+                        "end_ts": cycle.end_ts.isoformat(),
+                        "duration_s": cycle.duration_s,
+                        "avg_power_w": cycle.avg_power_w,
+                        "peak_power_w": cycle.peak_power_w,
+                        "energy_wh": cycle.energy_wh,
+                        "operating_modes": cycle.operating_modes,
+                        "has_multiple_modes": cycle.has_multiple_modes,
+                        "active_phase_count": 1,
+                        "phase_mode": "single_phase",
+                        "phase": phase_name,
+                        "power_variance": float(cycle_features.power_variance) if cycle_features else 0.0,
+                        "rise_rate_w_per_s": float(cycle_features.rise_rate_w_per_s) if cycle_features else 0.0,
+                        "fall_rate_w_per_s": float(cycle_features.fall_rate_w_per_s) if cycle_features else 0.0,
+                        "duty_cycle": float(cycle_features.duty_cycle) if cycle_features else 0.0,
+                        "peak_to_avg_ratio": float(cycle_features.peak_to_avg_ratio) if cycle_features else 1.0,
+                        "num_substates": int(cycle_features.num_substates) if cycle_features else 0,
+                        "has_heating_pattern": bool(cycle_features.has_heating_pattern) if cycle_features else False,
+                        "has_motor_pattern": bool(cycle_features.has_motor_pattern) if cycle_features else False,
+                        "profile_points": list(cycle.profile_points or []),
+                    }
+                    heuristic_suggestion = learner.suggest_device_type(cycle)
+                    model_suggestion = self.storage.suggest_cycle_label(cycle_payload, fallback=heuristic_suggestion)
+                    suggestion = str(model_suggestion.get("label") or heuristic_suggestion)
+                    self.storage.learn_cycle_pattern(cycle=cycle_payload, suggestion_type=suggestion)
+                    cycles_detected += 1
+                    cycles_by_phase[phase_name] = cycles_by_phase.get(phase_name, 0) + 1
             except Exception as point_error:
                 logger.debug("Skipping replay point due to error: %s", point_error)
                 continue
 
-        return {"cycles_detected": cycles_detected, "points_processed": len(points)}
+        return {
+            "cycles_detected": cycles_detected,
+            "points_processed": len(points),
+            "cycles_by_phase": cycles_by_phase,
+        }
 
     def _import_history_from_ha(self, hours: int = 24) -> Dict:
         """Import historical phase sensor values from HA recorder into local storage."""
