@@ -568,7 +568,7 @@ def evaluate_pattern(features: PatternFeatures) -> PatternEvaluation:
         plausibility_by_type[dtype] = round(score, 4)
         plausibility_reasons[dtype] = reasons
 
-    best_type = max(plausibility_by_type, key=plausibility_by_type.get)
+    best_type = max(plausibility_by_type, key=lambda k: plausibility_by_type[k])
     label_plausibility = plausibility_by_type.get(features.candidate_label, 0.3)
 
     sorted_types = sorted(plausibility_by_type.items(), key=lambda x: x[1], reverse=True)
@@ -586,7 +586,7 @@ def evaluate_pattern(features: PatternFeatures) -> PatternEvaluation:
 
     adjusted_confidence = round(_clamp(adjusted_confidence, 0.0, 1.0), 4)
 
-    total_score = quality_core + ((best_type and plausibility_by_type[best_type] - 0.5) * 0.8)
+    total_score = quality_core + ((plausibility_by_type[best_type] - 0.5) * 0.8)
     total_score += (adjusted_confidence - 0.5) * 0.6
 
     reject_reasons: List[str] = []
