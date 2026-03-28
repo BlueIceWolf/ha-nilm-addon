@@ -1,4 +1,7 @@
 paho-mqtt==1.6.1
 requests==2.31.0
 numpy==1.24.3
+# scikit-learn is installed via apk (py3-scikit-learn) as a pre-compiled system package
+# to avoid 10-30 min source compilation on ARM. See Dockerfile.
+# Kept here as fallback for non-Docker local dev environments:
 scikit-learn>=1.0

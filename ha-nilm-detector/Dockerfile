@@ -1,12 +1,17 @@
 ARG BUILD_FROM
 FROM ${BUILD_FROM}
 
-# Install system packages needed for numpy compilation
+# Install system packages:
+# - gcc/g++/musl-dev/python3-dev for numpy compilation
+# - py3-scikit-learn + py3-scipy as pre-compiled Alpine packages
+#   (avoids 10-30 min source compilation of scikit-learn on ARM)
 RUN apk add --no-cache \
     gcc \
     g++ \
     musl-dev \
-    python3-dev
+    python3-dev \
+    py3-scikit-learn \
+    py3-scipy
 
 # Set working directory
 WORKDIR /app
@@ -15,7 +20,8 @@ WORKDIR /app
 COPY requirements.txt /tmp/requirements.txt
 
 # Install Python dependencies
-RUN pip3 install --no-cache-dir -r /tmp/requirements.txt \
+# --prefer-binary: prefer pre-built wheels over source compilation
+RUN pip3 install --no-cache-dir --prefer-binary -r /tmp/requirements.txt \
     && rm -f /tmp/requirements.txt
 
 # Copy application sources after dependencies
