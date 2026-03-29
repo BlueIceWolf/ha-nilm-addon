@@ -1094,7 +1094,9 @@ async function fetchJson(path) {
 
 function fmt(v, suffix='') {
   if (v === null || v === undefined) return '-';
-  return `${Number(v).toFixed(1)}${suffix}`;
+  const n = Number(v);
+  if (!Number.isFinite(n)) return '-';
+  return `${n.toFixed(1)}${suffix}`;
 }
 
 function setStatus(message) {
@@ -2346,30 +2348,35 @@ document.querySelectorAll('.tab-nav-btn').forEach(btn => {
 async function loadEventsTab() {
   const tbody = document.getElementById('eventRows');
   if (!tbody) return;
-  tbody.innerHTML = '<tr><td colspan="8" style="text-align:center">Lade…</td></tr>';
+  tbody.innerHTML = '<tr><td colspan="11" style="text-align:center">Lade…</td></tr>';
   try {
     const events = await fetchJson('api/events?limit=100');
     tbody.innerHTML = '';
     const arr = Array.isArray(events) ? events : (events.events || []);
+    const countEl = document.getElementById('eventsCount');
+    if (countEl) countEl.textContent = `${arr.length} Einträge`;
     if (!arr.length) {
-      tbody.innerHTML = '<tr><td colspan="8">Keine Events vorhanden</td></tr>';
+      tbody.innerHTML = '<tr><td colspan="11">Keine Events vorhanden</td></tr>';
       return;
     }
     arr.forEach(ev => {
       const tr = document.createElement('tr');
-      const ts = ev.timestamp || ev.start_time || '';
-      const label = ev.label || ev.device || '-';
-      const delta = ev.delta_power_w ?? ev.delta_power ?? '-';
-      const dur = ev.duration_s != null ? Number(ev.duration_s).toFixed(1) + 's' : '-';
-      const conf = ev.confidence != null ? Number(ev.confidence).toFixed(2) : '-';
+      const eventId = ev.event_id ?? ev.id ?? '-';
+      const startTs = String(ev.start_ts || ev.start_time || ev.created_at || '').replace('T',' ').replace(/[.]\d+/,'');
+      const endTs = String(ev.end_ts || ev.end_time || '').replace('T',' ').replace(/[.]\d+/,'');
       const phase = ev.phase || '-';
-      const reason = ev.rejection_reason || ev.end_reason || '-';
-      const quality = ev.quality_score != null ? Number(ev.quality_score).toFixed(2) : '-';
-      tr.innerHTML = `<td>${ts.replace('T',' ').replace(/[.]\\d+/,'')}</td><td>${label}</td><td>${fmt(delta,' W')}</td><td>${dur}</td><td>${conf}</td><td>${phase}</td><td>${quality}</td><td>${reason}</td>`;
+      const avgPower = fmt(ev.avg_power_w, ' W');
+      const peakPower = fmt(ev.peak_power_w, ' W');
+      const energyWh = fmt(ev.energy_wh, ' Wh');
+      const duration = fmt(ev.duration_s, 's');
+      const label = ev.final_label || ev.label || '-';
+      const conf = ev.final_confidence != null ? Number(ev.final_confidence).toFixed(2) : '-';
+      const reason = ev.rejected_reason || ev.rejection_reason || '-';
+      tr.innerHTML = `<td>${eventId}</td><td>${startTs || '-'}</td><td>${endTs || '-'}</td><td>${phase}</td><td>${avgPower}</td><td>${peakPower}</td><td>${energyWh}</td><td>${duration}</td><td>${label}</td><td>${conf}</td><td>${reason}</td>`;
       tbody.appendChild(tr);
     });
   } catch (err) {
-    tbody.innerHTML = `<tr><td colspan="8">Fehler: ${err}</td></tr>`;
+    tbody.innerHTML = `<tr><td colspan="11">Fehler: ${err}</td></tr>`;
   }
 }
 const eventsRefreshBtn = document.getElementById('eventsRefreshBtn');
