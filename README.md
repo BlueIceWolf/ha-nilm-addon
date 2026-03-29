@@ -11,7 +11,7 @@
 
 <p align="center">
   <img src="https://img.shields.io/badge/Status-BETA-orange" alt="BETA" />
-   <img src="https://img.shields.io/badge/Version-0.6.30-blue" alt="Version" />
+   <img src="https://img.shields.io/badge/Version-0.6.31-blue" alt="Version" />
 </p>
 
 > ⚠️ **EXPERIMENTELLES PROJEKT (BETA)**: Dieses Add-on befindet sich in aktiver Entwicklung. Viele Features funktionieren bereits gut, aber es ist **nicht production-ready**. Erwarte Bugs, unvollständige Features und Breaking Changes zwischen Versionen. Nutze es zum Experimentieren und Testen, aber nicht für kritische Automatisierungen.
@@ -27,7 +27,7 @@
 
 ---
 
-**Aktuell:** `v0.6.30` - Pipeline/Debug-Refactor abgeschlossen: per-Phase NILMPipeline, Overlap-Scoring, 5-Tab Web-UI, Training-Filter-Log und Debug-API.
+**Aktuell:** `v0.6.31` - Startup-Hotfix: numpy/scipy/sklearn Runtime-Guard im Startskript und erzwungener Rebuild via Versionsbump.
 
 > ℹ️ **v0.6.11 Hinweis**: Auch die oberen Dashboard-Karten (`Gesamtleistung`, `Durchschnitt`, `Messwerte`, `Gelernte Muster`) schalten jetzt sauber zwischen DE/EN um.
 

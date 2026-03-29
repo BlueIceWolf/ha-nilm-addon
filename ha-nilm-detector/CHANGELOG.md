@@ -2,6 +2,16 @@
 
 > ⚠️ **Hinweis**: Dieses Projekt ist experimentell (BETA) - Breaking Changes und Bugs können auftreten.
 
+## 0.6.31 (BETA)
+
+**Hotfix: numpy/scipy/sklearn Importfehler beim Add-on-Start behoben**
+
+- `run.sh` nutzt jetzt bevorzugt `/usr/bin/python3` (Alpine-System-Python), falls verfügbar
+- Runtime-Guard prüft `import numpy` vor App-Start
+- Falls Pakete fehlen: schneller `apk`-Recovery-Pfad (`py3-numpy`, `py3-scipy`, `py3-scikit-learn`)
+- Fallback: einmaliger `pip`-Install nur wenn `apk` nicht ausreicht
+- Versionsbump auf `0.6.31`, damit Home Assistant sicher ein neues Image baut/zieht
+
 ## 0.6.30 (BETA)
 
 **Pipeline-/Debug-Refactor abgeschlossen: bessere Nachvollziehbarkeit und robustere Lernbasis**
