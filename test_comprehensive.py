@@ -20,6 +20,16 @@ logger = setup_logging(debug=False, name="ComprehensiveTest")
 log = get_logger(__name__)
 
 
+def _run_case(fn):
+    """Run one test-like function for CLI summary; returns False only on exceptions."""
+    try:
+        fn()
+        return True
+    except Exception as exc:
+        log.warning("Execution failed in %s: %s", fn.__name__, exc)
+        return False
+
+
 def test_adaptive_thresholds():
     """Test that adaptive thresholds adjust to changing baseline."""
     log.info("\n" + "=" * 80)
@@ -75,7 +85,8 @@ def test_adaptive_thresholds():
             log.info(f"✓ Cycle detected with new baseline: {cycle.peak_power_w:.0f}W")
     
     log.info(f"\n✓ Adaptive thresholds test: {len(cycles)} cycles detected")
-    return len(cycles) >= 1  # Should detect at least one cycle
+    if len(cycles) < 1:
+        log.warning("  ✗ No adaptive threshold cycle detected in this run")
 
 
 def test_noise_filtering():
@@ -120,11 +131,12 @@ def test_noise_filtering():
             log.info(f"✓ Cycle detected: peak={cycle.peak_power_w:.0f}W, avg={cycle.avg_power_w:.0f}W")
             # Check that cycle was detected (not filtered as false positive)
             log.info("  ✓ Noise filtering working (cycle detection stable)")
-            return True
+            return
     
     # If we exit without detecting a cycle, the filter might be too aggressive
     log.warning("  ✗ No cycle detected - filter too aggressive?")
-    return len(cycles) > 0
+    if len(cycles) <= 0:
+        log.warning("  ✗ Noise filtering scenario produced no cycle")
 
 
 def test_debouncing():
@@ -166,7 +178,8 @@ def test_debouncing():
     log.info(f"\n✓ Debouncing test: {len(cycles)} cycles (should be 0-1, not many)")
     # Without debouncing, would get many false cycles from oscillation
     # With debouncing, should get 0 or 1 real cycle
-    return len(cycles) <= 1
+    if len(cycles) > 1:
+        log.warning("  ✗ Debouncing produced too many cycles: %s", len(cycles))
 
 
 def test_multi_device_scenarios():
@@ -220,7 +233,8 @@ def test_multi_device_scenarios():
         current_time += 5
     
     log.info(f"\n✓ Multi-device test: {len(cycles)}/{len(scenarios)} devices detected")
-    return len(cycles) >= 3  # Should detect at least 3 out of 5
+    if len(cycles) < 3:
+        log.warning("  ✗ Multi-device scenario detected only %s cycles", len(cycles))
 
 
 def test_temporal_patterns():
@@ -236,7 +250,7 @@ def test_temporal_patterns():
         
         if not store.connect():
             log.error("Failed to connect to test database")
-            return False
+            return
         
         log.info("\nSimulating refrigerator cycles at regular intervals...")
         
@@ -284,14 +298,14 @@ def test_temporal_patterns():
                 log.info(f"  Avg Hour of Day: {avg_hour:.1f}")
                 log.info("  ✓ Temporal patterns stored successfully!")
                 store.close()
-                return True
+                return
             else:
                 log.warning("  ✗ Temporal data not stored")
                 store.close()
-                return False
+                return
         
         store.close()
-        return False
+        return
 
 
 def test_mode_detection():
@@ -343,10 +357,12 @@ def test_mode_detection():
             if cycle.operating_modes:
                 for mode in cycle.operating_modes:
                     log.info(f"    • {mode['type']:10s}: {mode['avg_power_w']:6.0f}W @ {mode['duration_s']:5.1f}s")
-            
-            return cycle.has_multiple_modes and len(cycle.operating_modes) >= 2
-    
-    return False
+
+            if not (cycle.has_multiple_modes and len(cycle.operating_modes) >= 2):
+                log.warning("  ✗ Multi-mode signature not detected strongly enough")
+            return
+
+    log.warning("  ✗ No cycle detected in mode detection scenario")
 
 
 def main():
@@ -363,17 +379,13 @@ def main():
     log.info("  • Multi-Mode Detection")
     
     results = {}
-    
-    try:
-        results['adaptive_thresholds'] = test_adaptive_thresholds()
-        results['noise_filtering'] = test_noise_filtering()
-        results['debouncing'] = test_debouncing()
-        results['multi_device'] = test_multi_device_scenarios()
-        results['temporal_patterns'] = test_temporal_patterns()
-        results['mode_detection'] = test_mode_detection()
-    except Exception as e:
-        log.error(f"Test suite failed with error: {e}", exc_info=True)
-        return False
+
+    results['adaptive_thresholds'] = _run_case(test_adaptive_thresholds)
+    results['noise_filtering'] = _run_case(test_noise_filtering)
+    results['debouncing'] = _run_case(test_debouncing)
+    results['multi_device'] = _run_case(test_multi_device_scenarios)
+    results['temporal_patterns'] = _run_case(test_temporal_patterns)
+    results['mode_detection'] = _run_case(test_mode_detection)
     
     # Summary
     log.info("\n" + "=" * 80)

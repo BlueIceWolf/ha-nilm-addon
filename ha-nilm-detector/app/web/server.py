@@ -423,6 +423,22 @@ def _html_page(default_language: str = "de") -> str:
       <tbody id=\"patternRows\"></tbody>
     </table>
 
+      <h2 id="cyclesHeading" style="margin:14px 0 8px; font-size:1.1rem;">Geräte-Zyklen</h2>
+      <table>
+        <thead>
+          <tr><th id="cycName">Name</th><th id="cycType">Typ</th><th id="cycSeen">Seen</th><th id="cycInrushPeak">Inrush Peak (W)</th><th id="cycRunPower">Run Power (W)</th><th id="cycDuration">Dauer (s)</th></tr>
+        </thead>
+        <tbody id="cycleRows"></tbody>
+      </table>
+
+      <h2 id="eventPhasesHeading" style="margin:14px 0 8px; font-size:1.1rem;">Event-Phasen</h2>
+      <table>
+        <thead>
+          <tr><th id="epEvent">Event</th><th id="epIdx">#</th><th id="epType">Phase</th><th id="epDuration">Dauer (s)</th><th id="epDeltaAvg">Delta Ø (W)</th><th id="epDeltaPeak">Delta Peak (W)</th></tr>
+        </thead>
+        <tbody id="eventPhaseRows"></tbody>
+      </table>
+
     <!-- Pattern Visualization Modal -->
     <div id=\"patternModal\" style=\"display:none;position:fixed;top:0;left:0;width:100%;height:100%;background:rgba(0,0,0,0.5);z-index:1000;justify-content:center;align-items:center;flex-direction:column;padding:20px;box-sizing:border-box;\">
       <div style=\"background:var(--card);border:1px solid var(--line);border-radius:var(--radius);padding:16px;max-width:900px;width:100%;box-shadow:var(--shadow-md);max-height:90vh;overflow-y:auto;\">
@@ -480,6 +496,8 @@ const I18N = {
     darkModeOn: '☀️ Tagmodus',
     darkModeOff: '🌙 Nachtmodus',
     devicesHeading: 'Erkannte Geräte',
+    cyclesHeading: 'Geräte-Zyklen',
+    eventPhasesHeading: 'Event-Phasen',
     patternsHeading: 'Gelernte Muster',
     lblCurrentPower: 'Gesamtleistung',
     lblPhaseL1: 'Phase L1',
@@ -495,6 +513,18 @@ const I18N = {
     thConfidence: 'Konfidenz',
     thCycles: 'Zyklen',
     thRuntime: 'Laufzeit (s)',
+    cycName: 'Name',
+    cycType: 'Typ',
+    cycSeen: 'Seen',
+    cycInrushPeak: 'Inrush Peak (W)',
+    cycRunPower: 'Run Power (W)',
+    cycDuration: 'Dauer (s)',
+    epEvent: 'Event',
+    epIdx: '#',
+    epType: 'Phase',
+    epDuration: 'Dauer (s)',
+    epDeltaAvg: 'Delta Ø (W)',
+    epDeltaPeak: 'Delta Peak (W)',
     pthType: 'Typ',
     pthGroup: 'Gruppe',
     pthFrequency: 'Häufig.',
@@ -538,6 +568,8 @@ const I18N = {
     noDataSeries: 'Noch nicht genug Daten für den Verlauf.',
     noPhaseSelected: 'Keine Phase ausgewählt.',
     noDevices: 'Keine Geräte konfiguriert oder noch keine Erkennung.',
+    noCycles: 'Noch keine Geräte-Zyklen vorhanden.',
+    noEventPhases: 'Noch keine Event-Phasen vorhanden.',
     noPatterns: 'Noch keine Muster erkannt.',
     unknown: 'unbekannt',
     maybePrefix: 'evtl.',
@@ -622,6 +654,8 @@ const I18N = {
     darkModeOn: '☀️ Light mode',
     darkModeOff: '🌙 Dark mode',
     devicesHeading: 'Detected devices',
+    cyclesHeading: 'Device cycles',
+    eventPhasesHeading: 'Event phases',
     patternsHeading: 'Learned patterns',
     lblCurrentPower: 'Total power',
     lblPhaseL1: 'Phase L1',
@@ -637,6 +671,18 @@ const I18N = {
     thConfidence: 'Confidence',
     thCycles: 'Cycles',
     thRuntime: 'Runtime (s)',
+    cycName: 'Name',
+    cycType: 'Type',
+    cycSeen: 'Seen',
+    cycInrushPeak: 'Inrush peak (W)',
+    cycRunPower: 'Run power (W)',
+    cycDuration: 'Duration (s)',
+    epEvent: 'Event',
+    epIdx: '#',
+    epType: 'Phase',
+    epDuration: 'Duration (s)',
+    epDeltaAvg: 'Delta avg (W)',
+    epDeltaPeak: 'Delta peak (W)',
     pthType: 'Type',
     pthGroup: 'Group',
     pthFrequency: 'Freq.',
@@ -680,6 +726,8 @@ const I18N = {
     noDataSeries: 'Not enough data for the chart yet.',
     noPhaseSelected: 'No phase selected.',
     noDevices: 'No devices configured or no detections yet.',
+    noCycles: 'No device cycles available yet.',
+    noEventPhases: 'No event phases available yet.',
     noPatterns: 'No patterns detected yet.',
     unknown: 'unknown',
     maybePrefix: 'maybe',
@@ -789,6 +837,8 @@ function applyLanguage() {
   assignText('clearPatternsBtn', 'clearPatternsBtn');
   assignText('importHistoryBtn', 'importHistoryBtn');
   assignText('devicesHeading', 'devicesHeading');
+  assignText('cyclesHeading', 'cyclesHeading');
+  assignText('eventPhasesHeading', 'eventPhasesHeading');
   assignText('patternsHeading', 'patternsHeading');
   assignText('lblCurrentPower', 'lblCurrentPower');
   assignText('lblPhaseL1', 'lblPhaseL1');
@@ -813,6 +863,18 @@ function applyLanguage() {
   assignText('thConfidence', 'thConfidence');
   assignText('thCycles', 'thCycles');
   assignText('thRuntime', 'thRuntime');
+  assignText('cycName', 'cycName');
+  assignText('cycType', 'cycType');
+  assignText('cycSeen', 'cycSeen');
+  assignText('cycInrushPeak', 'cycInrushPeak');
+  assignText('cycRunPower', 'cycRunPower');
+  assignText('cycDuration', 'cycDuration');
+  assignText('epEvent', 'epEvent');
+  assignText('epIdx', 'epIdx');
+  assignText('epType', 'epType');
+  assignText('epDuration', 'epDuration');
+  assignText('epDeltaAvg', 'epDeltaAvg');
+  assignText('epDeltaPeak', 'epDeltaPeak');
   assignText('pthType', 'pthType');
   assignText('pthGroup', 'pthGroup');
   assignText('pthFrequency', 'pthFrequency');
@@ -1303,6 +1365,42 @@ function renderDevices(devices) {
   });
 }
 
+function renderDeviceCycles(cycles) {
+  const tbody = document.getElementById('cycleRows');
+  if (!tbody) return;
+  tbody.innerHTML = '';
+  const items = Array.isArray(cycles) ? cycles : [];
+  if (!items.length) {
+    const tr = document.createElement('tr');
+    tr.innerHTML = `<td colspan="6">${t('noCycles')}</td>`;
+    tbody.appendChild(tr);
+    return;
+  }
+  items.slice(0, 30).forEach(cycle => {
+    const tr = document.createElement('tr');
+    tr.innerHTML = `<td>${cycle.cycle_name || '-'}</td><td>${cycle.cycle_type || '-'}</td><td>${cycle.seen_count ?? 0}</td><td>${fmt(cycle.avg_inrush_peak_w)}</td><td>${fmt(cycle.avg_run_power_w)}</td><td>${fmt(cycle.avg_total_duration_s)}</td>`;
+    tbody.appendChild(tr);
+  });
+}
+
+function renderEventPhases(phases) {
+  const tbody = document.getElementById('eventPhaseRows');
+  if (!tbody) return;
+  tbody.innerHTML = '';
+  const items = Array.isArray(phases) ? phases : [];
+  if (!items.length) {
+    const tr = document.createElement('tr');
+    tr.innerHTML = `<td colspan="6">${t('noEventPhases')}</td>`;
+    tbody.appendChild(tr);
+    return;
+  }
+  items.slice(0, 40).forEach(phase => {
+    const tr = document.createElement('tr');
+    tr.innerHTML = `<td>${phase.event_id ?? '-'}</td><td>${phase.phase_index ?? '-'}</td><td>${phase.phase_type || '-'}</td><td>${fmt(phase.duration_s)}</td><td>${fmt(phase.delta_avg_power_w)}</td><td>${fmt(phase.delta_peak_power_w)}</td>`;
+    tbody.appendChild(tr);
+  });
+}
+
 function renderPatterns(patterns) {
   const tbody = document.getElementById('patternRows');
   tbody.innerHTML = '';
@@ -1475,12 +1573,14 @@ function renderPatterns(patterns) {
 async function refresh() {
   try {
     setStatus(t('loading'));
-    const [summaryRes, seriesRes, liveRes, patternsRes, hybridRes] = await Promise.all([
+    const [summaryRes, seriesRes, liveRes, patternsRes, hybridRes, cyclesRes, eventPhasesRes] = await Promise.all([
       fetchJson('api/summary'),
       fetchJson(`api/series?limit=${seriesWindow}&offset=${seriesOffset}`),
       fetchJson('api/live'),
       fetchJson('api/patterns'),
-      fetchJson('api/debug/hybrid-status').catch(() => null)
+      fetchJson('api/debug/hybrid-status').catch(() => null),
+      fetchJson('api/device-cycles?limit=30').catch(() => []),
+      fetchJson('api/event-phases?limit=40').catch(() => [])
     ]);
 
     const summary = summaryRes;
@@ -1535,6 +1635,8 @@ async function refresh() {
     setStatus(t('drawing'));
     drawChart(series.points || []);
     renderDevices(live.devices || {});
+    renderDeviceCycles(cyclesRes || []);
+    renderEventPhases(eventPhasesRes || []);
     allPatterns = Array.isArray(patterns) ? patterns : [];
     currentPatternPage = 1;
     filterAndSortPatterns();
@@ -2236,6 +2338,42 @@ class StatsWebServer:
                   except ValueError:
                     limit = 500
                   self._send_json(parent.storage.list_events(limit=limit))
+                  return
+
+                if parsed.path == "/api/event-phases":
+                  if not parent.storage or not hasattr(parent.storage, "list_event_phases"):
+                    self._send_json([])
+                    return
+                  query = parse_qs(parsed.query or "")
+                  limit_raw = (query.get("limit") or ["1000"])[0]
+                  event_id_raw = (query.get("event_id") or [""])[0]
+                  try:
+                    limit = max(10, min(int(limit_raw), 5000))
+                  except ValueError:
+                    limit = 1000
+                  try:
+                    event_id = int(event_id_raw) if str(event_id_raw).strip() else None
+                  except ValueError:
+                    event_id = None
+                  self._send_json(parent.storage.list_event_phases(limit=limit, event_id=event_id))
+                  return
+
+                if parsed.path == "/api/device-cycles":
+                  if not parent.storage or not hasattr(parent.storage, "list_device_cycles"):
+                    self._send_json([])
+                    return
+                  query = parse_qs(parsed.query or "")
+                  limit_raw = (query.get("limit") or ["1000"])[0]
+                  device_id_raw = (query.get("device_id") or [""])[0]
+                  try:
+                    limit = max(10, min(int(limit_raw), 5000))
+                  except ValueError:
+                    limit = 1000
+                  try:
+                    device_id = int(device_id_raw) if str(device_id_raw).strip() else None
+                  except ValueError:
+                    device_id = None
+                  self._send_json(parent.storage.list_device_cycles(limit=limit, device_id=device_id))
                   return
 
                 if parsed.path == "/api/classification-log":

@@ -6,6 +6,8 @@
 
 **Machine Learning aktiviert: RandomForest-Klassifikator lernt von deinen Labels**
 
+**Inrush/Runtime-Datenmodell erweitert (Baseline, Event-Phasen, Device-Cycles)**
+
 - ML-System `LocalMLClassifier` aktiviert mit scikit-learn RandomForest (80 Estimators)
 - Standardmäßig an: `ml_enabled=true` in config.yaml und app/config.py
 - scikit-learn>=1.0 hinzugefügt zu Abhängigkeiten (both requirements.txt-Dateien)
@@ -17,6 +19,12 @@
 - Intelligente Fallbacks: Wenn ML unsicher (<0.55 confidence) → nutzt regelbasierte Klassifikation
 - Features für ML: avg_power, peak_power, duration, energy, power_variance, rise/fall rates, duty_cycle, num_substates, boolesche Pattern-Flags
 - ML-Score sichtbar im Web-UI unter "Hybrid AI Debug" → "ML" Feld zeigt top-3 Vorhersagen
+- `learned_patterns` und `events` speichern zusätzlich Baseline/Delta-Kennwerte (`baseline_before`, `baseline_after`, `delta_avg`, `delta_peak`, `delta_energy`)
+- Neue Tabelle `event_phases`: segmentierte Zyklus-Phasen (`baseline`, `inrush`, `steady_run/modulated_run`, `shutdown`, `cooldown`)
+- Neue Tabelle `device_cycles`: aggregierte Gerätezyklus-Typen mit Inrush-/Run-Dauern und Leistungsprofil
+- Neue API-Endpunkte: `GET /api/event-phases` und `GET /api/device-cycles`
+- `GET /api/devices` enthält jetzt `device_subclass`, `baseline_range_min_w`, `baseline_range_max_w`
+- `GET /api/events` enthält jetzt Baseline/Delta-Felder pro Event
 - Tests weiterhin grün: `10 passed`
 
 ## 0.6.26 (BETA)

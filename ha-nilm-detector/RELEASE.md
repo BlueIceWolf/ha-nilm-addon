@@ -19,6 +19,11 @@
 - **Web-UI Integration**: ML-Score sichtbar unter "Hybrid AI Debug" mit Top-3 Vorhersagen
 - Confidence-Score wird aus allen 3 Quellen kombiniert → höhere Erkennungsgenauigkeit
 - scikit-learn>=1.0 zu Abhängigkeiten hinzugefügt
+- **Inrush/Runtime-Schema aktiv**: Persistenz um Baseline/Delta-Kennwerte in `learned_patterns` und `events` erweitert
+- **Feingranulare Event-Phasen**: Neue Tabelle `event_phases` speichert `baseline`, `inrush`, `steady/modulated_run`, `shutdown`, `cooldown`
+- **Cycle-Aggregation pro Gerät**: Neue Tabelle `device_cycles` mit Dauer-/Leistungs-Mittelwerten und Signatur
+- **Neue Diagnose-APIs**: `GET /api/event-phases`, `GET /api/device-cycles`
+- **Erweiterte bestehende APIs**: `GET /api/devices` (Subklasse + Baseline-Range), `GET /api/events` (Baseline/Delta)
 
 ---
 

@@ -24,7 +24,7 @@ class SQLiteStore:
     """Persists readings/detections for diagnostics and future learning."""
 
     LIVE_SCHEMA_VERSION = 2
-    PATTERNS_SCHEMA_VERSION = 2
+    PATTERNS_SCHEMA_VERSION = 3
 
     # Legacy DB paths checked during recovery/migration (order matters: most likely first)
     LEGACY_PATTERNS_CANDIDATES: List[str] = [
@@ -227,12 +227,14 @@ class SQLiteStore:
             pattern_user_version = int((self._patterns_conn.execute("PRAGMA user_version").fetchone() or [0])[0])
             logger.info("Pattern DB tables (%s): %s", stage, ", ".join(pattern_tables) if pattern_tables else "<none>")
             logger.info(
-                "Pattern DB row counts (%s): learned_patterns=%s legacy_patterns=%s devices=%s events=%s user_labels=%s class_log=%s user_version=%s",
+                "Pattern DB row counts (%s): learned_patterns=%s legacy_patterns=%s devices=%s events=%s event_phases=%s device_cycles=%s user_labels=%s class_log=%s user_version=%s",
                 stage,
                 self._safe_row_count(self._patterns_conn, "learned_patterns"),
                 self._safe_row_count(self._patterns_conn, "patterns"),
                 self._safe_row_count(self._patterns_conn, "devices"),
                 self._safe_row_count(self._patterns_conn, "events"),
+                self._safe_row_count(self._patterns_conn, "event_phases"),
+                self._safe_row_count(self._patterns_conn, "device_cycles"),
                 self._safe_row_count(self._patterns_conn, "user_labels"),
                 self._safe_row_count(self._patterns_conn, "classification_log"),
                 pattern_user_version,
@@ -307,6 +309,7 @@ class SQLiteStore:
             self._maybe_recover_patterns_from_legacy_files()
             self._maybe_backfill_normalized_tables()
             self._maybe_backfill_patterns_mirror()
+            self._maybe_backfill_inrush_runtime_schema()
             self.cleanup_old_data()
             self._log_startup_diagnostics(stage="post-init")
             logger.info(
@@ -448,13 +451,15 @@ class SQLiteStore:
                         pattern_id, device_id, created_at, updated_at, first_seen, last_seen,
                         seen_count, phase, phase_mode,
                         avg_power_w, peak_power_w, duration_s, energy_wh,
+                        baseline_before_w_avg, baseline_after_w_avg,
+                        delta_avg_power_w, delta_peak_power_w, delta_energy_wh,
                         stability_score, confidence_score, frequency_per_day,
                         typical_interval_s, quality_score_avg,
                         suggestion_type, candidate_name, status, is_confirmed,
-                        profile_points_json, shape_vector_json, prototype_hash,
+                        profile_points_json, delta_profile_points_json, shape_vector_json, delta_shape_vector_json, prototype_hash,
                         num_substates, step_count, plateau_count,
                         shape_similarity_score, cluster_similarity_score
-                    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                     """,
                     (
                         int(pattern.get("id", 0) or 0),
@@ -470,6 +475,11 @@ class SQLiteStore:
                         float(pattern.get("peak_power_w", 0.0) or 0.0),
                         float(pattern.get("duration_s", 0.0) or 0.0),
                         float(pattern.get("energy_wh", 0.0) or 0.0),
+                        float(pattern.get("baseline_before_w_avg", pattern.get("baseline_before_w", 0.0)) or 0.0),
+                        float(pattern.get("baseline_after_w_avg", pattern.get("baseline_after_w", 0.0)) or 0.0),
+                        float(pattern.get("delta_avg_power_w", 0.0) or 0.0),
+                        float(pattern.get("delta_peak_power_w", 0.0) or 0.0),
+                        float(pattern.get("delta_energy_wh", 0.0) or 0.0),
                         float(pattern.get("stability_score", 0.0) or 0.0),
                         float(pattern.get("confidence_score_db", pattern.get("confidence_score", 0.0)) or 0.0),
                         float(pattern.get("frequency_per_day_db", pattern.get("frequency_per_day", 0.0)) or 0.0),
@@ -480,11 +490,13 @@ class SQLiteStore:
                         str(pattern.get("status") or "active"),
                         1 if bool(pattern.get("is_confirmed")) else 0,
                         json.dumps(self._normalize_profile_points(pattern.get("profile_points", []))),
+                        json.dumps(self._normalize_profile_points(pattern.get("delta_profile_points", []))),
                         str(pattern.get("shape_vector_json") or "[]"),
+                        str(pattern.get("delta_shape_vector_json") or json.dumps(pattern.get("delta_shape_vector", [])) or "[]"),
                         str(pattern.get("prototype_hash") or ""),
                         int(pattern.get("num_substates", 0) or 0),
                         int(pattern.get("step_count", 0) or 0),
-                        int(pattern.get("num_substates", 0) or 0),
+                        int(pattern.get("plateau_count", pattern.get("num_substates", 0)) or 0),
                         0.0,
                         0.0,
                     ),
@@ -1132,7 +1144,8 @@ class SQLiteStore:
                 """
                 SELECT device_id, created_at, updated_at, phase, predicted_label,
                        user_label, final_label, confirmed, confidence_avg,
-                       times_seen_total, notes, active
+                       times_seen_total, notes, active,
+                       device_subclass, baseline_range_min_w, baseline_range_max_w
                 FROM devices
                 ORDER BY times_seen_total DESC, updated_at DESC
                 LIMIT ?
@@ -1153,6 +1166,9 @@ class SQLiteStore:
                     "times_seen_total": int(r[9] or 0),
                     "notes": r[10],
                     "active": int(r[11] or 0),
+                    "device_subclass": str(r[12] or ""),
+                    "baseline_range_min_w": float(r[13] or 0.0),
+                    "baseline_range_max_w": float(r[14] or 0.0),
                 }
                 for r in rows
             ]
@@ -1170,7 +1186,9 @@ class SQLiteStore:
                        avg_power_w, peak_power_w, energy_wh,
                        assigned_pattern_id, assigned_device_id,
                        match_score, shape_score, ml_score,
-                       final_label, final_confidence, rejected_reason
+                       final_label, final_confidence, rejected_reason,
+                       baseline_before_w, baseline_after_w,
+                       delta_avg_power_w, delta_peak_power_w, delta_energy_wh
                 FROM events
                 ORDER BY event_id DESC
                 LIMIT ?
@@ -1196,11 +1214,137 @@ class SQLiteStore:
                     "final_label": r[14],
                     "final_confidence": float(r[15] or 0.0),
                     "rejected_reason": r[16],
+                    "baseline_before_w": float(r[17] or 0.0),
+                    "baseline_after_w": float(r[18] or 0.0),
+                    "delta_avg_power_w": float(r[19] or 0.0),
+                    "delta_peak_power_w": float(r[20] or 0.0),
+                    "delta_energy_wh": float(r[21] or 0.0),
                 }
                 for r in rows
             ]
         except Exception as e:
             logger.warning("Failed to list events: %s", e)
+            return []
+
+    def list_event_phases(self, limit: int = 2000, event_id: int | None = None) -> List[Dict[str, Any]]:
+        if not self._patterns_conn or not self._table_exists(self._patterns_conn, "event_phases"):
+            return []
+        try:
+            params: Tuple[Any, ...]
+            if event_id is not None and int(event_id) > 0:
+                rows = self._patterns_conn.execute(
+                    """
+                    SELECT phase_id, event_id, phase_index, phase_type,
+                           start_offset_s, end_offset_s, duration_s,
+                           avg_power_w, peak_power_w,
+                           baseline_reference_w, delta_avg_power_w, delta_peak_power_w,
+                           step_into_phase_w, step_out_of_phase_w,
+                           slope_in_w_per_s, slope_out_w_per_s
+                    FROM event_phases
+                    WHERE event_id = ?
+                    ORDER BY event_id DESC, phase_index ASC
+                    LIMIT ?
+                    """,
+                    (int(event_id), int(max(limit, 1))),
+                ).fetchall()
+            else:
+                rows = self._patterns_conn.execute(
+                    """
+                    SELECT phase_id, event_id, phase_index, phase_type,
+                           start_offset_s, end_offset_s, duration_s,
+                           avg_power_w, peak_power_w,
+                           baseline_reference_w, delta_avg_power_w, delta_peak_power_w,
+                           step_into_phase_w, step_out_of_phase_w,
+                           slope_in_w_per_s, slope_out_w_per_s
+                    FROM event_phases
+                    ORDER BY event_id DESC, phase_index ASC
+                    LIMIT ?
+                    """,
+                    (int(max(limit, 1)),),
+                ).fetchall()
+
+            return [
+                {
+                    "phase_id": int(r[0] or 0),
+                    "event_id": int(r[1] or 0),
+                    "phase_index": int(r[2] or 0),
+                    "phase_type": str(r[3] or "unknown"),
+                    "start_offset_s": float(r[4] or 0.0),
+                    "end_offset_s": float(r[5] or 0.0),
+                    "duration_s": float(r[6] or 0.0),
+                    "avg_power_w": float(r[7] or 0.0),
+                    "peak_power_w": float(r[8] or 0.0),
+                    "baseline_reference_w": float(r[9] or 0.0),
+                    "delta_avg_power_w": float(r[10] or 0.0),
+                    "delta_peak_power_w": float(r[11] or 0.0),
+                    "step_into_phase_w": float(r[12] or 0.0),
+                    "step_out_of_phase_w": float(r[13] or 0.0),
+                    "slope_in_w_per_s": float(r[14] or 0.0),
+                    "slope_out_w_per_s": float(r[15] or 0.0),
+                }
+                for r in rows
+            ]
+        except Exception as e:
+            logger.warning("Failed to list event phases: %s", e)
+            return []
+
+    def list_device_cycles(self, limit: int = 1000, device_id: int | None = None) -> List[Dict[str, Any]]:
+        if not self._patterns_conn or not self._table_exists(self._patterns_conn, "device_cycles"):
+            return []
+        try:
+            if device_id is not None and int(device_id) > 0:
+                rows = self._patterns_conn.execute(
+                    """
+                    SELECT cycle_id, device_id, pattern_id, cycle_name, cycle_type,
+                           created_at, updated_at, seen_count,
+                           avg_total_duration_s, avg_inrush_duration_s, avg_run_duration_s,
+                           avg_shutdown_duration_s, avg_delta_power_w, avg_inrush_peak_w,
+                           avg_run_power_w, cycle_signature_json
+                    FROM device_cycles
+                    WHERE device_id = ?
+                    ORDER BY seen_count DESC, updated_at DESC
+                    LIMIT ?
+                    """,
+                    (int(device_id), int(max(limit, 1))),
+                ).fetchall()
+            else:
+                rows = self._patterns_conn.execute(
+                    """
+                    SELECT cycle_id, device_id, pattern_id, cycle_name, cycle_type,
+                           created_at, updated_at, seen_count,
+                           avg_total_duration_s, avg_inrush_duration_s, avg_run_duration_s,
+                           avg_shutdown_duration_s, avg_delta_power_w, avg_inrush_peak_w,
+                           avg_run_power_w, cycle_signature_json
+                    FROM device_cycles
+                    ORDER BY seen_count DESC, updated_at DESC
+                    LIMIT ?
+                    """,
+                    (int(max(limit, 1)),),
+                ).fetchall()
+
+            return [
+                {
+                    "cycle_id": int(r[0] or 0),
+                    "device_id": int(r[1] or 0),
+                    "pattern_id": int(r[2] or 0),
+                    "cycle_name": str(r[3] or ""),
+                    "cycle_type": str(r[4] or "unknown"),
+                    "created_at": r[5],
+                    "updated_at": r[6],
+                    "seen_count": int(r[7] or 0),
+                    "avg_total_duration_s": float(r[8] or 0.0),
+                    "avg_inrush_duration_s": float(r[9] or 0.0),
+                    "avg_run_duration_s": float(r[10] or 0.0),
+                    "avg_shutdown_duration_s": float(r[11] or 0.0),
+                    "avg_delta_power_w": float(r[12] or 0.0),
+                    "avg_inrush_peak_w": float(r[13] or 0.0),
+                    "avg_run_power_w": float(r[14] or 0.0),
+                    "cycle_signature_json": str(r[15] or "{}"),
+                }
+                for r in rows
+            ]
+        except Exception as e:
+            logger.warning("Failed to list device cycles: %s", e)
             return []
 
     def list_classification_logs(self, limit: int = 1000) -> List[Dict[str, Any]]:
@@ -1528,6 +1672,13 @@ class SQLiteStore:
             self._patterns_conn.execute(
                 "CREATE INDEX IF NOT EXISTS idx_patterns_seen ON patterns(last_seen)"
             )
+            self._ensure_column(self._patterns_conn, "patterns", "baseline_before_w_avg", "REAL")
+            self._ensure_column(self._patterns_conn, "patterns", "baseline_after_w_avg", "REAL")
+            self._ensure_column(self._patterns_conn, "patterns", "delta_avg_power_w", "REAL")
+            self._ensure_column(self._patterns_conn, "patterns", "delta_peak_power_w", "REAL")
+            self._ensure_column(self._patterns_conn, "patterns", "delta_energy_wh", "REAL")
+            self._ensure_column(self._patterns_conn, "patterns", "delta_profile_points_json", "TEXT DEFAULT '[]'")
+            self._ensure_column(self._patterns_conn, "patterns", "delta_shape_vector_json", "TEXT DEFAULT '[]'")
 
             self._patterns_conn.execute(
                 """
@@ -1585,6 +1736,14 @@ class SQLiteStore:
             self._ensure_column(self._patterns_conn, "learned_patterns", "is_confirmed", "INTEGER DEFAULT 0")
             self._ensure_column(self._patterns_conn, "learned_patterns", "shape_vector_json", "TEXT DEFAULT '[]'")
             self._ensure_column(self._patterns_conn, "learned_patterns", "prototype_hash", "TEXT DEFAULT ''")
+            self._ensure_column(self._patterns_conn, "learned_patterns", "baseline_before_w_avg", "REAL")
+            self._ensure_column(self._patterns_conn, "learned_patterns", "baseline_after_w_avg", "REAL")
+            self._ensure_column(self._patterns_conn, "learned_patterns", "delta_avg_power_w", "REAL")
+            self._ensure_column(self._patterns_conn, "learned_patterns", "delta_peak_power_w", "REAL")
+            self._ensure_column(self._patterns_conn, "learned_patterns", "delta_energy_wh", "REAL")
+            self._ensure_column(self._patterns_conn, "learned_patterns", "delta_profile_points_json", "TEXT DEFAULT '[]'")
+            self._ensure_column(self._patterns_conn, "learned_patterns", "delta_shape_vector_json", "TEXT DEFAULT '[]'")
+            self._ensure_column(self._patterns_conn, "learned_patterns", "plateau_count", "INTEGER DEFAULT 0")
 
             self._patterns_conn.execute(
                 """
@@ -1607,6 +1766,9 @@ class SQLiteStore:
             self._patterns_conn.execute(
                 "CREATE INDEX IF NOT EXISTS idx_devices_final_label_phase ON devices(final_label, phase)"
             )
+            self._ensure_column(self._patterns_conn, "devices", "device_subclass", "TEXT")
+            self._ensure_column(self._patterns_conn, "devices", "baseline_range_min_w", "REAL")
+            self._ensure_column(self._patterns_conn, "devices", "baseline_range_max_w", "REAL")
 
             self._patterns_conn.execute(
                 """
@@ -1639,6 +1801,13 @@ class SQLiteStore:
             self._patterns_conn.execute(
                 "CREATE INDEX IF NOT EXISTS idx_events_pattern ON events(assigned_pattern_id)"
             )
+            self._ensure_column(self._patterns_conn, "events", "baseline_before_w", "REAL")
+            self._ensure_column(self._patterns_conn, "events", "baseline_after_w", "REAL")
+            self._ensure_column(self._patterns_conn, "events", "delta_avg_power_w", "REAL")
+            self._ensure_column(self._patterns_conn, "events", "delta_peak_power_w", "REAL")
+            self._ensure_column(self._patterns_conn, "events", "delta_energy_wh", "REAL")
+            self._ensure_column(self._patterns_conn, "events", "delta_points_json", "TEXT DEFAULT '[]'")
+            self._ensure_column(self._patterns_conn, "events", "delta_resampled_points_json", "TEXT DEFAULT '[]'")
 
             self._patterns_conn.execute(
                 """
@@ -1667,6 +1836,67 @@ class SQLiteStore:
             )
             self._patterns_conn.execute(
                 "CREATE INDEX IF NOT EXISTS idx_pattern_features_pattern ON pattern_features(pattern_id, created_at DESC)"
+            )
+            self._ensure_column(self._patterns_conn, "pattern_features", "delta_power_std", "REAL")
+            self._ensure_column(self._patterns_conn, "pattern_features", "delta_power_cv", "REAL")
+            self._ensure_column(self._patterns_conn, "pattern_features", "delta_power_range", "REAL")
+            self._ensure_column(self._patterns_conn, "pattern_features", "dominant_delta_levels_json", "TEXT")
+            self._ensure_column(self._patterns_conn, "pattern_features", "inrush_peak_w", "REAL")
+            self._ensure_column(self._patterns_conn, "pattern_features", "inrush_ratio", "REAL")
+            self._ensure_column(self._patterns_conn, "pattern_features", "settling_time_s", "REAL")
+            self._ensure_column(self._patterns_conn, "pattern_features", "delta_shape_embedding_json", "TEXT")
+
+            self._patterns_conn.execute(
+                """
+                CREATE TABLE IF NOT EXISTS event_phases (
+                    phase_id INTEGER PRIMARY KEY AUTOINCREMENT,
+                    event_id INTEGER NOT NULL,
+                    phase_index INTEGER NOT NULL,
+                    phase_type TEXT NOT NULL,
+                    start_offset_s REAL,
+                    end_offset_s REAL,
+                    duration_s REAL,
+                    avg_power_w REAL,
+                    peak_power_w REAL,
+                    baseline_reference_w REAL,
+                    delta_avg_power_w REAL,
+                    delta_peak_power_w REAL,
+                    step_into_phase_w REAL,
+                    step_out_of_phase_w REAL,
+                    slope_in_w_per_s REAL,
+                    slope_out_w_per_s REAL,
+                    phase_points_json TEXT
+                )
+                """
+            )
+            self._patterns_conn.execute(
+                "CREATE INDEX IF NOT EXISTS idx_event_phases_event ON event_phases(event_id, phase_index)"
+            )
+
+            self._patterns_conn.execute(
+                """
+                CREATE TABLE IF NOT EXISTS device_cycles (
+                    cycle_id INTEGER PRIMARY KEY AUTOINCREMENT,
+                    device_id INTEGER NOT NULL,
+                    pattern_id INTEGER,
+                    cycle_name TEXT,
+                    cycle_type TEXT,
+                    created_at TEXT,
+                    updated_at TEXT,
+                    seen_count INTEGER DEFAULT 0,
+                    avg_total_duration_s REAL,
+                    avg_inrush_duration_s REAL,
+                    avg_run_duration_s REAL,
+                    avg_shutdown_duration_s REAL,
+                    avg_delta_power_w REAL,
+                    avg_inrush_peak_w REAL,
+                    avg_run_power_w REAL,
+                    cycle_signature_json TEXT
+                )
+                """
+            )
+            self._patterns_conn.execute(
+                "CREATE UNIQUE INDEX IF NOT EXISTS idx_device_cycles_unique ON device_cycles(device_id, cycle_type)"
             )
 
             self._patterns_conn.execute(
@@ -1884,6 +2114,316 @@ class SQLiteStore:
         return out
 
     @staticmethod
+    def _median(values: List[float], default: float = 0.0) -> float:
+        clean = sorted(float(v) for v in values if v is not None and math.isfinite(float(v)))
+        if not clean:
+            return float(default)
+        mid = len(clean) // 2
+        if len(clean) % 2 == 1:
+            return float(clean[mid])
+        return float((clean[mid - 1] + clean[mid]) / 2.0)
+
+    @staticmethod
+    def _profile_points_with_time(points: object, duration_s: float) -> List[Dict[str, float]]:
+        normalized = SQLiteStore._normalize_profile_points(points)
+        if not normalized:
+            return []
+
+        has_span = False
+        if len(normalized) >= 2:
+            first_t = float(normalized[0].get("t_s", 0.0) or 0.0)
+            last_t = float(normalized[-1].get("t_s", 0.0) or 0.0)
+            has_span = abs(last_t - first_t) > 1e-6
+
+        total_duration = max(float(duration_s or 0.0), 1.0)
+        count = max(len(normalized) - 1, 1)
+        out: List[Dict[str, float]] = []
+        for idx, point in enumerate(normalized):
+            if has_span:
+                t_s = max(float(point.get("t_s", 0.0) or 0.0), 0.0)
+                t_norm = min(max(t_s / total_duration, 0.0), 1.0)
+            else:
+                t_norm = idx / count
+                t_s = t_norm * total_duration
+            out.append(
+                {
+                    "t_s": round(t_s, 3),
+                    "t_norm": round(t_norm, 6),
+                    "power_w": round(float(point.get("power_w", 0.0) or 0.0), 3),
+                }
+            )
+        return out
+
+    @classmethod
+    def _augment_cycle_baseline_delta(cls, cycle: Dict[str, Any]) -> Dict[str, Any]:
+        enriched = dict(cycle)
+        duration_s = float(enriched.get("duration_s", 0.0) or 0.0)
+        points = cls._profile_points_with_time(enriched.get("profile_points", []), duration_s)
+
+        if not points:
+            baseline_before = float(enriched.get("baseline_before_w", 0.0) or 0.0)
+            baseline_after = float(enriched.get("baseline_after_w", baseline_before) or baseline_before)
+            delta_avg = float(enriched.get("delta_avg_power_w", float(enriched.get("avg_power_w", 0.0) or 0.0) - baseline_before) or 0.0)
+            delta_peak = float(enriched.get("delta_peak_power_w", float(enriched.get("peak_power_w", 0.0) or 0.0) - baseline_before) or 0.0)
+            delta_energy = float(enriched.get("delta_energy_wh", max(delta_avg, 0.0) * max(duration_s, 0.0) / 3600.0) or 0.0)
+            plateau_count = int(enriched.get("plateau_count", enriched.get("num_substates", 0)) or 0)
+            enriched.update(
+                {
+                    "profile_points": points,
+                    "baseline_before_w": baseline_before,
+                    "baseline_after_w": baseline_after,
+                    "delta_avg_power_w": delta_avg,
+                    "delta_peak_power_w": delta_peak,
+                    "delta_energy_wh": delta_energy,
+                    "delta_profile_points": [],
+                    "delta_resampled_points": [],
+                    "delta_shape_vector": [],
+                    "inrush_peak_w": max(delta_peak, 0.0),
+                    "inrush_ratio": max(delta_peak, 0.0) / max(abs(delta_avg), 1.0),
+                    "settling_time_s": 0.0,
+                    "plateau_count": plateau_count,
+                }
+            )
+            return enriched
+
+        head_count = max(1, min(len(points) // 5, 6))
+        tail_count = max(1, min(len(points) // 5, 6))
+        baseline_before = float(enriched.get("baseline_before_w", cls._median([p["power_w"] for p in points[:head_count]], default=0.0)) or 0.0)
+        baseline_after = float(enriched.get("baseline_after_w", cls._median([p["power_w"] for p in points[-tail_count:]], default=baseline_before)) or baseline_before)
+
+        delta_points: List[Dict[str, float]] = []
+        positive_delta_values: List[float] = []
+        for point in points:
+            delta_power = float(point.get("power_w", 0.0) or 0.0) - baseline_before
+            delta_point = {
+                "t_s": float(point["t_s"]),
+                "t_norm": float(point["t_norm"]),
+                "power_w": round(delta_power, 3),
+            }
+            delta_points.append(delta_point)
+            positive_delta_values.append(max(delta_power, 0.0))
+
+        delta_avg = float(enriched.get("delta_avg_power_w", float(enriched.get("avg_power_w", 0.0) or 0.0) - baseline_before) or 0.0)
+        delta_peak = float(enriched.get("delta_peak_power_w", max((p["power_w"] for p in delta_points), default=0.0)) or 0.0)
+
+        delta_energy = float(enriched.get("delta_energy_wh", 0.0) or 0.0)
+        if delta_energy <= 0.0:
+            watt_seconds = 0.0
+            for idx in range(1, len(delta_points)):
+                prev = delta_points[idx - 1]
+                cur = delta_points[idx]
+                dt = max(float(cur["t_s"]) - float(prev["t_s"]), 0.0)
+                avg_delta = (max(float(prev["power_w"]), 0.0) + max(float(cur["power_w"]), 0.0)) / 2.0
+                watt_seconds += avg_delta * dt
+            delta_energy = watt_seconds / 3600.0
+
+        stable_candidates = positive_delta_values
+        if len(stable_candidates) >= 5:
+            trim = max(1, len(stable_candidates) // 5)
+            stable_candidates = stable_candidates[trim:-trim] or stable_candidates
+        steady_level = max(cls._median(stable_candidates, default=max(delta_avg, 0.0)), 0.0)
+        inrush_peak = max(positive_delta_values) if positive_delta_values else max(delta_peak, 0.0)
+        inrush_ratio = inrush_peak / max(steady_level if steady_level > 0 else abs(delta_avg), 1.0)
+
+        settling_time_s = 0.0
+        if delta_points and steady_level > 0:
+            tolerance = max(steady_level * 0.15, 8.0)
+            peak_idx = max(range(len(delta_points)), key=lambda idx: delta_points[idx]["power_w"])
+            for idx in range(peak_idx, len(delta_points)):
+                if abs(delta_points[idx]["power_w"] - steady_level) <= tolerance:
+                    settling_time_s = float(delta_points[idx]["t_s"])
+                    break
+
+        plateau_count = int(enriched.get("plateau_count", enriched.get("num_substates", 0)) or 0)
+        if plateau_count <= 0 and steady_level > 0:
+            tolerance = max(steady_level * 0.12, 6.0)
+            in_plateau = False
+            for value in positive_delta_values:
+                current = abs(value - steady_level) <= tolerance
+                if current and not in_plateau:
+                    plateau_count += 1
+                in_plateau = current
+
+        enriched.update(
+            {
+                "profile_points": points,
+                "baseline_before_w": baseline_before,
+                "baseline_after_w": baseline_after,
+                "delta_avg_power_w": delta_avg,
+                "delta_peak_power_w": delta_peak,
+                "delta_energy_wh": delta_energy,
+                "delta_profile_points": delta_points,
+                "delta_resampled_points": cls._resample_profile_points(delta_points, sample_count=32),
+                "delta_shape_vector": cls._resample_profile_points(delta_points, sample_count=32),
+                "inrush_peak_w": inrush_peak,
+                "inrush_ratio": inrush_ratio,
+                "settling_time_s": settling_time_s,
+                "plateau_count": plateau_count,
+                "steady_delta_power_w": steady_level,
+            }
+        )
+        return enriched
+
+    @classmethod
+    def _build_event_phase_rows(cls, cycle: Dict[str, Any], baseline_before_w: float, baseline_after_w: float) -> List[Dict[str, Any]]:
+        enriched = cls._augment_cycle_baseline_delta(cycle)
+        points = enriched.get("profile_points", [])
+        delta_points = enriched.get("delta_profile_points", [])
+        if not points or not delta_points:
+            return []
+
+        deltas = [float(point.get("power_w", 0.0) or 0.0) for point in delta_points]
+        active_threshold = max(5.0, float(enriched.get("delta_peak_power_w", 0.0) or 0.0) * 0.12, float(enriched.get("delta_avg_power_w", 0.0) or 0.0) * 0.20)
+        active_indices = [idx for idx, value in enumerate(deltas) if value >= active_threshold]
+        if not active_indices:
+            return []
+
+        active_start = active_indices[0]
+        active_end = active_indices[-1]
+        steady_level = max(float(enriched.get("steady_delta_power_w", 0.0) or 0.0), float(enriched.get("delta_avg_power_w", 0.0) or 0.0), active_threshold)
+        peak_idx = max(range(len(deltas)), key=lambda idx: deltas[idx])
+        peak_val = deltas[peak_idx]
+        has_inrush = peak_idx <= active_start + max(1, (active_end - active_start + 1) // 4) and peak_val >= max(steady_level * 1.2, steady_level + 12.0)
+
+        phase_ranges: List[Tuple[str, int, int]] = []
+        if active_start > 0:
+            phase_ranges.append(("baseline", 0, active_start))
+
+        run_start = active_start
+        if has_inrush:
+            settle_threshold = max(steady_level * 1.12, active_threshold)
+            settle_idx = peak_idx
+            while settle_idx < active_end and deltas[settle_idx] > settle_threshold:
+                settle_idx += 1
+            settle_idx = min(settle_idx, active_end)
+            if settle_idx > active_start:
+                phase_ranges.append(("inrush", active_start, settle_idx))
+                run_start = settle_idx
+
+        shutdown_start = None
+        tail_threshold = max(active_threshold, steady_level * 0.35)
+        for idx in range(active_end, run_start, -1):
+            if deltas[idx] <= tail_threshold:
+                shutdown_start = max(run_start + 1, idx - 1)
+                break
+
+        run_end = shutdown_start if shutdown_start is not None else active_end
+        if run_end > run_start:
+            run_values = deltas[run_start:run_end + 1]
+            avg_run = sum(run_values) / max(len(run_values), 1)
+            variance = sum((value - avg_run) ** 2 for value in run_values) / max(len(run_values), 1)
+            run_type = "modulated_run" if variance > max(avg_run * avg_run * 0.08, 25.0) else "steady_run"
+            phase_ranges.append((run_type, run_start, run_end))
+
+        if shutdown_start is not None and active_end >= shutdown_start:
+            phase_ranges.append(("shutdown", shutdown_start, active_end))
+
+        if active_end < len(points) - 1:
+            phase_ranges.append(("cooldown", active_end, len(points) - 1))
+
+        phase_rows: List[Dict[str, Any]] = []
+        for phase_index, (phase_type, start_idx, end_idx) in enumerate(phase_ranges):
+            if end_idx < start_idx:
+                continue
+            segment = points[start_idx:end_idx + 1]
+            delta_segment = delta_points[start_idx:end_idx + 1]
+            if not segment:
+                continue
+
+            start_offset = float(segment[0]["t_s"])
+            end_offset = float(segment[-1]["t_s"])
+            if len(segment) == 1 and len(points) > 1:
+                sample_step = max(float(points[min(start_idx + 1, len(points) - 1)]["t_s"]) - float(points[start_idx]["t_s"]), 0.0)
+                end_offset = start_offset + sample_step
+            duration_s = max(end_offset - start_offset, 0.0)
+
+            prev_delta = float(delta_points[start_idx - 1]["power_w"]) if start_idx > 0 else 0.0
+            next_delta = float(delta_points[end_idx + 1]["power_w"]) if end_idx + 1 < len(delta_points) else 0.0
+            delta_values = [float(p["power_w"]) for p in delta_segment]
+            abs_values = [float(p["power_w"]) for p in segment]
+            phase_rows.append(
+                {
+                    "phase_index": phase_index,
+                    "phase_type": phase_type,
+                    "start_offset_s": start_offset,
+                    "end_offset_s": end_offset,
+                    "duration_s": duration_s,
+                    "avg_power_w": sum(abs_values) / max(len(abs_values), 1),
+                    "peak_power_w": max(abs_values) if abs_values else 0.0,
+                    "baseline_reference_w": baseline_before_w if phase_type != "cooldown" else baseline_after_w,
+                    "delta_avg_power_w": sum(delta_values) / max(len(delta_values), 1),
+                    "delta_peak_power_w": max(delta_values) if delta_values else 0.0,
+                    "step_into_phase_w": (delta_values[0] if delta_values else 0.0) - prev_delta,
+                    "step_out_of_phase_w": next_delta - (delta_values[-1] if delta_values else 0.0),
+                    "slope_in_w_per_s": ((delta_values[-1] - delta_values[0]) / duration_s) if duration_s > 0 and delta_values else 0.0,
+                    "slope_out_w_per_s": ((next_delta - delta_values[-1]) / max(duration_s, 1.0)) if delta_values else 0.0,
+                    "phase_points_json": json.dumps(segment),
+                }
+            )
+
+        return phase_rows
+
+    @classmethod
+    def _derive_device_subclass(cls, label: str, cycle: Dict[str, Any]) -> str:
+        label_key = str(label or "unknown").strip().lower().replace(" ", "_")
+        inrush_ratio = float(cycle.get("inrush_ratio", 0.0) or 0.0)
+        has_motor = bool(cycle.get("has_motor_pattern", False))
+        has_heating = bool(cycle.get("has_heating_pattern", False))
+
+        if "fridge" in label_key or "kühlschrank" in label_key:
+            return "fridge_compressor"
+        if has_motor and inrush_ratio >= 1.35:
+            return "motor_high_inrush"
+        if has_motor:
+            return "pump_stable" if float(cycle.get("delta_avg_power_w", 0.0) or 0.0) < 800.0 else "motor_stable"
+        if has_heating:
+            return "heater_resistive"
+        if label_key.startswith("unknown"):
+            return cls._infer_unknown_subclass(cycle)
+        return label_key or "unknown_device"
+
+    @classmethod
+    def _build_device_cycle_summary(cls, cycle: Dict[str, Any], phase_rows: List[Dict[str, Any]], final_label: str) -> Dict[str, Any]:
+        inrush_duration = sum(float(item.get("duration_s", 0.0) or 0.0) for item in phase_rows if item.get("phase_type") == "inrush")
+        run_phases = [item for item in phase_rows if item.get("phase_type") in {"steady_run", "modulated_run"}]
+        run_duration = sum(float(item.get("duration_s", 0.0) or 0.0) for item in run_phases)
+        shutdown_duration = sum(float(item.get("duration_s", 0.0) or 0.0) for item in phase_rows if item.get("phase_type") in {"shutdown", "cooldown"})
+        avg_run_power = 0.0
+        if run_phases:
+            avg_run_power = sum(float(item.get("delta_avg_power_w", 0.0) or 0.0) for item in run_phases) / len(run_phases)
+
+        cycle_type_parts = []
+        if inrush_duration > 0.0:
+            cycle_type_parts.append("inrush")
+        cycle_type_parts.append("modulated" if any(item.get("phase_type") == "modulated_run" for item in run_phases) else "steady")
+        total_duration = float(cycle.get("duration_s", 0.0) or 0.0)
+        cycle_type_parts.append("long" if total_duration >= 600.0 else ("short" if total_duration <= 120.0 else "normal"))
+        cycle_type = "_".join(cycle_type_parts)
+        label_key = str(final_label or cycle.get("suggestion_type") or "device").strip().lower().replace(" ", "_")
+
+        return {
+            "cycle_name": f"{label_key}_{cycle_type}",
+            "cycle_type": cycle_type,
+            "avg_total_duration_s": total_duration,
+            "avg_inrush_duration_s": inrush_duration,
+            "avg_run_duration_s": run_duration,
+            "avg_shutdown_duration_s": shutdown_duration,
+            "avg_delta_power_w": float(cycle.get("delta_avg_power_w", 0.0) or 0.0),
+            "avg_inrush_peak_w": float(cycle.get("inrush_peak_w", 0.0) or 0.0),
+            "avg_run_power_w": avg_run_power,
+            "cycle_signature_json": json.dumps(
+                {
+                    "label": final_label,
+                    "phase_types": [str(item.get("phase_type") or "") for item in phase_rows],
+                    "inrush_ratio": round(float(cycle.get("inrush_ratio", 0.0) or 0.0), 3),
+                    "steady_delta_power_w": round(float(cycle.get("steady_delta_power_w", 0.0) or 0.0), 3),
+                    "delta_peak_power_w": round(float(cycle.get("delta_peak_power_w", 0.0) or 0.0), 3),
+                },
+                sort_keys=True,
+            ),
+        }
+
+    @staticmethod
     def _prototype_hash_from_cycle(cycle: Dict) -> str:
         """Create a stable fingerprint for a cycle prototype."""
         payload = {
@@ -1990,31 +2530,43 @@ class SQLiteStore:
             return None
         now = datetime.now().isoformat()
         try:
-            profile_points = self._normalize_profile_points(cycle.get("profile_points", []))
+            enriched = self._augment_cycle_baseline_delta(cycle)
+            profile_points = self._normalize_profile_points(enriched.get("profile_points", []))
             resampled = self._resample_profile_points(profile_points, sample_count=32)
+            delta_points = self._normalize_profile_points(enriched.get("delta_profile_points", []))
+            delta_resampled = self._resample_profile_points(delta_points, sample_count=32)
             with self._patterns_conn:
                 cur = self._patterns_conn.execute(
                     """
                     INSERT INTO events (
                         created_at, phase, start_ts, end_ts, duration_s,
                         avg_power_w, peak_power_w, energy_wh,
-                        raw_points_json, resampled_points_json,
+                        baseline_before_w, baseline_after_w,
+                        delta_avg_power_w, delta_peak_power_w, delta_energy_wh,
+                        raw_points_json, delta_points_json, resampled_points_json, delta_resampled_points_json,
                         assigned_pattern_id, assigned_device_id,
                         match_score, shape_score, ml_score,
                         final_label, final_confidence, rejected_reason
-                    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                     """,
                     (
                         now,
-                        str(cycle.get("phase", "L1")),
-                        str(cycle.get("start_ts", "")),
-                        str(cycle.get("end_ts", "")),
-                        float(cycle.get("duration_s", 0.0)),
-                        float(cycle.get("avg_power_w", 0.0)),
-                        float(cycle.get("peak_power_w", 0.0)),
-                        float(cycle.get("energy_wh", 0.0)),
+                        str(enriched.get("phase", "L1")),
+                        str(enriched.get("start_ts", "")),
+                        str(enriched.get("end_ts", "")),
+                        float(enriched.get("duration_s", 0.0)),
+                        float(enriched.get("avg_power_w", 0.0)),
+                        float(enriched.get("peak_power_w", 0.0)),
+                        float(enriched.get("energy_wh", 0.0)),
+                        float(enriched.get("baseline_before_w", 0.0) or 0.0),
+                        float(enriched.get("baseline_after_w", 0.0) or 0.0),
+                        float(enriched.get("delta_avg_power_w", 0.0) or 0.0),
+                        float(enriched.get("delta_peak_power_w", 0.0) or 0.0),
+                        float(enriched.get("delta_energy_wh", 0.0) or 0.0),
                         json.dumps(profile_points),
+                        json.dumps(delta_points),
                         json.dumps(resampled),
+                        json.dumps(delta_resampled),
                         int(assigned_pattern_id) if assigned_pattern_id else None,
                         int(assigned_device_id) if assigned_device_id else None,
                         float(self._last_hybrid_decision.get("confidence", 0.0) or 0.0),
@@ -2025,10 +2577,327 @@ class SQLiteStore:
                         str(rejected_reason) if rejected_reason else None,
                     ),
                 )
-                return int(cur.lastrowid or 0)
+                event_id = int(cur.lastrowid or 0)
+
+            if event_id > 0:
+                phase_rows = self._build_event_phase_rows(
+                    enriched,
+                    baseline_before_w=float(enriched.get("baseline_before_w", 0.0) or 0.0),
+                    baseline_after_w=float(enriched.get("baseline_after_w", 0.0) or 0.0),
+                )
+                self._record_event_phases(event_id, phase_rows)
+                self._upsert_device_cycle(
+                    device_id=assigned_device_id,
+                    pattern_id=assigned_pattern_id,
+                    cycle=enriched,
+                    phase_rows=phase_rows,
+                    final_label=final_label,
+                )
+            return event_id
         except Exception as e:
             logger.debug("_record_cycle_event failed: %s", e)
             return None
+
+    def _record_event_phases(self, event_id: int, phase_rows: List[Dict[str, Any]]) -> None:
+        if not self._patterns_conn or not event_id or not phase_rows:
+            return
+        try:
+            with self._patterns_conn:
+                self._patterns_conn.execute("DELETE FROM event_phases WHERE event_id = ?", (int(event_id),))
+                for row in phase_rows:
+                    self._patterns_conn.execute(
+                        """
+                        INSERT INTO event_phases (
+                            event_id, phase_index, phase_type,
+                            start_offset_s, end_offset_s, duration_s,
+                            avg_power_w, peak_power_w,
+                            baseline_reference_w, delta_avg_power_w, delta_peak_power_w,
+                            step_into_phase_w, step_out_of_phase_w,
+                            slope_in_w_per_s, slope_out_w_per_s,
+                            phase_points_json
+                        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                        """,
+                        (
+                            int(event_id),
+                            int(row.get("phase_index", 0) or 0),
+                            str(row.get("phase_type") or "steady_run"),
+                            float(row.get("start_offset_s", 0.0) or 0.0),
+                            float(row.get("end_offset_s", 0.0) or 0.0),
+                            float(row.get("duration_s", 0.0) or 0.0),
+                            float(row.get("avg_power_w", 0.0) or 0.0),
+                            float(row.get("peak_power_w", 0.0) or 0.0),
+                            float(row.get("baseline_reference_w", 0.0) or 0.0),
+                            float(row.get("delta_avg_power_w", 0.0) or 0.0),
+                            float(row.get("delta_peak_power_w", 0.0) or 0.0),
+                            float(row.get("step_into_phase_w", 0.0) or 0.0),
+                            float(row.get("step_out_of_phase_w", 0.0) or 0.0),
+                            float(row.get("slope_in_w_per_s", 0.0) or 0.0),
+                            float(row.get("slope_out_w_per_s", 0.0) or 0.0),
+                            str(row.get("phase_points_json") or "[]"),
+                        ),
+                    )
+        except Exception as e:
+            logger.debug("_record_event_phases failed: %s", e)
+
+    def _upsert_device_cycle(
+        self,
+        device_id: int | None,
+        pattern_id: int | None,
+        cycle: Dict[str, Any],
+        phase_rows: List[Dict[str, Any]],
+        final_label: str,
+    ) -> None:
+        if not self._patterns_conn or not device_id:
+            return
+        summary = self._build_device_cycle_summary(cycle, phase_rows, final_label)
+        try:
+            row = self._patterns_conn.execute(
+                """
+                SELECT cycle_id, seen_count,
+                       avg_total_duration_s, avg_inrush_duration_s, avg_run_duration_s,
+                       avg_shutdown_duration_s, avg_delta_power_w, avg_inrush_peak_w, avg_run_power_w
+                FROM device_cycles
+                WHERE device_id = ? AND cycle_type = ?
+                LIMIT 1
+                """,
+                (int(device_id), str(summary.get("cycle_type") or "unknown")),
+            ).fetchone()
+            now = datetime.now().isoformat()
+            if row:
+                seen_count = int(row[1] or 0) + 1
+                alpha = 1.0 / max(seen_count, 1)
+
+                def blend(old_value: Any, new_value: Any) -> float:
+                    return float(old_value or 0.0) * (1.0 - alpha) + float(new_value or 0.0) * alpha
+
+                with self._patterns_conn:
+                    self._patterns_conn.execute(
+                        """
+                        UPDATE device_cycles
+                        SET pattern_id = ?, cycle_name = ?, updated_at = ?, seen_count = ?,
+                            avg_total_duration_s = ?, avg_inrush_duration_s = ?, avg_run_duration_s = ?,
+                            avg_shutdown_duration_s = ?, avg_delta_power_w = ?, avg_inrush_peak_w = ?,
+                            avg_run_power_w = ?, cycle_signature_json = ?
+                        WHERE cycle_id = ?
+                        """,
+                        (
+                            int(pattern_id) if pattern_id else None,
+                            str(summary.get("cycle_name") or "cycle"),
+                            now,
+                            seen_count,
+                            blend(row[2], summary.get("avg_total_duration_s")),
+                            blend(row[3], summary.get("avg_inrush_duration_s")),
+                            blend(row[4], summary.get("avg_run_duration_s")),
+                            blend(row[5], summary.get("avg_shutdown_duration_s")),
+                            blend(row[6], summary.get("avg_delta_power_w")),
+                            blend(row[7], summary.get("avg_inrush_peak_w")),
+                            blend(row[8], summary.get("avg_run_power_w")),
+                            str(summary.get("cycle_signature_json") or "{}"),
+                            int(row[0]),
+                        ),
+                    )
+            else:
+                with self._patterns_conn:
+                    self._patterns_conn.execute(
+                        """
+                        INSERT INTO device_cycles (
+                            device_id, pattern_id, cycle_name, cycle_type,
+                            created_at, updated_at, seen_count,
+                            avg_total_duration_s, avg_inrush_duration_s, avg_run_duration_s,
+                            avg_shutdown_duration_s, avg_delta_power_w, avg_inrush_peak_w,
+                            avg_run_power_w, cycle_signature_json
+                        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                        """,
+                        (
+                            int(device_id),
+                            int(pattern_id) if pattern_id else None,
+                            str(summary.get("cycle_name") or "cycle"),
+                            str(summary.get("cycle_type") or "unknown"),
+                            now,
+                            now,
+                            1,
+                            float(summary.get("avg_total_duration_s", 0.0) or 0.0),
+                            float(summary.get("avg_inrush_duration_s", 0.0) or 0.0),
+                            float(summary.get("avg_run_duration_s", 0.0) or 0.0),
+                            float(summary.get("avg_shutdown_duration_s", 0.0) or 0.0),
+                            float(summary.get("avg_delta_power_w", 0.0) or 0.0),
+                            float(summary.get("avg_inrush_peak_w", 0.0) or 0.0),
+                            float(summary.get("avg_run_power_w", 0.0) or 0.0),
+                            str(summary.get("cycle_signature_json") or "{}"),
+                        ),
+                    )
+        except Exception as e:
+            logger.debug("_upsert_device_cycle failed: %s", e)
+
+    def _maybe_backfill_inrush_runtime_schema(self) -> None:
+        if not self._patterns_conn:
+            return
+        event_key = "inrush_runtime_schema_backfill:v1"
+        if self._migration_applied(self._patterns_conn, event_key):
+            return
+
+        try:
+            updated_patterns = 0
+            updated_events = 0
+            created_event_phases = 0
+            created_cycles = 0
+
+            for pattern in self.list_patterns(limit=5000):
+                pattern_id = int(pattern.get("id", 0) or 0)
+                if pattern_id <= 0:
+                    continue
+                enriched = self._augment_cycle_baseline_delta(pattern)
+                subclass = self._derive_device_subclass(
+                    label=str(pattern.get("user_label") or pattern.get("candidate_name") or pattern.get("suggestion_type") or "unknown"),
+                    cycle=enriched,
+                )
+                with self._patterns_conn:
+                    self._patterns_conn.execute(
+                        """
+                        UPDATE learned_patterns
+                        SET baseline_before_w_avg = ?, baseline_after_w_avg = ?,
+                            delta_avg_power_w = ?, delta_peak_power_w = ?, delta_energy_wh = ?,
+                            delta_profile_points_json = ?, delta_shape_vector_json = ?, plateau_count = ?
+                        WHERE id = ?
+                        """,
+                        (
+                            float(enriched.get("baseline_before_w", 0.0) or 0.0),
+                            float(enriched.get("baseline_after_w", 0.0) or 0.0),
+                            float(enriched.get("delta_avg_power_w", 0.0) or 0.0),
+                            float(enriched.get("delta_peak_power_w", 0.0) or 0.0),
+                            float(enriched.get("delta_energy_wh", 0.0) or 0.0),
+                            json.dumps(enriched.get("delta_profile_points", [])),
+                            json.dumps(enriched.get("delta_shape_vector", [])),
+                            int(enriched.get("plateau_count", 0) or 0),
+                            pattern_id,
+                        ),
+                    )
+                    if int(pattern.get("device_id", 0) or 0) > 0 and self._table_exists(self._patterns_conn, "devices"):
+                        self._patterns_conn.execute(
+                            """
+                            UPDATE devices
+                            SET device_subclass = ?,
+                                baseline_range_min_w = COALESCE(baseline_range_min_w, ?),
+                                baseline_range_max_w = COALESCE(baseline_range_max_w, ?),
+                                updated_at = ?
+                            WHERE device_id = ?
+                            """,
+                            (
+                                subclass,
+                                float(enriched.get("baseline_before_w", 0.0) or 0.0),
+                                float(enriched.get("baseline_after_w", 0.0) or 0.0),
+                                datetime.now().isoformat(),
+                                int(pattern.get("device_id", 0) or 0),
+                            ),
+                        )
+                pattern.update(
+                    {
+                        "baseline_before_w_avg": float(enriched.get("baseline_before_w", 0.0) or 0.0),
+                        "baseline_after_w_avg": float(enriched.get("baseline_after_w", 0.0) or 0.0),
+                        "delta_avg_power_w": float(enriched.get("delta_avg_power_w", 0.0) or 0.0),
+                        "delta_peak_power_w": float(enriched.get("delta_peak_power_w", 0.0) or 0.0),
+                        "delta_energy_wh": float(enriched.get("delta_energy_wh", 0.0) or 0.0),
+                        "delta_profile_points": enriched.get("delta_profile_points", []),
+                        "delta_shape_vector_json": json.dumps(enriched.get("delta_shape_vector", [])),
+                        "plateau_count": int(enriched.get("plateau_count", 0) or 0),
+                    }
+                )
+                self._upsert_patterns_mirror(pattern)
+                updated_patterns += 1
+
+            event_rows = self._patterns_conn.execute(
+                """
+                SELECT event_id, phase, start_ts, end_ts, duration_s, avg_power_w, peak_power_w, energy_wh,
+                       raw_points_json, assigned_pattern_id, assigned_device_id, final_label,
+                       baseline_before_w, baseline_after_w, delta_avg_power_w, delta_peak_power_w, delta_energy_wh
+                FROM events
+                ORDER BY event_id ASC
+                LIMIT 5000
+                """
+            ).fetchall()
+            for row in event_rows:
+                event_id = int(row[0] or 0)
+                raw_points = []
+                try:
+                    raw_points = json.loads(str(row[8] or "[]"))
+                except Exception:
+                    raw_points = []
+                cycle = {
+                    "phase": str(row[1] or "L1"),
+                    "start_ts": str(row[2] or ""),
+                    "end_ts": str(row[3] or ""),
+                    "duration_s": float(row[4] or 0.0),
+                    "avg_power_w": float(row[5] or 0.0),
+                    "peak_power_w": float(row[6] or 0.0),
+                    "energy_wh": float(row[7] or 0.0),
+                    "profile_points": raw_points,
+                    "baseline_before_w": row[12],
+                    "baseline_after_w": row[13],
+                    "delta_avg_power_w": row[14],
+                    "delta_peak_power_w": row[15],
+                    "delta_energy_wh": row[16],
+                }
+                enriched = self._augment_cycle_baseline_delta(cycle)
+                with self._patterns_conn:
+                    self._patterns_conn.execute(
+                        """
+                        UPDATE events
+                        SET baseline_before_w = ?, baseline_after_w = ?,
+                            delta_avg_power_w = ?, delta_peak_power_w = ?, delta_energy_wh = ?,
+                            delta_points_json = ?, delta_resampled_points_json = ?
+                        WHERE event_id = ?
+                        """,
+                        (
+                            float(enriched.get("baseline_before_w", 0.0) or 0.0),
+                            float(enriched.get("baseline_after_w", 0.0) or 0.0),
+                            float(enriched.get("delta_avg_power_w", 0.0) or 0.0),
+                            float(enriched.get("delta_peak_power_w", 0.0) or 0.0),
+                            float(enriched.get("delta_energy_wh", 0.0) or 0.0),
+                            json.dumps(enriched.get("delta_profile_points", [])),
+                            json.dumps(enriched.get("delta_resampled_points", [])),
+                            event_id,
+                        ),
+                    )
+                updated_events += 1
+
+                has_phase_row = self._patterns_conn.execute(
+                    "SELECT 1 FROM event_phases WHERE event_id = ? LIMIT 1",
+                    (event_id,),
+                ).fetchone()
+                if not has_phase_row:
+                    phase_rows = self._build_event_phase_rows(
+                        enriched,
+                        baseline_before_w=float(enriched.get("baseline_before_w", 0.0) or 0.0),
+                        baseline_after_w=float(enriched.get("baseline_after_w", 0.0) or 0.0),
+                    )
+                    if phase_rows:
+                        self._record_event_phases(event_id, phase_rows)
+                        created_event_phases += len(phase_rows)
+                        before_cycles = self._safe_row_count(self._patterns_conn, "device_cycles")
+                        self._upsert_device_cycle(
+                            device_id=int(row[10] or 0) or None,
+                            pattern_id=int(row[9] or 0) or None,
+                            cycle=enriched,
+                            phase_rows=phase_rows,
+                            final_label=str(row[11] or "unknown"),
+                        )
+                        after_cycles = self._safe_row_count(self._patterns_conn, "device_cycles")
+                        created_cycles += max(after_cycles - before_cycles, 0)
+
+            self._record_migration(
+                self._patterns_conn,
+                event_key,
+                f"patterns={updated_patterns} events={updated_events} event_phases={created_event_phases} device_cycles={created_cycles}",
+            )
+            logger.info(
+                "Backfilled inrush/runtime schema: patterns=%s events=%s event_phases=%s device_cycles=%s",
+                updated_patterns,
+                updated_events,
+                created_event_phases,
+                created_cycles,
+            )
+        except Exception as e:
+            logger.warning("Inrush/runtime schema backfill failed: %s", e)
 
     def _record_classification_log(
         self,
@@ -2083,20 +2952,35 @@ class SQLiteStore:
         if not self._patterns_conn or not pattern_id:
             return
 
-        profile_points = self._normalize_profile_points(cycle.get("profile_points", []))
+        enriched = self._augment_cycle_baseline_delta(cycle)
+        profile_points = self._normalize_profile_points(enriched.get("profile_points", []))
+        delta_profile_points = self._normalize_profile_points(enriched.get("delta_profile_points", []))
         power_levels = [float(p.get("power_w", 0.0)) for p in profile_points]
+        delta_levels = [float(p.get("power_w", 0.0)) for p in delta_profile_points]
         if power_levels:
             power_min = min(power_levels)
             power_max = max(power_levels)
             power_range = power_max - power_min
-            power_std = (float(cycle.get("power_variance", 0.0) or 0.0) ** 0.5)
-            power_cv = (power_std / max(float(cycle.get("avg_power_w", 0.0) or 1.0), 1.0))
+            power_std = (float(enriched.get("power_variance", 0.0) or 0.0) ** 0.5)
+            power_cv = (power_std / max(float(enriched.get("avg_power_w", 0.0) or 1.0), 1.0))
         else:
             power_range = 0.0
             power_std = 0.0
             power_cv = 0.0
 
-        step_count = int(cycle.get("step_count", 0) or 0)
+        if delta_levels:
+            delta_min = min(delta_levels)
+            delta_max = max(delta_levels)
+            delta_range = delta_max - delta_min
+            delta_mean = max(abs(sum(delta_levels) / max(len(delta_levels), 1)), 1.0)
+            delta_std = (sum((value - (sum(delta_levels) / max(len(delta_levels), 1))) ** 2 for value in delta_levels) / max(len(delta_levels), 1)) ** 0.5
+            delta_cv = delta_std / delta_mean
+        else:
+            delta_range = 0.0
+            delta_std = 0.0
+            delta_cv = 0.0
+
+        step_count = int(enriched.get("step_count", 0) or 0)
         avg_step_w = (power_range / max(step_count, 1)) if step_count > 0 else 0.0
 
         try:
@@ -2106,31 +2990,41 @@ class SQLiteStore:
                     INSERT INTO pattern_features (
                         pattern_id, feature_version,
                         power_variance, power_std, power_cv, power_range,
+                        delta_power_std, delta_power_cv, delta_power_range,
                         num_substates, step_count, max_step_w, avg_step_w,
-                        plateau_count, dominant_power_levels_json,
+                        plateau_count, dominant_power_levels_json, dominant_delta_levels_json,
                         substate_durations_json, substate_power_levels_json,
                         rise_rate_w_per_s, fall_rate_w_per_s,
-                        shape_embedding_json, created_at
-                    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                        inrush_peak_w, inrush_ratio, settling_time_s,
+                        shape_embedding_json, delta_shape_embedding_json, created_at
+                    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                     """,
                     (
                         int(pattern_id),
                         str(feature_version),
-                        float(cycle.get("power_variance", 0.0) or 0.0),
+                        float(enriched.get("power_variance", 0.0) or 0.0),
                         power_std,
                         power_cv,
                         power_range,
-                        int(cycle.get("num_substates", 0) or 0),
+                        delta_std,
+                        delta_cv,
+                        delta_range,
+                        int(enriched.get("num_substates", 0) or 0),
                         step_count,
                         power_range,
                         avg_step_w,
-                        int(cycle.get("num_substates", 0) or 0),
+                        int(enriched.get("plateau_count", enriched.get("num_substates", 0)) or 0),
                         json.dumps(power_levels[:16]),
+                        json.dumps(delta_levels[:16]),
                         "[]",
                         "[]",
-                        float(cycle.get("rise_rate_w_per_s", 0.0) or 0.0),
-                        float(cycle.get("fall_rate_w_per_s", 0.0) or 0.0),
+                        float(enriched.get("rise_rate_w_per_s", 0.0) or 0.0),
+                        float(enriched.get("fall_rate_w_per_s", 0.0) or 0.0),
+                        float(enriched.get("inrush_peak_w", 0.0) or 0.0),
+                        float(enriched.get("inrush_ratio", 0.0) or 0.0),
+                        float(enriched.get("settling_time_s", 0.0) or 0.0),
                         json.dumps(self._resample_profile_points(profile_points, sample_count=32)),
+                        json.dumps(self._resample_profile_points(delta_profile_points, sample_count=32)),
                         datetime.now().isoformat(),
                     ),
                 )
@@ -3088,7 +3982,12 @@ class SQLiteStore:
                                                 COALESCE(device_id, 0), COALESCE(confidence_score, 0.0),
                                                 COALESCE(frequency_per_day, 0.0), COALESCE(candidate_name, ''),
                                                 COALESCE(is_confirmed, 0), COALESCE(shape_vector_json, '[]'),
-                                                COALESCE(prototype_hash, '')
+                                                COALESCE(prototype_hash, ''),
+                                                baseline_before_w_avg, baseline_after_w_avg,
+                                                delta_avg_power_w, delta_peak_power_w, delta_energy_wh,
+                                                COALESCE(delta_profile_points_json, '[]'),
+                                                COALESCE(delta_shape_vector_json, '[]'),
+                                                COALESCE(plateau_count, 0)
                 FROM learned_patterns
                 ORDER BY seen_count DESC, last_seen DESC
                 LIMIT ?
@@ -3216,6 +4115,14 @@ class SQLiteStore:
                         "is_confirmed": bool(int(row[37] or 0)) or bool(str(row[11] or "").strip()),
                         "shape_vector_json": str(row[38] or "[]"),
                         "prototype_hash": str(row[39] or ""),
+                        "baseline_before_w_avg": float(row[40] or 0.0),
+                        "baseline_after_w_avg": float(row[41] or 0.0),
+                        "delta_avg_power_w": float(row[42] or 0.0),
+                        "delta_peak_power_w": float(row[43] or 0.0),
+                        "delta_energy_wh": float(row[44] or 0.0),
+                        "delta_profile_points": self._normalize_profile_points(json.loads(str(row[45] or "[]"))) if str(row[45] or "").strip() else [],
+                        "delta_shape_vector_json": str(row[46] or "[]"),
+                        "plateau_count": int(row[47] or 0),
                     }
                 )
 
@@ -3258,6 +4165,8 @@ class SQLiteStore:
                 "reason": "low_quality_cycle",
                 "quality_score": quality_score,
             }
+
+        cycle = self._augment_cycle_baseline_delta(cycle)
 
         now = datetime.now().isoformat()
         patterns = self.list_patterns(limit=500)
@@ -3305,11 +4214,20 @@ class SQLiteStore:
                 has_heating = 1 if (bool(best.get("has_heating_pattern", 0)) or bool(cycle.get("has_heating_pattern", False))) else 0
                 has_motor = 1 if (bool(best.get("has_motor_pattern", 0)) or bool(cycle.get("has_motor_pattern", False))) else 0
                 profile_points = self._normalize_profile_points(cycle.get("profile_points", []))
+                delta_profile_points = self._normalize_profile_points(cycle.get("delta_profile_points", []))
                 if not profile_points:
                     profile_points = self._normalize_profile_points(best.get("profile_points", []))
                 profile_points_json = json.dumps(profile_points)
                 shape_vector_json = json.dumps(self._resample_profile_points(profile_points, sample_count=32))
+                delta_profile_points_json = json.dumps(delta_profile_points)
+                delta_shape_vector_json = json.dumps(cycle.get("delta_shape_vector", []))
                 prototype_hash = self._prototype_hash_from_cycle(cycle)
+                baseline_before_w_avg = float(best.get("baseline_before_w_avg", cycle.get("baseline_before_w", 0.0)) or 0.0) * (1.0 - alpha) + float(cycle.get("baseline_before_w", 0.0) or 0.0) * alpha
+                baseline_after_w_avg = float(best.get("baseline_after_w_avg", cycle.get("baseline_after_w", 0.0)) or 0.0) * (1.0 - alpha) + float(cycle.get("baseline_after_w", 0.0) or 0.0) * alpha
+                delta_avg_power_w = float(best.get("delta_avg_power_w", 0.0) or 0.0) * (1.0 - alpha) + float(cycle.get("delta_avg_power_w", 0.0) or 0.0) * alpha
+                delta_peak_power_w = float(best.get("delta_peak_power_w", 0.0) or 0.0) * (1.0 - alpha) + float(cycle.get("delta_peak_power_w", 0.0) or 0.0) * alpha
+                delta_energy_wh = float(best.get("delta_energy_wh", 0.0) or 0.0) * (1.0 - alpha) + float(cycle.get("delta_energy_wh", 0.0) or 0.0) * alpha
+                plateau_count = int(round(float(best.get("plateau_count", 0) or 0.0) * (1.0 - alpha) + float(cycle.get("plateau_count", 0) or 0.0) * alpha))
                 quality_score_avg = float(best.get("quality_score_avg", 0.5)) * (1.0 - alpha) + quality_score * alpha
                 candidate_mode = self._build_mode_signature(cycle, str(cycle.get("end_ts", now)))
                 merged_modes = self._merge_operating_modes(
@@ -3376,6 +4294,7 @@ class SQLiteStore:
                     confidence=confidence_score_norm,
                     confirmed=bool(best.get("user_label")),
                 )
+                device_subclass = self._derive_device_subclass(best.get("user_label") or final_label, cycle)
 
                 with self._patterns_conn:
                     self._patterns_conn.execute(
@@ -3388,6 +4307,9 @@ class SQLiteStore:
                             duty_cycle = ?, peak_to_avg_ratio = ?, num_substates = ?, step_count = ?,
                             has_heating_pattern = ?, has_motor_pattern = ?,
                             profile_points_json = ?,
+                            baseline_before_w_avg = ?, baseline_after_w_avg = ?,
+                            delta_avg_power_w = ?, delta_peak_power_w = ?, delta_energy_wh = ?,
+                            delta_profile_points_json = ?, delta_shape_vector_json = ?, plateau_count = ?,
                             quality_score_avg = ?,
                             suggestion_type = ?,
                             device_id = ?,
@@ -3424,6 +4346,14 @@ class SQLiteStore:
                             has_heating,
                             has_motor,
                             profile_points_json,
+                            baseline_before_w_avg,
+                            baseline_after_w_avg,
+                            delta_avg_power_w,
+                            delta_peak_power_w,
+                            delta_energy_wh,
+                            delta_profile_points_json,
+                            delta_shape_vector_json,
+                            plateau_count,
                             quality_score_avg,
                             final_label,
                             int(device_id) if device_id else None,
@@ -3442,6 +4372,26 @@ class SQLiteStore:
                             int(best["id"]),
                         ),
                     )
+                    if device_id:
+                        self._patterns_conn.execute(
+                            """
+                            UPDATE devices
+                            SET device_subclass = ?,
+                                baseline_range_min_w = CASE WHEN baseline_range_min_w IS NULL THEN ? ELSE MIN(baseline_range_min_w, ?) END,
+                                baseline_range_max_w = CASE WHEN baseline_range_max_w IS NULL THEN ? ELSE MAX(baseline_range_max_w, ?) END,
+                                updated_at = ?
+                            WHERE device_id = ?
+                            """,
+                            (
+                                device_subclass,
+                                float(cycle.get("baseline_before_w", 0.0) or 0.0),
+                                float(cycle.get("baseline_before_w", 0.0) or 0.0),
+                                float(cycle.get("baseline_after_w", cycle.get("baseline_before_w", 0.0)) or 0.0),
+                                float(cycle.get("baseline_after_w", cycle.get("baseline_before_w", 0.0)) or 0.0),
+                                now,
+                                int(device_id),
+                            ),
+                        )
 
                 logger.info(
                     "Pattern classify/update: id=%s label=%s freq_per_day=%.2f rule=%s features[var=%.2f substates=%s steps=%s rise=%.2f fall=%.2f]",
@@ -3478,6 +4428,14 @@ class SQLiteStore:
                         "has_heating_pattern": has_heating,
                         "has_motor_pattern": has_motor,
                         "profile_points": profile_points,
+                        "baseline_before_w_avg": baseline_before_w_avg,
+                        "baseline_after_w_avg": baseline_after_w_avg,
+                        "delta_avg_power_w": delta_avg_power_w,
+                        "delta_peak_power_w": delta_peak_power_w,
+                        "delta_energy_wh": delta_energy_wh,
+                        "delta_profile_points": delta_profile_points,
+                        "delta_shape_vector_json": delta_shape_vector_json,
+                        "plateau_count": plateau_count,
                         "quality_score_avg": quality_score_avg,
                         "suggestion_type": final_label,
                         "device_id": int(device_id) if device_id else int(best.get("device_id", 0) or 0),
@@ -3527,9 +4485,18 @@ class SQLiteStore:
                 has_heating = 1 if cycle.get("has_heating_pattern", False) else 0
                 has_motor = 1 if cycle.get("has_motor_pattern", False) else 0
                 profile_points = self._normalize_profile_points(cycle.get("profile_points", []))
+                delta_profile_points = self._normalize_profile_points(cycle.get("delta_profile_points", []))
                 profile_points_json = json.dumps(profile_points)
                 shape_vector_json = json.dumps(self._resample_profile_points(profile_points, sample_count=32))
+                delta_profile_points_json = json.dumps(delta_profile_points)
+                delta_shape_vector_json = json.dumps(cycle.get("delta_shape_vector", []))
                 prototype_hash = self._prototype_hash_from_cycle(cycle)
+                baseline_before_w_avg = float(cycle.get("baseline_before_w", 0.0) or 0.0)
+                baseline_after_w_avg = float(cycle.get("baseline_after_w", 0.0) or 0.0)
+                delta_avg_power_w = float(cycle.get("delta_avg_power_w", 0.0) or 0.0)
+                delta_peak_power_w = float(cycle.get("delta_peak_power_w", 0.0) or 0.0)
+                delta_energy_wh = float(cycle.get("delta_energy_wh", 0.0) or 0.0)
+                plateau_count = int(cycle.get("plateau_count", 0) or 0)
                 
                 # Multi-mode learning
                 initial_mode = self._build_mode_signature(cycle, str(cycle.get("end_ts", now)))
@@ -3564,6 +4531,7 @@ class SQLiteStore:
                     confidence=confidence_score_norm,
                     confirmed=False,
                 )
+                device_subclass = self._derive_device_subclass(suggestion_seed, cycle)
                 
                 cur = self._patterns_conn.execute(
                     """
@@ -3576,12 +4544,15 @@ class SQLiteStore:
                         duty_cycle, peak_to_avg_ratio, num_substates, step_count,
                         has_heating_pattern, has_motor_pattern,
                         profile_points_json,
+                        baseline_before_w_avg, baseline_after_w_avg,
+                        delta_avg_power_w, delta_peak_power_w, delta_energy_wh,
+                        delta_profile_points_json, delta_shape_vector_json, plateau_count,
                         quality_score_avg,
                         device_id, confidence_score, frequency_per_day,
                         candidate_name, is_confirmed, shape_vector_json, prototype_hash,
                         operating_modes, has_multiple_modes,
                         typical_interval_s, avg_hour_of_day, last_intervals_json, hour_distribution_json
-                    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                     """,
                     (
                         now,
@@ -3609,6 +4580,14 @@ class SQLiteStore:
                         has_heating,
                         has_motor,
                         profile_points_json,
+                        baseline_before_w_avg,
+                        baseline_after_w_avg,
+                        delta_avg_power_w,
+                        delta_peak_power_w,
+                        delta_energy_wh,
+                        delta_profile_points_json,
+                        delta_shape_vector_json,
+                        plateau_count,
                         quality_score,
                         int(device_id) if device_id else None,
                         confidence_score_norm,
@@ -3627,6 +4606,21 @@ class SQLiteStore:
                 )
                 row_id = cur.lastrowid if cur.lastrowid is not None else 0
                 new_id = int(row_id)
+                if device_id:
+                    self._patterns_conn.execute(
+                        """
+                        UPDATE devices
+                        SET device_subclass = ?, baseline_range_min_w = ?, baseline_range_max_w = ?, updated_at = ?
+                        WHERE device_id = ?
+                        """,
+                        (
+                            device_subclass,
+                            baseline_before_w_avg,
+                            baseline_after_w_avg,
+                            now,
+                            int(device_id),
+                        ),
+                    )
 
             created = {
                 "id": new_id,
@@ -3655,6 +4649,14 @@ class SQLiteStore:
                 "has_heating_pattern": 1 if cycle.get("has_heating_pattern", False) else 0,
                 "has_motor_pattern": 1 if cycle.get("has_motor_pattern", False) else 0,
                 "profile_points": self._normalize_profile_points(cycle.get("profile_points", [])),
+                "baseline_before_w_avg": baseline_before_w_avg,
+                "baseline_after_w_avg": baseline_after_w_avg,
+                "delta_avg_power_w": delta_avg_power_w,
+                "delta_peak_power_w": delta_peak_power_w,
+                "delta_energy_wh": delta_energy_wh,
+                "delta_profile_points": delta_profile_points,
+                "delta_shape_vector_json": delta_shape_vector_json,
+                "plateau_count": plateau_count,
                 "quality_score_avg": quality_score,
                 "device_id": int(device_id) if device_id else 0,
                 "confidence_score_db": confidence_score_norm,
