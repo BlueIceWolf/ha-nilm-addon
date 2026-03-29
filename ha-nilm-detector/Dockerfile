@@ -1,4 +1,4 @@
-ARG BUILD_FROM
+ARG BUILD_FROM=alpine:3.20
 FROM ${BUILD_FROM}
 
 # Fast dependency install path for HA add-on updates:
@@ -6,7 +6,8 @@ FROM ${BUILD_FROM}
 # - keep pip only for small pure-Python extras
 RUN apk add --no-cache \
     python3 \
-    py3-pip \
+    py3-requests \
+    py3-paho-mqtt \
     py3-numpy \
     py3-scipy \
     py3-scikit-learn
@@ -14,12 +15,8 @@ RUN apk add --no-cache \
 # Set working directory
 WORKDIR /app
 
-# Copy dependency manifest first so pip install can use layer cache
-COPY requirements.txt /tmp/requirements.txt
-
-# Install only lightweight pip dependencies.
-RUN pip3 install --no-cache-dir -r /tmp/requirements.txt \
-    && rm -f /tmp/requirements.txt
+# All runtime dependencies are installed with apk for fast addon builds and
+# to avoid PEP 668 restrictions on system Python pip installs.
 
 # Copy application sources after dependencies
 # Keep the Python package structure so `/app/main.py` can import `app.*`.

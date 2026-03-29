@@ -2,6 +2,15 @@
 
 > ⚠️ **Hinweis**: Dieses Projekt ist experimentell (BETA) - Breaking Changes und Bugs können auftreten.
 
+## 0.6.32 (BETA)
+
+**Hotfix: Add-on Buildfehler (PEP 668 / externally-managed-environment) behoben**
+
+- Dockerfile installiert jetzt alle Runtime-Abhaengigkeiten ausschliesslich via `apk`
+- `pip install`-Schritt im Image-Build entfernt (vermeidet PEP-668 Fehler in Alpine System-Python)
+- `py3-requests` und `py3-paho-mqtt` werden ebenfalls per `apk` installiert
+- Default fuer `ARG BUILD_FROM` gesetzt, wodurch die Build-Warnung zu leerem Base-Image reduziert wird
+
 ## 0.6.31 (BETA)
 
 **Hotfix: numpy/scipy/sklearn Importfehler beim Add-on-Start behoben**
