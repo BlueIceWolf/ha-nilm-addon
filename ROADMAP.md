@@ -27,6 +27,7 @@ Was funktioniert bereits, was ist noch in Arbeit und wo soll das Projekt hin.
 - **Frequency-Refinement (v0.6.24)**: Label-Verfeinerung nach Nutzungshäufigkeit reduziert `unknown`-Anteil
 - **Machine Learning mit RandomForest (v0.6.27)**: System trainiert sich selbst auf deinen Labels! Hybrid aus Prototype + Shape + ML → höhere Accuracy
 - **Automatisches ML-Training**: RandomForest trainiert sich automatisch wenn ≥8 Samples mit ≥2 Klassen vorhanden sind
+- **Inrush/Runtime-Schema (v0.6.28)**: Baseline/Delta-Werte, Event-Phasen und Device-Cycles werden persistent gespeichert und per API/UI sichtbar
 
 ---
 
@@ -119,7 +120,7 @@ Damit das Projekt irgendwann "produktiv-ready" ist sollte gelten:
 - Gute Dokumentation damit neue User nicht völlig verloren sind
 - Ein paar Video-Guides zum Einrichten
 
-**Aktuell (v0.6.27):** Etwa 80-87% davon erreicht. Core, Persistenz, Lernpipeline und ML-Training sind stabil; Fokus liegt jetzt auf erweiterten ML-Features, variablen Lasten und UI-Verbesserungen.
+**Aktuell (v0.6.28):** Etwa 82-88% davon erreicht. Core, Persistenz, Lernpipeline, ML-Training und Inrush/Runtime-Datenmodell sind stabil; Fokus liegt jetzt auf erweiterten ML-Features, variablen Lasten und UI-Feinschliff.
 
 ---
 

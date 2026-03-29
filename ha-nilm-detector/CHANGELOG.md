@@ -2,7 +2,7 @@
 
 > ⚠️ **Hinweis**: Dieses Projekt ist experimentell (BETA) - Breaking Changes und Bugs können auftreten.
 
-## 0.6.27 (BETA)
+## 0.6.28 (BETA)
 
 **Machine Learning aktiviert: RandomForest-Klassifikator lernt von deinen Labels**
 
@@ -25,7 +25,7 @@
 - Neue API-Endpunkte: `GET /api/event-phases` und `GET /api/device-cycles`
 - `GET /api/devices` enthält jetzt `device_subclass`, `baseline_range_min_w`, `baseline_range_max_w`
 - `GET /api/events` enthält jetzt Baseline/Delta-Felder pro Event
-- Tests weiterhin grün: `10 passed`
+- Tests weiterhin grün: `11 passed`
 
 ## 0.6.26 (BETA)
 

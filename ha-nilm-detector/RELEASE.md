@@ -4,7 +4,7 @@
 
 ---
 
-# Release 0.6.27 (BETA)
+# Release 0.6.28 (BETA)
 
 ## Store Kurztext
 - **🤖 Machine Learning aktiviert**: RandomForest trainiert sich selbst auf deinen Labels! Hybrid-Klassifikation kombiniert Prototype + Shape + ML für bessere Genauigkeit.
