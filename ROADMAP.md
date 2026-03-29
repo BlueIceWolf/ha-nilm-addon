@@ -28,6 +28,10 @@ Was funktioniert bereits, was ist noch in Arbeit und wo soll das Projekt hin.
 - **Machine Learning mit RandomForest (v0.6.27)**: System trainiert sich selbst auf deinen Labels! Hybrid aus Prototype + Shape + ML → höhere Accuracy
 - **Automatisches ML-Training**: RandomForest trainiert sich automatisch wenn ≥8 Samples mit ≥2 Klassen vorhanden sind
 - **Inrush/Runtime-Schema (v0.6.28)**: Baseline/Delta-Werte, Event-Phasen und Device-Cycles werden persistent gespeichert und per API/UI sichtbar
+- **Pipeline-Refactor (v0.6.30)**: Main-Loop laeuft pro Phase ueber `NILMPipeline` mit einheitlichem Stage-Debug
+- **Overlap-Detection (v0.6.30)**: Strong/Weak-Event-Zerlegung mit `overlap_score` fuer bessere Trennschaerfe bei gleichzeitigen Lasten
+- **Training-Audit + Debug-APIs (v0.6.30)**: `training_log` inkl. Endpunkten fuer Training-Entscheidungen und Pipeline-Puffer
+- **Web-UI 5-Tab Struktur (v0.6.30)**: `LIVE`, `EVENTS`, `GERÄTE`, `LERNEN`, `DEBUG` als getrennte Arbeitsbereiche
 
 ---
 
@@ -54,6 +58,8 @@ Was funktioniert bereits, was ist noch in Arbeit und wo soll das Projekt hin.
 - Bewertung der `unknown`-Quote im Live-Betrieb mit Zielwert und Telemetrie im Debug-Panel
 - Täglicher Summary: Top Geräte, Trends, Anomalien
 - Optionales manuelles Merge/Split fuer Device-Gruppen im UI
+- Training-Filter direkt in persistenten Lernpfad einklinken (nicht nur Audit), inkl. UI-Statistiken fuer Accept/Reject-Raten
+- Pipeline-Buffer API um Stage-Fehleraggregation und Filter (Phase/Zeitraum) erweitern
 
 ### Mittelfristig
 - MQTT Integration für Home Assistant
@@ -120,7 +126,7 @@ Damit das Projekt irgendwann "produktiv-ready" ist sollte gelten:
 - Gute Dokumentation damit neue User nicht völlig verloren sind
 - Ein paar Video-Guides zum Einrichten
 
-**Aktuell (v0.6.29):** Etwa 83-89% davon erreicht. Core, Persistenz, Lernpipeline, ML-Training und Inrush/Runtime-Datenmodell sind stabil; Update-Performance wurde durch Binary-Dependencies verbessert. Fokus liegt jetzt auf erweiterten ML-Features, variablen Lasten und UI-Feinschliff.
+**Aktuell (v0.6.30):** Etwa 86-91% davon erreicht. Core, Persistenz, Lernpipeline, ML-Training, Inrush/Runtime-Modell und der neue Pipeline-/Debug-Unterbau sind stabil. Fokus liegt jetzt auf variablen Lasten, praxisnahem ML-Tuning und Debug-Auswertungen im Betrieb.
 
 ---
 

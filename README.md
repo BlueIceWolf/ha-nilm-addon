@@ -11,7 +11,7 @@
 
 <p align="center">
   <img src="https://img.shields.io/badge/Status-BETA-orange" alt="BETA" />
-   <img src="https://img.shields.io/badge/Version-0.6.29-blue" alt="Version" />
+   <img src="https://img.shields.io/badge/Version-0.6.30-blue" alt="Version" />
 </p>
 
 > ⚠️ **EXPERIMENTELLES PROJEKT (BETA)**: Dieses Add-on befindet sich in aktiver Entwicklung. Viele Features funktionieren bereits gut, aber es ist **nicht production-ready**. Erwarte Bugs, unvollständige Features und Breaking Changes zwischen Versionen. Nutze es zum Experimentieren und Testen, aber nicht für kritische Automatisierungen.
@@ -27,7 +27,7 @@
 
 ---
 
-**Aktuell:** `v0.6.29` - Update-Speed verbessert: Add-on nutzt jetzt Alpine-Binary-Pakete fuer numpy/scipy/scikit-learn statt langsamer Source-Builds.
+**Aktuell:** `v0.6.30` - Pipeline/Debug-Refactor abgeschlossen: per-Phase NILMPipeline, Overlap-Scoring, 5-Tab Web-UI, Training-Filter-Log und Debug-API.
 
 > ℹ️ **v0.6.11 Hinweis**: Auch die oberen Dashboard-Karten (`Gesamtleistung`, `Durchschnitt`, `Messwerte`, `Gelernte Muster`) schalten jetzt sauber zwischen DE/EN um.
 
@@ -55,6 +55,9 @@
 - **🧭 Deterministische Erstklassifikation (v0.6.24)** – First-Level-Regeln (`heater`, `motor`, `electronics`, `long_running`) vor ML-Fallback
 - **🔁 Frequency-Refinement (v0.6.24)** – Nutzungshaeufigkeit wird in der Label-Verfeinerung beruecksichtigt, um `unknown` zu reduzieren
 - **🧠 Wissensbasis-Upgrade (v0.6.26)** – Neue persistente Tabellen fuer `events`, `devices`, `classification_log`, `user_labels`, `pattern_history` und exportierbare Trainingsdaten
+- **🧪 Trainings-Audit-Log (v0.6.30)** – `training_log` protokolliert akzeptierte/abgelehnte Trainings-Events inkl. Grund
+- **🔀 Overlap-Scoring (v0.6.30)** – Zweistufige Event-Zerlegung (`strong`/`weak`) berechnet `overlap_score` fuer robustere Lernentscheidungen
+- **🧱 Per-Phase NILMPipeline (v0.6.30)** – Main-Loop nutzt jetzt pro Phase eine dedizierte Pipeline mit durchgaengigem Stage-Debug
 
 ### Web-UI
 - **🌙 Dark Mode** – Durchgehend hell/dunkel Modus mit modernem Home-Assistant-Design
@@ -63,6 +66,8 @@
 - **📊 Flexible Sortierung** – Nach Häufigkeit, Leistung, Dauer, Stabilität oder Zeitintervall
 - **✏️ Bereich-Markierung** – Zeitraum ziehen im Chart und direkt als Muster speichern
 - **📋 Detaillierte Analytics** – Häufigkeit, Betriebszeiten, typische Tageszeiten, stability scores
+- **🗂️ 5-Tab Dashboard (v0.6.30)** – Bereiche `LIVE`, `EVENTS`, `GERÄTE`, `LERNEN`, `DEBUG` getrennt fuer klare Workflows
+- **🧰 Debug-Endpunkte (v0.6.30)** – `GET /api/training-log` und `GET /api/debug/pipeline-buffer` fuer Nachvollziehbarkeit
 
 ### Phase Detection & Learning
 - **⚖️ Intelligente 3-Phasen-Erkennung** – Echte 3-Phasen-Geräte (Motor, großer Herd) vs. einzelne Geräte auf verschiedenen Phasen
@@ -258,6 +263,16 @@ logging:
 **Bekannte Bugs:**
 - Bei sehr schnellem Phasenwechsel kann Chart kurz "springen"
 - Pattern-Merge-Funktion kann manchmal zu aggressive Duplikate entfernen
+
+---
+
+## 🔌 Neue APIs (v0.6.30)
+
+- `GET /api/training-log?limit=200`
+   - Liefert Entscheidungen des Training-Filters (`accepted`, `rejected`, `reason`, `label`, `event_id`)
+- `GET /api/debug/pipeline-buffer`
+   - Liefert den zusammengeführten Debug-Puffer der per-Phase NILMPipelines (letzte Stage-Ergebnisse)
+
 - Manual pattern creation via UI kann bei sehr langen Zeiträumen (>1h) langsam sein
 
 **Empfohlene Geräte zum Testen:**

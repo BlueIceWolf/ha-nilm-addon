@@ -278,6 +278,34 @@ def _html_page(default_language: str = "de") -> str:
       .head { flex-direction: column; align-items: flex-start; }
       canvas { height: 220px; }
     }
+    /* ── Tab navigation ──────────────────────────────────────── */
+    .tab-nav {
+      display: flex;
+      gap: 4px;
+      margin-bottom: 12px;
+      border-bottom: 2px solid var(--line);
+      flex-wrap: wrap;
+    }
+    .tab-nav-btn {
+      padding: 7px 16px;
+      border: none;
+      border-bottom: 3px solid transparent;
+      background: none;
+      color: var(--muted);
+      font-size: 0.93rem;
+      font-weight: 500;
+      cursor: pointer;
+      border-radius: 0;
+      margin-bottom: -2px;
+      transition: color 0.15s, border-color 0.15s;
+    }
+    .tab-nav-btn:hover { color: var(--ink); }
+    .tab-nav-btn.active {
+      color: var(--accent-strong);
+      border-bottom-color: var(--accent-strong);
+    }
+    .tab-pane { display: none; }
+    .tab-pane.active { display: block; }
   </style>
 </head>
 <body>
@@ -302,6 +330,18 @@ def _html_page(default_language: str = "de") -> str:
       </select>
     </div>
 
+    <!-- ── Tab Navigation ────────────────────────────────────── -->
+    <nav class=\"tab-nav\" role=\"tablist\">
+      <button class=\"tab-nav-btn active\" data-tab=\"live\" role=\"tab\" aria-selected=\"true\" id=\"tabBtnLive\">LIVE</button>
+      <button class=\"tab-nav-btn\" data-tab=\"events\" role=\"tab\" id=\"tabBtnEvents\">EVENTS</button>
+      <button class=\"tab-nav-btn\" data-tab=\"geraete\" role=\"tab\" id=\"tabBtnGeraete\">GERÄTE</button>
+      <button class=\"tab-nav-btn\" data-tab=\"lernen\" role=\"tab\" id=\"tabBtnLernen\">LERNEN</button>
+      <button class=\"tab-nav-btn\" data-tab=\"debug\" role=\"tab\" id=\"tabBtnDebug\">DEBUG</button>
+    </nav>
+
+    <!-- ── LIVE Tab ───────────────────────────────────────────── -->
+    <div id=\"tab-live\" class=\"tab-pane active\">
+
     <div id=\"activeTask\" class=\"task-progress\" aria-live=\"polite\">
       <div class=\"task-progress-head\">
         <span id=\"taskName\" class=\"muted\">Aufgabe läuft...</span>
@@ -309,20 +349,6 @@ def _html_page(default_language: str = "de") -> str:
       </div>
       <div class=\"task-progress-bar\">
         <div id=\"progressFill\" class=\"task-progress-fill\"></div>
-      </div>
-    </div>
-
-    <div id=\"hybridDebugPanel\" class=\"card\" style=\"margin-bottom: 10px;\">
-      <div id=\"hybridDebugTitle\" class=\"label\">Hybrid AI Debug</div>
-      <div style=\"display:grid;grid-template-columns:repeat(auto-fit,minmax(170px,1fr));gap:8px;\">
-        <div><span class=\"muted\" id=\"hybridSourceLabel\">Quelle</span><div id=\"hybridSourceValue\">-</div></div>
-        <div><span class=\"muted\" id=\"hybridLabelLabel\">Label</span><div id=\"hybridLabelValue\">-</div></div>
-        <div><span class=\"muted\" id=\"hybridConfidenceLabel\">Konfidenz</span><div id=\"hybridConfidenceValue\">-</div></div>
-        <div><span class=\"muted\" id=\"hybridDistanceLabel\">Distanz</span><div id=\"hybridDistanceValue\">-</div></div>
-        <div><span class=\"muted\" id=\"hybridProtoLabel\">Prototype-Score</span><div id=\"hybridProtoValue\">-</div></div>
-        <div><span class=\"muted\" id=\"hybridShapeLabel\">Shape-Score</span><div id=\"hybridShapeValue\">-</div></div>
-        <div><span class=\"muted\" id=\"hybridRepeatLabel\">Repeatability</span><div id=\"hybridRepeatValue\">-</div></div>
-        <div><span class=\"muted\" id=\"hybridMlLabel\">ML</span><div id=\"hybridMlValue\">-</div></div>
       </div>
     </div>
 
@@ -378,66 +404,175 @@ def _html_page(default_language: str = "de") -> str:
       <tbody id=\"deviceRows\"></tbody>
     </table>
 
-    <h2 id=\"patternsHeading\" style=\"margin:14px 0 8px; font-size:1.1rem;\">Gelernte Muster</h2>
-    <div style=\"margin-bottom: 8px; display: flex; gap: 8px; align-items: center; flex-wrap: wrap;\">
-      <input type=\"text\" id=\"patternSearch\" placeholder=\"Muster suchen...\" style=\"padding: 6px 10px; border: 1px solid var(--line); border-radius: 6px; background: var(--card); color: var(--ink); flex: 1; min-width: 200px;\" />
-      <select id=\"patternTypeFilter\" style=\"padding: 6px 10px; border: 1px solid var(--line); border-radius: 6px; background: var(--card); color: var(--ink); min-width: 150px;\">
-        <option id=\"typeFilterAll\" value=\"all\">Typ: alle</option>
-      </select>
-      <select id=\"patternPhaseFilter\" style=\"padding: 6px 10px; border: 1px solid var(--line); border-radius: 6px; background: var(--card); color: var(--ink); min-width: 120px;\">
-        <option id=\"phaseFilterAll\" value=\"all\">Phase: alle</option>
-        <option id=\"phaseFilterL1\" value=\"L1\">L1</option>
-        <option id=\"phaseFilterL2\" value=\"L2\">L2</option>
-        <option id=\"phaseFilterL3\" value=\"L3\">L3</option>
-      </select>
-      <select id=\"patternConfirmFilter\" style=\"padding: 6px 10px; border: 1px solid var(--line); border-radius: 6px; background: var(--card); color: var(--ink); min-width: 150px;\">
-        <option id=\"confirmFilterAll\" value=\"all\">Status: alle</option>
-        <option id=\"confirmFilterConfirmed\" value=\"confirmed\">bestätigt</option>
-        <option id=\"confirmFilterUnconfirmed\" value=\"unconfirmed\">unbestätigt</option>
-      </select>
-      <select id=\"patternPageSize\" style=\"padding: 6px 10px; border: 1px solid var(--line); border-radius: 6px; background: var(--card); color: var(--ink); min-width: 120px;\">
-        <option id=\"pageSize25\" value=\"25\">25 / Seite</option>
-        <option id=\"pageSize50\" value=\"50\" selected>50 / Seite</option>
-        <option id=\"pageSize100\" value=\"100\">100 / Seite</option>
-      </select>
-      <select id=\"patternSort\" style=\"padding: 6px 10px; border: 1px solid var(--line); border-radius: 6px; background: var(--card); color: var(--ink);\">
-        <option id=\"sortSeenCount\" value=\"seen_count\">Sortieren: Häufigkeit ↓</option>
-        <option id=\"sortConfidence\" value=\"confidence_score\">Sortieren: Confidence ↓</option>
-        <option id=\"sortGroupSize\" value=\"device_group_size\">Sortieren: Gruppe ↓</option>
-        <option id=\"sortPower\" value=\"avg_power_w\">Sortieren: Leistung ↓</option>
-        <option id=\"sortDuration\" value=\"duration_s\">Sortieren: Dauer ↓</option>
-        <option id=\"sortStability\" value=\"stability_score\">Sortieren: Stabilität ↓</option>
-        <option id=\"sortInterval\" value=\"typical_interval_s\">Sortieren: Intervall ↓</option>
-        <option id=\"sortId\" value=\"id\">Sortieren: ID ↑</option>
-      </select>
-    </div>
-    <div style=\"display:flex; gap:8px; justify-content:flex-end; align-items:center; margin-bottom:8px;\">
-      <span id=\"patternResultsInfo\" class=\"muted\" style=\"font-size:0.82rem;\">-</span>
-      <button id=\"patternPrevPage\" title=\"Vorherige Seite\">◀</button>
-      <button id=\"patternNextPage\" title=\"Nächste Seite\">▶</button>
-    </div>
-    <table>
-      <thead>
-        <tr><th id=\"pthId\">ID</th><th id=\"pthType\">Typ</th><th id=\"pthLabel\">Label</th><th id=\"pthGroup\" style="font-size:0.85rem;">Gruppe</th><th id=\"pthFrequency\" style="font-size:0.85rem;">Häufig.</th><th id=\"pthInterval\" style="font-size:0.85rem;">Intervall</th><th id=\"pthTime\" style="font-size:0.85rem;">Uhrzeit</th><th id=\"pthStability\" style="font-size:0.85rem;">Stabilit.</th><th id=\"pthConfidence\" style="font-size:0.85rem;">Conf.</th><th id=\"pthPhases\">Phasen</th><th id=\"pthAvg\">Ø (W)</th><th id=\"pthPeak\">Spitze (W)</th><th id=\"pthDuration\">Dauer (s)</th><th id=\"pthCount\">Anzahl</th><th id=\"pthAction\">Aktion</th></tr>
-      </thead>
-      <tbody id=\"patternRows\"></tbody>
-    </table>
+    </div><!-- end tab-live -->
 
-      <h2 id="cyclesHeading" style="margin:14px 0 8px; font-size:1.1rem;">Geräte-Zyklen</h2>
+    <!-- ── EVENTS Tab ────────────────────────────────────────── -->
+    <div id=\"tab-events\" class=\"tab-pane\">
+      <h2 id=\"eventsHeading\" style=\"margin:0 0 10px;font-size:1.1rem;\">Event-Timeline</h2>
+      <div style=\"margin-bottom:8px;display:flex;gap:8px;flex-wrap:wrap;align-items:center;\">
+        <button id=\"eventsRefreshBtn\">Aktualisieren</button>
+        <span id=\"eventsCount\" class=\"muted\" style=\"font-size:0.83rem;\"></span>
+      </div>
       <table>
         <thead>
-          <tr><th id="cycName">Name</th><th id="cycType">Typ</th><th id="cycSeen">Seen</th><th id="cycInrushPeak">Inrush Peak (W)</th><th id="cycRunPower">Run Power (W)</th><th id="cycDuration">Dauer (s)</th></tr>
+          <tr>
+            <th>ID</th><th>Start</th><th>Ende</th><th>Phase</th>
+            <th>Ø W</th><th>Peak W</th><th>Energie (Wh)</th><th>Dauer (s)</th>
+            <th>Label</th><th>Konfidenz</th><th>Grund</th>
+          </tr>
         </thead>
-        <tbody id="cycleRows"></tbody>
+        <tbody id=\"eventRows\"></tbody>
       </table>
+    </div><!-- end tab-events -->
 
-      <h2 id="eventPhasesHeading" style="margin:14px 0 8px; font-size:1.1rem;">Event-Phasen</h2>
+    <!-- ── GERÄTE Tab ─────────────────────────────────────────── -->
+    <div id=\"tab-geraete\" class=\"tab-pane\">
+      <h2 id=\"geraeteHeading\" style=\"margin:0 0 10px;font-size:1.1rem;\">Erkannte Geräte</h2>
+      <div style=\"margin-bottom:8px;display:flex;gap:8px;flex-wrap:wrap;align-items:center;\">
+        <button id=\"geraeteRefreshBtn\">Aktualisieren</button>
+        <span id=\"geraeteCount\" class=\"muted\" style=\"font-size:0.83rem;\"></span>
+      </div>
       <table>
         <thead>
-          <tr><th id="epEvent">Event</th><th id="epIdx">#</th><th id="epType">Phase</th><th id="epDuration">Dauer (s)</th><th id="epDeltaAvg">Delta Ø (W)</th><th id="epDeltaPeak">Delta Peak (W)</th></tr>
+          <tr>
+            <th>Name / Label</th><th>Typ</th><th>Phase</th>
+            <th>Ø Leistung (W)</th><th>Peak (W)</th><th>Dauer (s)</th>
+            <th>Gesehen</th><th>Konfidenz</th><th>Bestätigt</th>
+          </tr>
         </thead>
-        <tbody id="eventPhaseRows"></tbody>
+        <tbody id=\"geraeteRows\"></tbody>
       </table>
+    </div><!-- end tab-geraete -->
+
+    <!-- ── LERNEN Tab ─────────────────────────────────────────── -->
+    <div id=\"tab-lernen\" class=\"tab-pane\">
+      <h2 id=\"lernenHeading\" style=\"margin:0 0 10px;font-size:1.1rem;\">Lernstatus &amp; Training-Filter</h2>
+      <div class=\"grid\" style=\"margin-bottom:12px;\">
+        <div class=\"card\">
+          <div class=\"label\" id=\"lblLearnAccepted\">Akzeptiert</div>
+          <div class=\"value\" id=\"learnAccepted\">-</div>
+        </div>
+        <div class=\"card\">
+          <div class=\"label\" id=\"lblLearnRejected\">Abgelehnt</div>
+          <div class=\"value\" id=\"learnRejected\">-</div>
+        </div>
+        <div class=\"card\">
+          <div class=\"label\" id=\"lblLearnPatterns\">Gelernte Muster</div>
+          <div class=\"value\" id=\"learnPatterns\">-</div>
+        </div>
+      </div>
+      <div style=\"margin-bottom:8px;display:flex;gap:8px;flex-wrap:wrap;align-items:center;\">
+        <button id=\"lernenRefreshBtn\">Aktualisieren</button>
+        <span class=\"muted\" style=\"font-size:0.83rem;\">Letzter Training-Filter-Log (neueste zuerst)</span>
+      </div>
+      <table>
+        <thead>
+          <tr>
+            <th>Zeitpunkt</th><th>Event ID</th><th>Entscheidung</th><th>Grund</th><th>Label</th>
+          </tr>
+        </thead>
+        <tbody id=\"trainingLogRows\"></tbody>
+      </table>
+
+      <h2 id=\"patternsLernenHeading\" style=\"margin:20px 0 10px;font-size:1.1rem;\">Gelernte Muster</h2>
+      <div style=\"margin-bottom: 8px; display: flex; gap: 8px; align-items: center; flex-wrap: wrap;\">
+        <input type=\"text\" id=\"patternSearch\" placeholder=\"Muster suchen...\" style=\"padding: 6px 10px; border: 1px solid var(--line); border-radius: 6px; background: var(--card); color: var(--ink); flex: 1; min-width: 200px;\" />
+        <select id=\"patternTypeFilter\" style=\"padding: 6px 10px; border: 1px solid var(--line); border-radius: 6px; background: var(--card); color: var(--ink); min-width: 150px;\">
+          <option id=\"typeFilterAll\" value=\"all\">Typ: alle</option>
+        </select>
+        <select id=\"patternPhaseFilter\" style=\"padding: 6px 10px; border: 1px solid var(--line); border-radius: 6px; background: var(--card); color: var(--ink); min-width: 120px;\">
+          <option id=\"phaseFilterAll\" value=\"all\">Phase: alle</option>
+          <option id=\"phaseFilterL1\" value=\"L1\">L1</option>
+          <option id=\"phaseFilterL2\" value=\"L2\">L2</option>
+          <option id=\"phaseFilterL3\" value=\"L3\">L3</option>
+        </select>
+        <select id=\"patternConfirmFilter\" style=\"padding: 6px 10px; border: 1px solid var(--line); border-radius: 6px; background: var(--card); color: var(--ink); min-width: 150px;\">
+          <option id=\"confirmFilterAll\" value=\"all\">Status: alle</option>
+          <option id=\"confirmFilterConfirmed\" value=\"confirmed\">bestätigt</option>
+          <option id=\"confirmFilterUnconfirmed\" value=\"unconfirmed\">unbestätigt</option>
+        </select>
+        <select id=\"patternPageSize\" style=\"padding: 6px 10px; border: 1px solid var(--line); border-radius: 6px; background: var(--card); color: var(--ink); min-width: 120px;\">
+          <option id=\"pageSize25\" value=\"25\">25 / Seite</option>
+          <option id=\"pageSize50\" value=\"50\" selected>50 / Seite</option>
+          <option id=\"pageSize100\" value=\"100\">100 / Seite</option>
+        </select>
+        <select id=\"patternSort\" style=\"padding: 6px 10px; border: 1px solid var(--line); border-radius: 6px; background: var(--card); color: var(--ink);\">
+          <option id=\"sortSeenCount\" value=\"seen_count\">Sortieren: Häufigkeit ↓</option>
+          <option id=\"sortConfidence\" value=\"confidence_score\">Sortieren: Confidence ↓</option>
+          <option id=\"sortGroupSize\" value=\"device_group_size\">Sortieren: Gruppe ↓</option>
+          <option id=\"sortPower\" value=\"avg_power_w\">Sortieren: Leistung ↓</option>
+          <option id=\"sortDuration\" value=\"duration_s\">Sortieren: Dauer ↓</option>
+          <option id=\"sortStability\" value=\"stability_score\">Sortieren: Stabilität ↓</option>
+          <option id=\"sortInterval\" value=\"typical_interval_s\">Sortieren: Intervall ↓</option>
+          <option id=\"sortId\" value=\"id\">Sortieren: ID ↑</option>
+        </select>
+      </div>
+      <div style=\"display:flex;gap:8px;justify-content:flex-end;align-items:center;margin-bottom:8px;\">
+        <span id=\"patternResultsInfo\" class=\"muted\" style=\"font-size:0.82rem;\">-</span>
+        <button id=\"patternPrevPage\" title=\"Vorherige Seite\">◀</button>
+        <button id=\"patternNextPage\" title=\"Nächste Seite\">▶</button>
+      </div>
+      <table>
+        <thead>
+          <tr><th id=\"pthId\">ID</th><th id=\"pthType\">Typ</th><th id=\"pthLabel\">Label</th><th id=\"pthGroup\" style="font-size:0.85rem;">Gruppe</th><th id=\"pthFrequency\" style="font-size:0.85rem;">Häufig.</th><th id=\"pthInterval\" style="font-size:0.85rem;">Intervall</th><th id=\"pthTime\" style="font-size:0.85rem;">Uhrzeit</th><th id=\"pthStability\" style="font-size:0.85rem;">Stabilit.</th><th id=\"pthConfidence\" style="font-size:0.85rem;">Conf.</th><th id=\"pthPhases\">Phasen</th><th id=\"pthAvg\">Ø (W)</th><th id=\"pthPeak\">Spitze (W)</th><th id=\"pthDuration\">Dauer (s)</th><th id=\"pthCount\">Anzahl</th><th id=\"pthAction\">Aktion</th></tr>
+        </thead>
+        <tbody id=\"patternRows\"></tbody>
+      </table>
+    </div><!-- end tab-lernen -->
+
+    <!-- ── DEBUG Tab ──────────────────────────────────────────── -->
+    <div id=\"tab-debug\" class=\"tab-pane\">
+      <h2 id=\"debugHeading\" style=\"margin:0 0 10px;font-size:1.1rem;\">Debug-Informationen</h2>
+
+      <div id=\"hybridDebugPanel\" class=\"card\" style=\"margin-bottom:12px;\">
+        <div id=\"hybridDebugTitle\" class=\"label\">Hybrid AI – letztes Ergebnis</div>
+        <div style=\"display:grid;grid-template-columns:repeat(auto-fit,minmax(170px,1fr));gap:8px;\">
+          <div><span class=\"muted\" id=\"hybridSourceLabel\">Quelle</span><div id=\"hybridSourceValue\">-</div></div>
+          <div><span class=\"muted\" id=\"hybridLabelLabel\">Label</span><div id=\"hybridLabelValue\">-</div></div>
+          <div><span class=\"muted\" id=\"hybridConfidenceLabel\">Konfidenz</span><div id=\"hybridConfidenceValue\">-</div></div>
+          <div><span class=\"muted\" id=\"hybridDistanceLabel\">Distanz</span><div id=\"hybridDistanceValue\">-</div></div>
+          <div><span class=\"muted\" id=\"hybridProtoLabel\">Prototype-Score</span><div id=\"hybridProtoValue\">-</div></div>
+          <div><span class=\"muted\" id=\"hybridShapeLabel\">Shape-Score</span><div id=\"hybridShapeValue\">-</div></div>
+          <div><span class=\"muted\" id=\"hybridRepeatLabel\">Repeatability</span><div id=\"hybridRepeatValue\">-</div></div>
+          <div><span class=\"muted\" id=\"hybridMlLabel\">ML</span><div id=\"hybridMlValue\">-</div></div>
+        </div>
+      </div>
+
+      <h3 style=\"margin:12px 0 8px;font-size:0.95rem;\">Konfidenz-Breakdown</h3>
+      <div class=\"grid\" style=\"margin-bottom:12px;\">
+        <div class=\"card\"><div class=\"label\">Shape</div><div class=\"value\" id=\"confShape\">-</div></div>
+        <div class=\"card\"><div class=\"label\">Duration</div><div class=\"value\" id=\"confDuration\">-</div></div>
+        <div class=\"card\"><div class=\"label\">Repeatability</div><div class=\"value\" id=\"confRepeat\">-</div></div>
+        <div class=\"card\"><div class=\"label\">ML</div><div class=\"value\" id=\"confMl\">-</div></div>
+        <div class=\"card\"><div class=\"label\">Total</div><div class=\"value\" id=\"confTotal\">-</div></div>
+      </div>
+
+      <div style=\"margin-bottom:8px;display:flex;gap:8px;flex-wrap:wrap;align-items:center;\">
+        <button id=\"debugRefreshBtn\">Aktualisieren</button>
+        <span class=\"muted\" style=\"font-size:0.83rem;\">Letzte Pipeline-Events (neueste zuerst)</span>
+      </div>
+      <table>
+        <thead>
+          <tr>
+            <th>Zeitpunkt</th><th>Phase</th><th>Übergang</th><th>Zyklus</th>
+            <th>Label</th><th>Konfidenz</th><th>Ablehn-Grund</th><th>Fehler</th>
+          </tr>
+        </thead>
+        <tbody id=\"pipelineDebugRows\"></tbody>
+      </table>
+
+      <h3 style=\"margin:16px 0 8px;font-size:0.95rem;\">Klassifikations-Log</h3>
+      <table>
+        <thead>
+          <tr>
+            <th>Zeitpunkt</th><th>Event</th><th>Proto-Label</th><th>Proto-Score</th>
+            <th>Shape-Score</th><th>ML-Label</th><th>ML-Conf.</th>
+            <th>Final</th><th>Quelle</th>
+          </tr>
+        </thead>
+        <tbody id=\"classLogRows\"></tbody>
+      </table>
+    </div><!-- end tab-debug -->
 
     <!-- Pattern Visualization Modal -->
     <div id=\"patternModal\" style=\"display:none;position:fixed;top:0;left:0;width:100%;height:100%;background:rgba(0,0,0,0.5);z-index:1000;justify-content:center;align-items:center;flex-direction:column;padding:20px;box-sizing:border-box;\">
@@ -2186,6 +2321,208 @@ if (languageSelect) {
 
 applyLanguage();
 
+// ── Tab switching ──────────────────────────────────────────────────────────
+document.querySelectorAll('.tab-nav-btn').forEach(btn => {
+  btn.addEventListener('click', () => {
+    document.querySelectorAll('.tab-nav-btn').forEach(b => {
+      b.classList.remove('active');
+      b.setAttribute('aria-selected', 'false');
+    });
+    document.querySelectorAll('.tab-pane').forEach(p => p.classList.remove('active'));
+    btn.classList.add('active');
+    btn.setAttribute('aria-selected', 'true');
+    const tabId = 'tab-' + btn.dataset.tab;
+    const pane = document.getElementById(tabId);
+    if (pane) pane.classList.add('active');
+    const tab = btn.dataset.tab;
+    if (tab === 'events') loadEventsTab();
+    else if (tab === 'geraete') loadGeraeteTab();
+    else if (tab === 'lernen') loadLernenTab();
+    else if (tab === 'debug') loadDebugTab();
+  });
+});
+
+// ── Events tab ─────────────────────────────────────────────────────────────
+async function loadEventsTab() {
+  const tbody = document.getElementById('eventRows');
+  if (!tbody) return;
+  tbody.innerHTML = '<tr><td colspan="8" style="text-align:center">Lade…</td></tr>';
+  try {
+    const events = await fetchJson('api/events?limit=100');
+    tbody.innerHTML = '';
+    const arr = Array.isArray(events) ? events : (events.events || []);
+    if (!arr.length) {
+      tbody.innerHTML = '<tr><td colspan="8">Keine Events vorhanden</td></tr>';
+      return;
+    }
+    arr.forEach(ev => {
+      const tr = document.createElement('tr');
+      const ts = ev.timestamp || ev.start_time || '';
+      const label = ev.label || ev.device || '-';
+      const delta = ev.delta_power_w ?? ev.delta_power ?? '-';
+      const dur = ev.duration_s != null ? Number(ev.duration_s).toFixed(1) + 's' : '-';
+      const conf = ev.confidence != null ? Number(ev.confidence).toFixed(2) : '-';
+      const phase = ev.phase || '-';
+      const reason = ev.rejection_reason || ev.end_reason || '-';
+      const quality = ev.quality_score != null ? Number(ev.quality_score).toFixed(2) : '-';
+      tr.innerHTML = `<td>${ts.replace('T',' ').replace(/[.]\\d+/,'')}</td><td>${label}</td><td>${fmt(delta,' W')}</td><td>${dur}</td><td>${conf}</td><td>${phase}</td><td>${quality}</td><td>${reason}</td>`;
+      tbody.appendChild(tr);
+    });
+  } catch (err) {
+    tbody.innerHTML = `<tr><td colspan="8">Fehler: ${err}</td></tr>`;
+  }
+}
+const eventsRefreshBtn = document.getElementById('eventsRefreshBtn');
+if (eventsRefreshBtn) eventsRefreshBtn.addEventListener('click', loadEventsTab);
+
+// ── Geräte tab ─────────────────────────────────────────────────────────────
+async function loadGeraeteTab() {
+  const tbody = document.getElementById('geraeteRows');
+  if (!tbody) return;
+  tbody.innerHTML = '<tr><td colspan="6" style="text-align:center">Lade…</td></tr>';
+  try {
+    const liveData = await fetchJson('api/live');
+    const devices = (liveData && liveData.devices) ? liveData.devices : {};
+    tbody.innerHTML = '';
+    const names = Object.keys(devices);
+    if (!names.length) {
+      tbody.innerHTML = '<tr><td colspan="6">Keine Geräte erkannt</td></tr>';
+      return;
+    }
+    names.forEach(name => {
+      const d = devices[name];
+      const tr = document.createElement('tr');
+      tr.innerHTML = `<td>${name}</td><td>${d.state || '-'}</td><td>${fmt(d.estimated_power_w,' W')}</td><td>${fmt(d.confidence,'')}</td><td>${d.daily_cycles ?? '-'}</td><td>${fmt(d.daily_runtime_seconds,' s')}</td>`;
+      tbody.appendChild(tr);
+    });
+  } catch (err) {
+    tbody.innerHTML = `<tr><td colspan="6">Fehler: ${err}</td></tr>`;
+  }
+}
+const geraeteRefreshBtn = document.getElementById('geraeteRefreshBtn');
+if (geraeteRefreshBtn) geraeteRefreshBtn.addEventListener('click', loadGeraeteTab);
+
+// ── Lernen tab ─────────────────────────────────────────────────────────────
+async function loadLernenTab() {
+  // Training stats
+  try {
+    const patterns = await fetchJson('api/patterns');
+    const arr = Array.isArray(patterns) ? patterns : [];
+    const confirmed = arr.filter(p => p.is_confirmed).length;
+    // Update the stat card in LERNEN tab if present
+    const patternCountEl = document.getElementById('learnPatterns');
+    if (patternCountEl) patternCountEl.textContent = `${arr.length} (${confirmed} ✓)`;
+    // Sync the shared allPatterns array so filterAndSortPatterns() works in LERNEN tab
+    allPatterns = arr;
+    currentPatternPage = 1;
+    filterAndSortPatterns();
+  } catch (err) { /* patterns non-critical */ }
+
+  // Training log
+  const tbody = document.getElementById('trainingLogRows');
+  if (!tbody) return;
+  tbody.innerHTML = '<tr><td colspan="5" style="text-align:center">Lade…</td></tr>';
+  try {
+    const log = await fetchJson('api/training-log?limit=100');
+    tbody.innerHTML = '';
+    const arr = Array.isArray(log) ? log : [];
+    if (!arr.length) {
+      tbody.innerHTML = '<tr><td colspan="5">Kein Trainingsprotokoll vorhanden</td></tr>';
+      return;
+    }
+    arr.forEach(row => {
+      const tr = document.createElement('tr');
+      const ts = (row.created_at || '').replace('T',' ').replace(/[.]\\d+/,'');
+      const result = row.accepted ? '<span style="color:var(--success,#22c55e)">✓ akzeptiert</span>'
+                                  : '<span style="color:var(--danger,#ef4444)">✗ abgelehnt</span>';
+      tr.innerHTML = `<td>${ts}</td><td>${row.event_id ?? '-'}</td><td>${result}</td><td>${row.label || '-'}</td><td>${row.reason || '-'}</td>`;
+      tbody.appendChild(tr);
+    });
+  } catch (err) {
+    tbody.innerHTML = `<tr><td colspan="5">Fehler: ${err}</td></tr>`;
+  }
+}
+const lernenRefreshBtn = document.getElementById('lernenRefreshBtn');
+if (lernenRefreshBtn) lernenRefreshBtn.addEventListener('click', loadLernenTab);
+
+// ── Debug tab ──────────────────────────────────────────────────────────────
+async function loadDebugTab() {
+  // Hybrid debug panel
+  try {
+    const hybrid = await fetchJson('api/debug/hybrid-status');
+    renderHybridDebug(hybrid);
+    // Confidence breakdown cards (new)
+    const cb = hybrid && hybrid.explain && hybrid.explain.confidence_breakdown;
+    if (cb && typeof cb === 'object') {
+      const setCard = (id, val) => {
+        const el = document.getElementById(id);
+        if (el) el.textContent = val != null ? Number(val).toFixed(3) : '-';
+      };
+      setCard('confShape', cb.shape);
+      setCard('confDuration', cb.duration);
+      setCard('confRepeat', cb.repeatability);
+      setCard('confMl', cb.ml);
+      setCard('confTotal', cb.total);
+    }
+  } catch (err) { /* hybrid debug non-critical */ }
+
+  // Pipeline buffer
+  const pipelineBody = document.getElementById('pipelineDebugRows');
+  if (pipelineBody) {
+    pipelineBody.innerHTML = '<tr><td colspan="4" style="text-align:center">Lade…</td></tr>';
+    try {
+      const buf = await fetchJson('api/debug/pipeline-buffer');
+      const arr = Array.isArray(buf) ? buf : (buf.events || []);
+      pipelineBody.innerHTML = '';
+      if (!arr.length) {
+        pipelineBody.innerHTML = '<tr><td colspan="4">Kein Pipeline-Puffer vorhanden</td></tr>';
+      } else {
+        arr.slice(0, 100).forEach(item => {
+          const tr = document.createElement('tr');
+          const ts = (item.timestamp || '').replace('T',' ').replace(/[.]\\d+/,'');
+          const phase = item.phase || '-';
+          const ok = item.stages ? Object.values(item.stages).filter(s => s && s.ok).length : '-';
+          const err = item.stages ? Object.values(item.stages).filter(s => s && !s.ok).map(s => s.error).join(', ') : '-';
+          tr.innerHTML = `<td>${ts}</td><td>${phase}</td><td>${ok}</td><td>${err || '—'}</td>`;
+          pipelineBody.appendChild(tr);
+        });
+      }
+    } catch (err) {
+      pipelineBody.innerHTML = `<tr><td colspan="4">Fehler: ${err}</td></tr>`;
+    }
+  }
+
+  // Classification log
+  const classBody = document.getElementById('classLogRows');
+  if (classBody) {
+    classBody.innerHTML = '<tr><td colspan="6" style="text-align:center">Lade…</td></tr>';
+    try {
+      const log = await fetchJson('api/classification-log?limit=50');
+      classBody.innerHTML = '';
+      const arr = Array.isArray(log) ? log : (log.entries || []);
+      if (!arr.length) {
+        classBody.innerHTML = '<tr><td colspan="6">Kein Klassifikationsprotokoll vorhanden</td></tr>';
+      } else {
+        arr.forEach(item => {
+          const tr = document.createElement('tr');
+          const ts = (item.timestamp || item.created_at || '').replace('T',' ').replace(/[.]\\d+/,'');
+          const label = item.label || '-';
+          const conf = item.confidence != null ? Number(item.confidence).toFixed(3) : '-';
+          const source = item.source || '-';
+          const path = Array.isArray(item.classification_path) ? item.classification_path.join(' → ') : (item.path || '-');
+          const downgraded = item.original_label ? `⬇ ${item.original_label}` : '';
+          tr.innerHTML = `<td>${ts}</td><td>${label}</td><td>${conf}</td><td>${source}</td><td>${path}</td><td>${downgraded}</td>`;
+          classBody.appendChild(tr);
+        });
+      }
+    } catch (err) {
+      classBody.innerHTML = `<tr><td colspan="6">Fehler: ${err}</td></tr>`;
+    }
+  }
+}
+const debugRefreshBtn = document.getElementById('debugRefreshBtn');
+if (debugRefreshBtn) debugRefreshBtn.addEventListener('click', loadDebugTab);
+
 
 </script>
 </body>
@@ -2465,6 +2802,31 @@ class StatsWebServer:
                     except Exception as e:
                         logger.error(f"Hybrid status fetch failed: {e}", exc_info=True)
                         self._send_json({"label": "unknown", "confidence": 0.0, "source": "error", "error": str(e)}, status=500)
+                    return
+
+                if parsed.path == "/api/training-log":
+                    if not parent.storage or not hasattr(parent.storage, "get_training_log"):
+                        self._send_json([])
+                        return
+                    query = parse_qs(parsed.query or "")
+                    limit_raw = (query.get("limit") or ["200"])[0]
+                    try:
+                        limit = max(10, min(int(limit_raw), 2000))
+                    except ValueError:
+                        limit = 200
+                    self._send_json(parent.storage.get_training_log(limit=limit))
+                    return
+
+                if parsed.path == "/api/debug/pipeline-buffer":
+                    # Returns recent pipeline debug events if a NILMPipeline ref is stored
+                    buf = getattr(parent, "_pipeline_debug_buffer", None)
+                    if callable(buf):
+                        result = buf()
+                        self._send_json(result if isinstance(result, (dict, list)) else [])
+                    elif isinstance(buf, list):
+                        self._send_json(buf)
+                    else:
+                        self._send_json([])
                     return
 
                 self._send_json({"error": "not found"}, status=404)

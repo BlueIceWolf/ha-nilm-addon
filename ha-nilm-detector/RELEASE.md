@@ -4,6 +4,24 @@
 
 ---
 
+# Release 0.6.30 (BETA)
+
+## Store Kurztext
+- **🧱 Pipeline-/Debug-Refactor**: Per-Phase NILMPipeline, Overlap-Scoring und neues 5-Tab-Dashboard machen Lernen und Fehleranalyse deutlich nachvollziehbarer.
+
+## Highlights
+- Main-Loop nutzt pro Phase eine dedizierte `NILMPipeline` mit konsistentem Stage-Debug
+- Neue Overlap-Analyse (`strong`/`weak`) mit `overlap_score` im Klassifikations-Payload
+- Neue Audit-Tabelle `training_log` fuer Accept/Reject-Entscheidungen des Trainingspfads
+- Neue Endpunkte:
+  - `GET /api/training-log`
+  - `GET /api/debug/pipeline-buffer`
+- Dashboard als 5 Tabs neu strukturiert: `LIVE`, `EVENTS`, `GERÄTE`, `LERNEN`, `DEBUG`
+- Debug-Tab zeigt Pipeline-Puffer, Klassifikationslog und Confidence-Breakdown
+- Typing-/Runtime-Hotfixes fuer Storage und Web-API (Optional-Strings, sichere JSON-Payloads)
+
+---
+
 # Release 0.6.29 (BETA)
 
 ## Store Kurztext

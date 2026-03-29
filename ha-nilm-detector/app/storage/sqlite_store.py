@@ -1988,6 +1988,29 @@ class SQLiteStore:
                 )
                 """
             )
+
+            # Training-filter audit log – records every accept/reject decision so
+            # operators can inspect why events were or were not used for learning.
+            self._patterns_conn.execute(
+                """
+                CREATE TABLE IF NOT EXISTS training_log (
+                    id INTEGER PRIMARY KEY AUTOINCREMENT,
+                    created_at TEXT NOT NULL,
+                    event_id INTEGER,
+                    accepted INTEGER NOT NULL DEFAULT 0,
+                    rejected INTEGER NOT NULL DEFAULT 0,
+                    reason TEXT,
+                    label TEXT
+                )
+                """
+            )
+            self._patterns_conn.execute(
+                "CREATE INDEX IF NOT EXISTS idx_training_log_created ON training_log(created_at)"
+            )
+            self._patterns_conn.execute(
+                "CREATE INDEX IF NOT EXISTS idx_training_log_event ON training_log(event_id)"
+            )
+
             self._ensure_schema_version(self._patterns_conn, self.PATTERNS_SCHEMA_VERSION)
 
     def _ensure_column(
@@ -4878,7 +4901,68 @@ class SQLiteStore:
             logger.error(f"Failed to delete pattern {pattern_id}: {e}", exc_info=True)
             return False
 
-    def clear_readings_only(self) -> Dict:
+    def log_training_decision(
+        self,
+        event_id=None,
+        accepted: bool = False,
+        reason: Optional[str] = None,
+        label: Optional[str] = None,
+    ) -> None:
+        """Record a training-filter accept/reject decision in the training_log table."""
+        if not self._patterns_conn:
+            return
+        try:
+            from datetime import datetime as _dt
+            now = _dt.utcnow().isoformat()
+            with self._patterns_conn:
+                self._patterns_conn.execute(
+                    """
+                    INSERT INTO training_log (created_at, event_id, accepted, rejected, reason, label)
+                    VALUES (?, ?, ?, ?, ?, ?)
+                    """,
+                    (
+                        now,
+                        int(event_id) if event_id is not None else None,
+                        1 if accepted else 0,
+                        0 if accepted else 1,
+                        str(reason) if reason else None,
+                        str(label) if label else None,
+                    ),
+                )
+        except Exception as e:
+            logger.warning("log_training_decision failed: %s", e)
+
+    def get_training_log(self, limit: int = 200) -> list:
+        """Return recent training-filter decisions, newest first."""
+        if not self._patterns_conn:
+            return []
+        try:
+            rows = self._patterns_conn.execute(
+                """
+                SELECT id, created_at, event_id, accepted, rejected, reason, label
+                FROM training_log
+                ORDER BY created_at DESC
+                LIMIT ?
+                """,
+                (max(1, int(limit)),),
+            ).fetchall()
+            return [
+                {
+                    "id": row[0],
+                    "created_at": row[1],
+                    "event_id": row[2],
+                    "accepted": bool(row[3]),
+                    "rejected": bool(row[4]),
+                    "reason": row[5],
+                    "label": row[6],
+                }
+                for row in rows
+            ]
+        except Exception as e:
+            logger.warning("get_training_log failed: %s", e)
+            return []
+
+    def clear_readings_only(self) -> dict:
         """Clear only live power readings and detections, keep learned patterns."""
         if not self._conn:
             return {"ok": False, "error": "storage not connected"}

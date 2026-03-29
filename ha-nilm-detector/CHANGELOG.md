@@ -2,6 +2,25 @@
 
 > ⚠️ **Hinweis**: Dieses Projekt ist experimentell (BETA) - Breaking Changes und Bugs können auftreten.
 
+## 0.6.30 (BETA)
+
+**Pipeline-/Debug-Refactor abgeschlossen: bessere Nachvollziehbarkeit und robustere Lernbasis**
+
+- Neue Core-Komponente: per-Phase `NILMPipeline` im Main-Loop aktiv integriert
+- Main-Loop nutzt jetzt pro konfigurierter Phase eine dedizierte Pipeline inkl. Stage-Result-Tracking
+- Neues Overlap-Modul (`app/core/overlap.py`): zweistufige Event-Zerlegung (`detect_strong` -> `subtract` -> `detect_weak`)
+- `overlap_score` und `overlap_events_count` werden bei Klassifikation/Persistenz in den Cycle-Payload übernommen
+- Neues Trainings-Audit-Log: Tabelle `training_log` mit API-Zugriff
+- Neue API-Endpunkte:
+  - `GET /api/training-log`
+  - `GET /api/debug/pipeline-buffer`
+- Web-UI als 5-Tab-Dashboard reorganisiert (`LIVE`, `EVENTS`, `GERÄTE`, `LERNEN`, `DEBUG`) mit separaten Refresh-Workflows
+- Debug-Tab zeigt jetzt Pipeline-Puffer + Klassifikationslog + strukturierten Confidence-Breakdown
+- Typing-/Escape-Hotfixes: Optional-Strings im Storage und JS-RegEx-Sequenzen bereinigt
+- Laufzeittest/Smoke-Test durchgeführt:
+  - API-Tests für neue Endpunkte erfolgreich
+  - Voller lokaler E2E-Start außerhalb HA erwartbar am `supervisor`-Host gescheitert (Umgebungsabhängig)
+
 ## 0.6.29 (BETA)
 
 **Update-Speed verbessert: keine schweren Source-Builds mehr fuer Scientific-Dependencies**

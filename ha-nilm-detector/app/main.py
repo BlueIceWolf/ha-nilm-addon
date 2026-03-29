@@ -9,6 +9,7 @@ from typing import Dict, List, Optional
 from app.collector.source import Collector, HARestPowerSource
 from app.config import Config, load_options_from_file
 from app.confidence.confidence import ConfidenceEvaluator
+from app.core import NILMPipeline
 from app.detectors import AdaptiveLoadDetector, FridgeDetector, InverterDeviceDetector
 from app.ha_client import HomeAssistantAPIClient
 from app.learning.features import CycleFeatures
@@ -106,17 +107,29 @@ class NILMDetectionSystem:
 
         # Phase-based pattern learning: separate tracker per phase
         self.phase_learners: Dict[str, PatternLearner] = {}
+        self.phase_pipelines: Dict[str, NILMPipeline] = {}
         if self.config.learning_enabled and self.storage:
             phase_entities = self.config.get_selected_phase_entities()
             for phase_name, entity_id in phase_entities.items():
                 if entity_id and entity_id.strip():  # Only create learner if phase is configured
-                    self.phase_learners[phase_name] = PatternLearner(
+                    learner = PatternLearner(
                         on_threshold_w=self.config.learning_on_threshold_w,
                         off_threshold_w=self.config.learning_off_threshold_w,
                         min_cycle_seconds=self.config.learning_min_cycle_seconds,
                         adaptive_on_offset_w=self.config.learning_delta_on_w,
                         adaptive_off_offset_w=self.config.learning_delta_off_w,
                         max_gap_s=self.config.learning_max_gap_s,
+                    )
+                    self.phase_learners[phase_name] = learner
+                    self.phase_pipelines[phase_name] = NILMPipeline(
+                        processing_pipeline=ProcessingPipeline(
+                            smoothing_window=self.config.processing_smoothing_window,
+                            noise_threshold=self.config.processing_noise_threshold,
+                            adaptive_correction=self.config.processing_adaptive_correction,
+                        ),
+                        learner=learner,
+                        storage=self.storage,
+                        heuristic_suggest_fn=learner.suggest_device_type,
                     )
                     logger.info(f"Pattern learner initialized for phase {phase_name}")
             
@@ -175,6 +188,22 @@ class NILMDetectionSystem:
                 language=self.config.language,
                 storage=self.storage,
             )
+            self.web_server._pipeline_debug_buffer = self._get_pipeline_debug_buffer
+
+    def _get_pipeline_debug_buffer(self) -> List[Dict]:
+        """Return recent debug entries across all per-phase pipelines."""
+        merged: List[Dict] = []
+        for phase_name, pipeline in self.phase_pipelines.items():
+            try:
+                items = pipeline.get_debug_buffer()
+            except Exception:
+                continue
+            for item in items:
+                if isinstance(item, dict):
+                    merged.append({"phase": phase_name, **item})
+
+        merged.sort(key=lambda x: str(x.get("timestamp") or ""), reverse=True)
+        return merged[:200]
 
     def _build_power_source(self):
         token = str(self.config.ha_token or "").strip()
@@ -1080,75 +1109,44 @@ class NILMDetectionSystem:
                 if self.storage:
                     self.storage.store_reading(reading)
 
-                # Phase-based pattern learning: process each phase separately
-                if self.phase_learners and self.storage:
-                    phase_powers_w = processed.metadata.get("phase_powers_w", {})
-                    
-                    for phase_name, learner in self.phase_learners.items():
-                        # Get power for this specific phase
-                        phase_power = phase_powers_w.get(phase_name, 0.0)
-                        
-                        # Create a reading for just this phase
+                # Phase-based learning through per-phase NILMPipelines
+                if self.phase_pipelines and self.storage:
+                    raw_phase_powers = reading.metadata.get("phase_powers_w", {}) if isinstance(reading.metadata, dict) else {}
+                    processed_phase_powers = processed.metadata.get("phase_powers_w", {}) if isinstance(processed.metadata, dict) else {}
+
+                    for phase_name, pipeline in self.phase_pipelines.items():
+                        phase_power = raw_phase_powers.get(phase_name, processed_phase_powers.get(phase_name, 0.0))
+                        try:
+                            phase_power_f = float(phase_power)
+                        except (TypeError, ValueError):
+                            phase_power_f = 0.0
+
                         phase_reading = PowerReading(
                             timestamp=processed.timestamp,
-                            power_w=phase_power,
+                            power_w=phase_power_f,
                             phase=phase_name,
                             metadata={
                                 "phase": phase_name,
                                 "original_total": processed.power_w,
-                                "phase_powers_w": {phase_name: phase_power}
-                            }
+                                "phase_powers_w": {phase_name: phase_power_f},
+                            },
                         )
-                        
-                        # Ingest into phase-specific learner
-                        cycle = learner.ingest(phase_reading)
-                        if cycle:
-                            cycle_payload = {
-                                "start_ts": cycle.start_ts.isoformat(),
-                                "end_ts": cycle.end_ts.isoformat(),
-                                "duration_s": cycle.duration_s,
-                                "avg_power_w": cycle.avg_power_w,
-                                "peak_power_w": cycle.peak_power_w,
-                                "energy_wh": cycle.energy_wh,
-                                "operating_modes": cycle.operating_modes,
-                                "has_multiple_modes": cycle.has_multiple_modes,
-                                "active_phase_count": 1,  # Single phase per learner
-                                "phase_mode": "single_phase",
-                                "phase": phase_name,  # Explicit phase attribution
-                                "power_variance": float(cycle.features.power_variance) if cycle.features else 0.0,
-                                "rise_rate_w_per_s": float(cycle.features.rise_rate_w_per_s) if cycle.features else 0.0,
-                                "fall_rate_w_per_s": float(cycle.features.fall_rate_w_per_s) if cycle.features else 0.0,
-                                "duty_cycle": float(cycle.features.duty_cycle) if cycle.features else 0.0,
-                                "peak_to_avg_ratio": float(cycle.features.peak_to_avg_ratio) if cycle.features else 1.0,
-                                "num_substates": int(cycle.features.num_substates) if cycle.features else 0,
-                                "step_count": int(cycle.features.step_count) if cycle.features else 0,
-                                "has_heating_pattern": bool(cycle.features.has_heating_pattern) if cycle.features else False,
-                                "has_motor_pattern": bool(cycle.features.has_motor_pattern) if cycle.features else False,
-                                "profile_points": list(cycle.profile_points or []),
-                            }
-                            heuristic_suggestion = learner.suggest_device_type(cycle)
-                            model_suggestion = self.storage.suggest_cycle_label(
-                                cycle_payload,
-                                fallback=heuristic_suggestion,
-                            )
-                            suggestion = str(model_suggestion.get("label") or heuristic_suggestion)
-                            learn_result = self.storage.learn_cycle_pattern(
-                                cycle=cycle_payload,
-                                suggestion_type=suggestion,
-                            )
-                            pattern = learn_result.get("pattern") if isinstance(learn_result, dict) else None
-                            if pattern:
-                                candidate_name = pattern.get("candidate_name") or pattern.get("user_label") or pattern.get("suggestion_type")
-                                is_confirmed = bool(pattern.get("is_confirmed") or pattern.get("user_label"))
-                                guess_prefix = "bestaetigt" if is_confirmed else "evtl."
-                                logger.info(
-                                    f"[{phase_name}] Pattern learned/updated: "
-                                    f"id={pattern.get('id')} suggestion={pattern.get('suggestion_type')} "
-                                    f"label={pattern.get('user_label') or '-'} seen={pattern.get('seen_count')} "
-                                    f"model_source={model_suggestion.get('source')} "
-                                    f"model_conf={float(model_suggestion.get('confidence', 0.0)):.2f} "
-                                    f"-> {guess_prefix} {candidate_name}"
-                                )
+
+                        pipeline_result = pipeline.process_sample(phase_reading)
+                        if not pipeline_result.cycle_completed:
+                            continue
+
+                        cls = pipeline_result.classification.data if pipeline_result.classification else {}
+                        label = str(cls.get("label") or "unknown")
+                        confidence = float(cls.get("confidence", 0.0) or 0.0)
+                        overlap = float(cls.get("overlap_score", 0.0) or 0.0)
+                        logger.info(
+                            "[%s] Cycle stored via NILMPipeline: label=%s confidence=%.2f overlap=%.2f",
+                            phase_name,
+                            label,
+                            confidence,
+                            overlap,
+                        )
 
                 for device_name, detector_group in self.detectors.items():
                     detection_candidates = []

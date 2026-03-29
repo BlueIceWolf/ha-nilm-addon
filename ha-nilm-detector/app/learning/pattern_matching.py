@@ -3,11 +3,44 @@
 from __future__ import annotations
 
 import math
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from datetime import datetime
 from typing import Any, Dict, List, Optional, Sequence, Tuple
 
 from app.learning.shape_similarity import blended_shape_similarity
+
+# Minimum aggregate confidence to emit a definitive label.
+# Results below this threshold are down-graded to "unknown".
+CONFIDENCE_UNKNOWN_THRESHOLD = 0.60
+
+
+@dataclass
+class ConfidenceBreakdown:
+    """Structured per-component confidence as required by the spec."""
+    shape: float = 0.0
+    duration: float = 0.0
+    repeatability: float = 0.0
+    ml: float = 0.0
+
+    @property
+    def total(self) -> float:
+        # Weighted combination: shape 35%, duration 20%, repeatability 25%, ml 20%
+        return min(
+            0.35 * self.shape
+            + 0.20 * self.duration
+            + 0.25 * self.repeatability
+            + 0.20 * self.ml,
+            1.0,
+        )
+
+    def as_dict(self) -> Dict[str, float]:
+        return {
+            "shape": round(self.shape, 4),
+            "duration": round(self.duration, 4),
+            "repeatability": round(self.repeatability, 4),
+            "ml": round(self.ml, 4),
+            "total": round(self.total, 4),
+        }
 
 
 @dataclass
@@ -20,6 +53,10 @@ class HybridMatchResult:
     repeatability: float
     best_distance: Optional[float]
     explain: Dict[str, Any]
+    # Structured breakdown – new field; always populated
+    confidence_breakdown: ConfidenceBreakdown = field(default_factory=ConfidenceBreakdown)
+    # Label before unknown-threshold downgrade (None if no downgrade happened)
+    original_label: Optional[str] = None
 
 
 class HybridPatternMatcher:
@@ -147,14 +184,35 @@ class HybridPatternMatcher:
         )
         confidence = max(0.0, min(1.0, confidence))
 
+        # Duration confidence: how close is the cycle duration to the pattern's?
+        duration_confidence = 1.0 - min(
+            float(best_item_by_group.get(best_group, {}).get("distance", 0.0)), 1.0
+        )
+
+        breakdown = ConfidenceBreakdown(
+            shape=shape_confidence,
+            duration=duration_confidence,
+            repeatability=repeatability,
+            ml=prototype_confidence,
+        )
+
+        # Down-grade to "unknown" when aggregate confidence is below threshold
+        original_label: Optional[str] = None
+        effective_label = best_label
+        if confidence < CONFIDENCE_UNKNOWN_THRESHOLD and best_label.lower() not in ("unknown", "unbekannt"):
+            original_label = best_label
+            effective_label = "unknown"
+
         return HybridMatchResult(
             best_group=best_group,
-            best_label=best_label,
+            best_label=effective_label,
             confidence=confidence,
             prototype_confidence=prototype_confidence,
             shape_confidence=shape_confidence,
             repeatability=repeatability,
             best_distance=best_distance_overall,
+            confidence_breakdown=breakdown,
+            original_label=original_label,
             explain={
                 "best_group": best_group,
                 "prototype_confidence": round(prototype_confidence, 4),
@@ -162,5 +220,9 @@ class HybridPatternMatcher:
                 "repeatability": round(repeatability, 4),
                 "best_distance": round(float(best_distance_overall or 0.0), 4),
                 "match_threshold": self.match_threshold,
+                "confidence_breakdown": breakdown.as_dict(),
+                "original_label": original_label,
+                "downgraded_to_unknown": original_label is not None,
             },
         )
+
