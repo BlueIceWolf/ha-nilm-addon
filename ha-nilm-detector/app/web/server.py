@@ -2386,24 +2386,41 @@ if (eventsRefreshBtn) eventsRefreshBtn.addEventListener('click', loadEventsTab);
 async function loadGeraeteTab() {
   const tbody = document.getElementById('geraeteRows');
   if (!tbody) return;
-  tbody.innerHTML = '<tr><td colspan="6" style="text-align:center">Lade…</td></tr>';
+  tbody.innerHTML = '<tr><td colspan="9" style="text-align:center">Lade…</td></tr>';
   try {
-    const liveData = await fetchJson('api/live');
-    const devices = (liveData && liveData.devices) ? liveData.devices : {};
+    const devices = await fetchJson('api/devices?limit=200');
     tbody.innerHTML = '';
-    const names = Object.keys(devices);
-    if (!names.length) {
-      tbody.innerHTML = '<tr><td colspan="6">Keine Geräte erkannt</td></tr>';
+    const arr = Array.isArray(devices) ? devices : [];
+    const countEl = document.getElementById('geraeteCount');
+    if (countEl) countEl.textContent = `${arr.length} Einträge`;
+    if (!arr.length) {
+      tbody.innerHTML = '<tr><td colspan="9">Keine Geräte erkannt</td></tr>';
       return;
     }
-    names.forEach(name => {
-      const d = devices[name];
+    arr.forEach(d => {
       const tr = document.createElement('tr');
-      tr.innerHTML = `<td>${name}</td><td>${d.state || '-'}</td><td>${fmt(d.estimated_power_w,' W')}</td><td>${fmt(d.confidence,'')}</td><td>${d.daily_cycles ?? '-'}</td><td>${fmt(d.daily_runtime_seconds,' s')}</td>`;
+
+      const name = d.final_label || d.user_label || d.predicted_label || `device_${d.device_id ?? '-'}`;
+      const typ = d.device_subclass || '-';
+      const phase = d.phase || '-';
+
+      const minW = Number(d.baseline_range_min_w);
+      const maxW = Number(d.baseline_range_max_w);
+      const avgW = (Number.isFinite(minW) && Number.isFinite(maxW) && (minW > 0 || maxW > 0))
+        ? ((minW + maxW) / 2)
+        : null;
+      const peakW = Number.isFinite(maxW) && maxW > 0 ? maxW : null;
+
+      const seen = d.times_seen_total ?? '-';
+      const confRaw = Number(d.confidence_avg);
+      const confNorm = Number.isFinite(confRaw) ? (confRaw > 1 ? confRaw / 100.0 : confRaw) : null;
+      const confirmed = Number(d.confirmed || 0) > 0 ? '✓' : '';
+
+      tr.innerHTML = `<td>${name}</td><td>${typ}</td><td>${phase}</td><td>${fmt(avgW,' W')}</td><td>${fmt(peakW,' W')}</td><td>-</td><td>${seen}</td><td>${fmt(confNorm,'')}</td><td>${confirmed}</td>`;
       tbody.appendChild(tr);
     });
   } catch (err) {
-    tbody.innerHTML = `<tr><td colspan="6">Fehler: ${err}</td></tr>`;
+    tbody.innerHTML = `<tr><td colspan="9">Fehler: ${err}</td></tr>`;
   }
 }
 const geraeteRefreshBtn = document.getElementById('geraeteRefreshBtn');
