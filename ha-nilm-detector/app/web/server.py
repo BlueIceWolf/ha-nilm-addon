@@ -2362,8 +2362,8 @@ async function loadEventsTab() {
     arr.forEach(ev => {
       const tr = document.createElement('tr');
       const eventId = ev.event_id ?? ev.id ?? '-';
-      const startTs = String(ev.start_ts || ev.start_time || ev.created_at || '').replace('T',' ').replace(/[.]\d+/,'');
-      const endTs = String(ev.end_ts || ev.end_time || '').replace('T',' ').replace(/[.]\d+/,'');
+      const startTs = String(ev.start_ts || ev.start_time || ev.created_at || '').replace('T',' ').replace(/[.]\\d+/,'');
+      const endTs = String(ev.end_ts || ev.end_time || '').replace('T',' ').replace(/[.]\\d+/,'');
       const phase = ev.phase || '-';
       const avgPower = fmt(ev.avg_power_w, ' W');
       const peakPower = fmt(ev.peak_power_w, ' W');
