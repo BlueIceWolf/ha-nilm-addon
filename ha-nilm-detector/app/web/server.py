@@ -12,8 +12,12 @@ from app.utils.logging import get_logger
 logger = get_logger(__name__)
 
 
-def _html_page(default_language: str = "de") -> str:
+def _html_page(default_language: str = "de", build_info: Optional[Dict[str, str]] = None) -> str:
   lang = "en" if str(default_language).strip().lower() == "en" else "de"
+  build_info = dict(build_info or {})
+  version = str(build_info.get("version") or "dev")
+  commit = str(build_info.get("git_short_commit") or build_info.get("git_commit") or "unknown")
+  badge_text = version if not commit or commit == "unknown" else f"{version} ({commit[:8]})"
   return """<!doctype html>
 <html lang=\"__DEFAULT_LANG__\"> 
 <head>
@@ -334,6 +338,7 @@ def _html_page(default_language: str = "de") -> str:
       <h1 id=\"pageTitle\">HA NILM Live-Statistik</h1>
       <div class=\"head-meta\">
         <div id=\"versionBadge\" class=\"version-badge\" data-version=\"-\">Version -</div>
+        <div id=\"versionBadge\" class=\"version-badge\" data-version=\"__INITIAL_VERSION_BADGE__\">Version __INITIAL_VERSION_BADGE__</div>
         <div id=\"ts\" class=\"muted\">Lädt...</div>
       </div>
     </div>
@@ -565,8 +570,8 @@ def _html_page(default_language: str = "de") -> str:
       <div class=\"card\" style=\"margin-bottom:12px;\">
         <div id=\"buildInfoTitle\" class=\"label\">Build-Informationen</div>
         <div style=\"display:grid;grid-template-columns:repeat(auto-fit,minmax(170px,1fr));gap:8px;\">
-          <div><span class=\"muted\" id=\"buildVersionLabel\">Version</span><div id=\"buildVersionValue\">-</div></div>
-          <div><span class=\"muted\" id=\"buildCommitLabel\">Git-Commit</span><div id=\"buildCommitValue\">-</div></div>
+          <div><span class=\"muted\" id=\"buildVersionLabel\">Version</span><div id=\"buildVersionValue\">__INITIAL_VERSION__</div></div>
+          <div><span class=\"muted\" id=\"buildCommitLabel\">Git-Commit</span><div id=\"buildCommitValue\">__INITIAL_COMMIT__</div></div>
         </div>
       </div>
 
@@ -653,6 +658,7 @@ def _html_page(default_language: str = "de") -> str:
   </div>
 
 <script>
+const INITIAL_BUILD_INFO = __INITIAL_BUILD_INFO__;
 const canvas = document.getElementById('powerChart');
 const ctx = canvas.getContext('2d');
 const statusEl = document.getElementById('ts');
@@ -677,7 +683,7 @@ let currentPatternPage = 1;
 let currentPatternPageSize = 50;
 let seriesWindow = 360;
 let seriesOffset = 0;
-let currentBuildInfo = null;
+let currentBuildInfo = INITIAL_BUILD_INFO && typeof INITIAL_BUILD_INFO === 'object' ? INITIAL_BUILD_INFO : null;
 let patternModalState = {
   pattern: null,
   view: 'context',
@@ -1211,6 +1217,25 @@ function setStatus(message) {
   statusEl.textContent = message;
 }
 
+let transientStatusResetTimer = null;
+
+function clearTransientStatusReset() {
+  if (transientStatusResetTimer) {
+    clearTimeout(transientStatusResetTimer);
+    transientStatusResetTimer = null;
+  }
+}
+
+function setTransientStatus(message, resetMessage = null, delayMs = 2200) {
+  setStatus(message);
+  clearTransientStatusReset();
+  if (!resetMessage) return;
+  transientStatusResetTimer = setTimeout(() => {
+    setStatus(resetMessage);
+    transientStatusResetTimer = null;
+  }, delayMs);
+}
+
 function updateTaskProgress(taskInfo) {
   // Task progress UI is optional; if markup is missing, skip silently.
   if (!activeTaskEl || !taskNameEl || !taskPercentEl || !progressFillEl) {
@@ -1240,7 +1265,7 @@ async function clearReadingsOnly() {
   if (!sure) return;
 
   try {
-    setStatus(t('clearReadingsStatus'));
+    setTransientStatus(t('clearReadingsStatus'));
     const response = await fetch(apiPath('api/debug/clear-readings'), {
       method: 'POST'
     });
@@ -1261,7 +1286,7 @@ async function clearPatternsOnly() {
   if (!sure) return;
 
   try {
-    setStatus(t('clearPatternsStatus'));
+    setTransientStatus(t('clearPatternsStatus'));
     const response = await fetch(apiPath('api/debug/clear-patterns'), {
       method: 'POST'
     });
@@ -1279,7 +1304,7 @@ async function clearPatternsOnly() {
 
 async function runLearningNow() {
   try {
-    setStatus(t('runLearningStatus'));
+    setTransientStatus(t('runLearningStatus'));
     const response = await fetch(apiPath('api/debug/run-learning-now'), {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
@@ -1322,7 +1347,7 @@ async function importHistoryFromHA() {
   }
 
   try {
-    setStatus(t('importStatus'));
+    setTransientStatus(t('importStatus'));
     const response = await fetch(apiPath('api/debug/import-history'), {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
@@ -1343,7 +1368,7 @@ async function importHistoryFromHA() {
 
 async function exportData() {
   try {
-    setStatus(t('exportDataBtn'));
+    setTransientStatus(t('exportDataBtn'));
     const response = await fetch(apiPath('api/debug/export'));
     if (!response.ok) {
       throw new Error(`HTTP ${response.status}`);
@@ -1378,7 +1403,7 @@ async function handleImportDataFile(event) {
   if (!file) return;
   
   try {
-    setStatus(currentLanguage === 'en' ? 'Importing...' : 'Importiere...');
+    setTransientStatus(currentLanguage === 'en' ? 'Importing...' : 'Importiere...');
     const text = await file.text();
     const data = JSON.parse(text);
     
@@ -1836,12 +1861,12 @@ function renderPatterns(patterns) {
 
 async function refresh() {
   try {
-    setStatus(t('loading'));
+    clearTransientStatusReset();
     const [summaryRes, seriesRes, liveRes, patternsRes, hybridRes, cyclesRes, eventPhasesRes] = await Promise.all([
       fetchJson('api/summary'),
       fetchJson(`api/series?limit=${seriesWindow}&offset=${seriesOffset}`),
       fetchJson('api/live'),
-      fetchJson('api/patterns'),
+      fetchJson('api/patterns?limit=2000'),
       fetchJson('api/debug/hybrid-status').catch(() => null),
       fetchJson('api/device-cycles?limit=30').catch(() => []),
       fetchJson('api/event-phases?limit=40').catch(() => [])
@@ -1896,8 +1921,6 @@ async function refresh() {
     });
 
     setStatus(buildLiveStatusMessage(live));
-
-    setStatus(t('drawing'));
     drawChart(series.points || []);
     renderDevices(live.devices || {});
     renderDeviceCycles(cyclesRes || []);
@@ -3020,30 +3043,35 @@ if (geraeteRefreshBtn) geraeteRefreshBtn.addEventListener('click', loadGeraeteTa
 
 // ── Lernen tab ─────────────────────────────────────────────────────────────
 async function loadLernenTab() {
-  // Training stats
-  try {
-    const patterns = await fetchJson('api/patterns');
-  tbody.innerHTML = '<tr><td colspan="9" style="text-align:center">Lade…</td></tr>';
-    const confirmed = arr.filter(p => p.is_confirmed).length;
-    // Update the stat card in LERNEN tab if present
-    const patternCountEl = document.getElementById('learnPatterns');
-    if (patternCountEl) patternCountEl.textContent = `${arr.length} (${confirmed} ✓)`;
-    // Sync the shared allPatterns array so filterAndSortPatterns() works in LERNEN tab
-      tbody.innerHTML = '<tr><td colspan="9">Kein Trainingsprotokoll vorhanden</td></tr>';
-    currentPatternPage = 1;
-    filterAndSortPatterns();
-  } catch (err) { /* patterns non-critical */ }
-
-  // Training log
   const tbody = document.getElementById('trainingLogRows');
   if (!tbody) return;
-  tbody.innerHTML = '<tr><td colspan="8" style="text-align:center">Lade…</td></tr>';
+  tbody.innerHTML = '<tr><td colspan="9" style="text-align:center">Lade…</td></tr>';
+  try {
+    const patterns = await fetchJson('api/patterns?limit=2000');
+    const arr = Array.isArray(patterns) ? patterns : (patterns.patterns || []);
+    const confirmed = arr.filter(p => p.is_confirmed).length;
+    const patternCountEl = document.getElementById('learnPatterns');
+    if (patternCountEl) patternCountEl.textContent = `${arr.length} (${confirmed} ✓)`;
+    allPatterns = arr;
+    currentPatternPage = 1;
+    filterAndSortPatterns();
+  } catch (err) {
+    const patternCountEl = document.getElementById('learnPatterns');
+    if (patternCountEl) patternCountEl.textContent = '-';
+  }
+
   try {
     const log = await fetchJson('api/training-log?limit=100');
     tbody.innerHTML = '';
     const arr = Array.isArray(log) ? log : [];
+    const acceptedCountEl = document.getElementById('learnAccepted');
+    const rejectedCountEl = document.getElementById('learnRejected');
+    const acceptedCount = arr.filter(row => row.accepted).length;
+    const rejectedCount = arr.filter(row => row.rejected).length;
+    if (acceptedCountEl) acceptedCountEl.textContent = String(acceptedCount);
+    if (rejectedCountEl) rejectedCountEl.textContent = String(rejectedCount);
     if (!arr.length) {
-      tbody.innerHTML = '<tr><td colspan="8">Kein Trainingsprotokoll vorhanden</td></tr>';
+      tbody.innerHTML = '<tr><td colspan="9">Kein Trainingsprotokoll vorhanden</td></tr>';
       return;
     }
     arr.forEach(row => {
@@ -3065,6 +3093,10 @@ async function loadLernenTab() {
     });
   } catch (err) {
     tbody.innerHTML = `<tr><td colspan="9">Fehler: ${err}</td></tr>`;
+    const acceptedCountEl = document.getElementById('learnAccepted');
+    const rejectedCountEl = document.getElementById('learnRejected');
+    if (acceptedCountEl) acceptedCountEl.textContent = '-';
+    if (rejectedCountEl) rejectedCountEl.textContent = '-';
   }
 }
 const lernenRefreshBtn = document.getElementById('lernenRefreshBtn');
@@ -3191,7 +3223,7 @@ if (debugRefreshBtn) debugRefreshBtn.addEventListener('click', loadDebugTab);
 </script>
 </body>
 </html>
-""".replace("__DEFAULT_LANG__", lang)
+""".replace("__DEFAULT_LANG__", lang).replace("__INITIAL_VERSION_BADGE__", badge_text).replace("__INITIAL_VERSION__", version).replace("__INITIAL_COMMIT__", commit).replace("__INITIAL_BUILD_INFO__", json.dumps({"version": version, "git_short_commit": commit[:8] if commit and commit != "unknown" else commit, "git_commit": build_info.get("git_commit") or commit}))
 
 
 class StatsWebServer:
@@ -3204,7 +3236,7 @@ class StatsWebServer:
         get_live_data: Callable[[], Dict],
         get_summary_data: Callable[[], Dict],
         get_series_data: Callable[[int, int], List[Dict]],
-        get_patterns_data: Optional[Callable[[], List[Dict]]] = None,
+        get_patterns_data: Optional[Callable[[int], List[Dict]]] = None,
         set_pattern_label: Optional[Callable[[int, str], bool]] = None,
         set_pattern_phase_lock: Optional[Callable[[int, str], bool]] = None,
         delete_pattern: Optional[Callable[[int], bool]] = None,
@@ -3215,6 +3247,7 @@ class StatsWebServer:
         import_history_from_ha: Optional[Callable[[int], Dict]] = None,
         create_pattern_from_range: Optional[Callable[[str, str, str], Dict]] = None,
         language: str = "de",
+        build_info: Optional[Dict[str, str]] = None,
         storage = None,
     ):
         self.host = host
@@ -3233,6 +3266,7 @@ class StatsWebServer:
         self.import_history_from_ha = import_history_from_ha
         self.create_pattern_from_range = create_pattern_from_range
         self.language = "en" if str(language).strip().lower() == "en" else "de"
+        self.build_info = dict(build_info or {})
         self.storage = storage
         self._server: Optional[ThreadingHTTPServer] = None
         self._thread: Optional[threading.Thread] = None
@@ -3315,11 +3349,17 @@ class StatsWebServer:
                     return
 
                 if parsed.path == "/api/patterns":
-                    if parent.get_patterns_data:
-                        self._send_json(parent.get_patterns_data())
-                    else:
-                        self._send_json([])
-                    return
+                  query = parse_qs(parsed.query or "")
+                  limit_raw = (query.get("limit") or ["2000"])[0]
+                  try:
+                    limit = max(10, min(int(limit_raw), 10000))
+                  except ValueError:
+                    limit = 2000
+                  if parent.get_patterns_data:
+                    self._send_json(parent.get_patterns_data(limit))
+                  else:
+                    self._send_json([])
+                  return
 
                 if parsed.path.startswith("/api/patterns/") and parsed.path.endswith("/context"):
                   if not parent.storage or not hasattr(parent.storage, "get_pattern_context"):

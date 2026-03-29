@@ -6045,14 +6045,36 @@ class SQLiteStore:
             return {"ok": False, "error": str(e)}
 
     def clear_patterns_only(self) -> Dict:
-        """Clear only learned patterns, keep live readings."""
+        """Clear learned patterns and all derived learning artifacts, keep live readings."""
         if not self._patterns_conn:
             return {"ok": False, "error": "patterns storage not connected"}
         try:
+            deleted_counts: Dict[str, int] = {}
+            learning_tables = [
+                "event_phases",
+                "device_cycles",
+                "classification_log",
+                "user_labels",
+                "pattern_history",
+                "pattern_features",
+                "training_log",
+                "events",
+                "devices",
+                "learned_patterns",
+                "patterns",
+                "label_phase_locks",
+            ]
             with self._patterns_conn:
-                self._patterns_conn.execute("DELETE FROM learned_patterns")
-            logger.info("Cleared learned patterns (live readings preserved)")
-            return {"ok": True, "cleared": "patterns"}
+                for table_name in learning_tables:
+                    if not self._table_exists(self._patterns_conn, table_name):
+                        continue
+                    count_row = self._patterns_conn.execute(f"SELECT COUNT(*) FROM {table_name}").fetchone()
+                    deleted_counts[table_name] = int((count_row or [0])[0] or 0)
+                    self._patterns_conn.execute(f"DELETE FROM {table_name}")
+            self._learning_session_keys.clear()
+            self._learning_session_windows.clear()
+            logger.info("Cleared learned patterns and derived artifacts (live readings preserved): %s", deleted_counts)
+            return {"ok": True, "cleared": "patterns", "deleted": deleted_counts}
         except Exception as e:
             logger.error(f"Failed to clear patterns: {e}", exc_info=True)
             return {"ok": False, "error": str(e)}

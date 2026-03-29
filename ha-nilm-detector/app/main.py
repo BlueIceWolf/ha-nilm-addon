@@ -195,6 +195,7 @@ class NILMDetectionSystem:
                 import_history_from_ha=self._import_history_from_ha,
                 create_pattern_from_range=self._create_pattern_from_range,
                 language=self.config.language,
+                build_info=self.build_info,
                 storage=self.storage,
             )
             self.web_server._pipeline_debug_buffer = self._get_pipeline_debug_buffer
@@ -515,10 +516,11 @@ class NILMDetectionSystem:
             return []
         return self.storage.get_power_series(limit=limit, offset=offset)
 
-    def _build_patterns_payload(self) -> List[Dict]:
+    def _build_patterns_payload(self, limit: int = 2000) -> List[Dict]:
         if not self.storage:
             return []
-        return self.storage.list_patterns(limit=100)
+        safe_limit = max(10, min(int(limit), 10000))
+        return self.storage.list_patterns(limit=safe_limit)
 
     def _set_pattern_label(self, pattern_id: int, label: str) -> bool:
         if not self.storage:
