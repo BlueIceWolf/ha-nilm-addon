@@ -120,7 +120,7 @@ Damit das Projekt irgendwann "produktiv-ready" ist sollte gelten:
 - Gute Dokumentation damit neue User nicht völlig verloren sind
 - Ein paar Video-Guides zum Einrichten
 
-**Aktuell (v0.6.28):** Etwa 82-88% davon erreicht. Core, Persistenz, Lernpipeline, ML-Training und Inrush/Runtime-Datenmodell sind stabil; Fokus liegt jetzt auf erweiterten ML-Features, variablen Lasten und UI-Feinschliff.
+**Aktuell (v0.6.29):** Etwa 83-89% davon erreicht. Core, Persistenz, Lernpipeline, ML-Training und Inrush/Runtime-Datenmodell sind stabil; Update-Performance wurde durch Binary-Dependencies verbessert. Fokus liegt jetzt auf erweiterten ML-Features, variablen Lasten und UI-Feinschliff.
 
 ---
 

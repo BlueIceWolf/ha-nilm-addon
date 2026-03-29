@@ -4,6 +4,19 @@
 
 ---
 
+# Release 0.6.29 (BETA)
+
+## Store Kurztext
+- **⚡ Schnellere Updates**: Add-on verwendet jetzt vorkompilierte Alpine-Binary-Pakete fuer `numpy`, `scipy` und `scikit-learn` statt langsamer Source-Builds.
+
+## Highlights
+- Add-on-Dockerfile auf Binary-Dependencies umgestellt: `py3-numpy`, `py3-scipy`, `py3-scikit-learn`
+- Build-Toolchain aus dem Runtime-Image entfernt (`gcc`, `g++`, `musl-dev`, `python3-dev`)
+- `requirements.txt` im Add-on reduziert auf leichte pip-Pakete (`paho-mqtt`, `requests`)
+- Erwartete Wirkung: spuerbar kuerzere Install-/Update-Zeit auf ARM und x86
+
+---
+
 # Release 0.6.28 (BETA)
 
 ## Store Kurztext

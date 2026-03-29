@@ -2,6 +2,16 @@
 
 > ⚠️ **Hinweis**: Dieses Projekt ist experimentell (BETA) - Breaking Changes und Bugs können auftreten.
 
+## 0.6.29 (BETA)
+
+**Update-Speed verbessert: keine schweren Source-Builds mehr fuer Scientific-Dependencies**
+
+- Add-on-Dockerfile nutzt jetzt durchgaengig vorkompilierte Alpine-Pakete: `py3-numpy`, `py3-scipy`, `py3-scikit-learn`
+- Compiler-/Build-Toolchain (`gcc`, `g++`, `musl-dev`, `python3-dev`) aus dem Add-on-Image entfernt
+- `ha-nilm-detector/requirements.txt` entschlackt: nur noch leichte pip-Abhaengigkeiten (`paho-mqtt`, `requests`)
+- Ziel: deutlich schnellere Update-/Install-Zeiten, speziell auf ARM (Raspberry Pi)
+- Tests weiterhin gruen: `11 passed`
+
 ## 0.6.28 (BETA)
 
 **Machine Learning aktiviert: RandomForest-Klassifikator lernt von deinen Labels**
