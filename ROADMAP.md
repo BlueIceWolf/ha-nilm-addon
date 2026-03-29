@@ -148,7 +148,7 @@ Damit das Projekt irgendwann "produktiv-ready" ist sollte gelten:
 - Gute Dokumentation damit neue User nicht völlig verloren sind
 - Ein paar Video-Guides zum Einrichten
 
-**Aktuell (v0.6.33):** Etwa 88-92% davon erreicht. Core, Persistenz, Lernpipeline, ML-Training, Inrush/Runtime-Modell, Dedup-Lernpfad und die neue Kontext-Debug-Ansicht sind stabil. Fokus liegt jetzt auf variablen Lasten, praxisnahem ML-Tuning und weiterem UI-Feinschliff.
+**Aktuell (v0.6.34):** Etwa 89-93% davon erreicht. Core, Persistenz, Lernpipeline, Hybrid-ML-Phase-1 (Fusion+Boosting-first), Inrush/Runtime-Modell, Dedup-Lernpfad und Kontext-/Debug-Ansicht sind stabil. Fokus liegt jetzt auf Unknown-Gating (Phase 2), HMM/Session-Modell (Phase 3) und weiterem UI-Feinschliff.
 
 ---
 

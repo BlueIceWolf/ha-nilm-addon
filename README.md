@@ -11,7 +11,7 @@
 
 <p align="center">
   <img src="https://img.shields.io/badge/Status-BETA-orange" alt="BETA" />
-   <img src="https://img.shields.io/badge/Version-0.6.33-blue" alt="Version" />
+   <img src="https://img.shields.io/badge/Version-0.6.34-blue" alt="Version" />
 </p>
 
 > ⚠️ **EXPERIMENTELLES PROJEKT (BETA)**: Dieses Add-on befindet sich in aktiver Entwicklung. Viele Features funktionieren bereits gut, aber es ist **nicht production-ready**. Erwarte Bugs, unvollständige Features und Breaking Changes zwischen Versionen. Nutze es zum Experimentieren und Testen, aber nicht für kritische Automatisierungen.
@@ -27,7 +27,7 @@
 
 ---
 
-**Aktuell:** `v0.6.33` - Dedup vor Insert, neue Kontext-Musteransicht (2s/5s/10s) und Touch-feste Musterauswahl.
+**Aktuell:** `v0.6.34` - Hybrid-ML Phase 1 (Boosting+Shape+Prototype), Build-Version im UI und neue Debug-KPIs.
 
 > ℹ️ **v0.6.11 Hinweis**: Auch die oberen Dashboard-Karten (`Gesamtleistung`, `Durchschnitt`, `Messwerte`, `Gelernte Muster`) schalten jetzt sauber zwischen DE/EN um.
 

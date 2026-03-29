@@ -4,6 +4,27 @@
 
 ## 0.6.32 (BETA)
 
+## 0.6.34 (BETA)
+
+**Phase-1 Hybrid-ML gestartet + Build-/Debug-Transparenz erweitert**
+
+- Hybrid-Fusion im Lernpfad auf Phase-1-Gewichte umgestellt:
+  - Boosting `45%`, Shape `35%`, Prototype `20%`
+  - Explizite `decision_reason` fuer jede finale Entscheidung
+- Local ML auf Boosting-first umgestellt (mit sicherem Fallback):
+  - `HistGradientBoostingClassifier` als Primaermodell
+  - `RandomForest` als Fallback bei Edge-Umgebungen
+  - Trainingsdaten priorisieren bestaetigte/User-gelabelte Muster
+- Persistente Hybrid-Metriken erweitert:
+  - `events`: `prototype_score`, `dtw_score`, `hybrid_score`, `decision_reason`
+  - `training_log`: `prototype_score`, `shape_score`, `ml_score`, `final_score`, `decision_reason`, `agreement_flag`
+- Web-UI/Debug erweitert:
+  - Build-Info sichtbar (Version + Git-Commit)
+  - Hybrid-Panel zeigt `decision_reason`
+  - Neue KPI-Karten: `Boosting/Shape Agreement` und `ML Override Rate`
+
+## 0.6.32 (BETA)
+
 **Hotfix: Add-on Buildfehler (PEP 668 / externally-managed-environment) behoben**
 
 - Dockerfile installiert jetzt alle Runtime-Abhaengigkeiten ausschliesslich via `apk`

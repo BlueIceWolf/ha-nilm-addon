@@ -4,6 +4,28 @@
 
 ---
 
+# Release 0.6.34 (BETA)
+
+## Store Kurztext
+- **🧠 Hybrid-ML Phase 1 gestartet**: Boosting-first Fusion, mehr Debug-Transparenz und sichtbare Build-Version im Dashboard.
+
+## Highlights
+- **Phase-1 Fusion aktiv**
+  - Gewichte: Boosting `45%`, Shape `35%`, Prototype `20%`
+  - Kontrollierter ML-Override nur bei klarer Evidenz
+  - `decision_reason` pro Entscheidung fuer bessere Nachvollziehbarkeit
+- **ML-Modell verbessert**
+  - Boosting-first (`HistGradientBoostingClassifier`) statt reinem RandomForest
+  - Fallback auf RandomForest bei inkompatiblen Umgebungen
+  - Training bevorzugt bestaetigte bzw. User-gelabelte Muster
+- **Persistenz + Debug-API erweitert**
+  - Event-/Training-Logs enthalten jetzt Hybrid-Teilscores und Agreement-Flag
+  - UI zeigt `Boosting/Shape Agreement` und `ML Override Rate` der letzten 100 Entscheidungen
+- **Build-Version sichtbar**
+  - Start-Log und Web-UI zeigen Release-Version + kurzen Git-Commit
+
+---
+
 # Release 0.6.33 (BETA)
 
 ## Store Kurztext
