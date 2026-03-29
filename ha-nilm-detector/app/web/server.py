@@ -2263,6 +2263,37 @@ function renderPatternContextChart(contextPayload) {
     ctx.fillRect(shadeStartX, 20, shadeEndX - shadeStartX, height - padding - 20);
   }
 
+  const phaseList = Array.isArray(contextPayload.event_phases) ? contextPayload.event_phases : [];
+  if (phaseList.length > 0) {
+    const phaseColor = (phaseType) => {
+      const key = String(phaseType || '').toLowerCase();
+      if (key.includes('inrush')) return 'rgba(244, 67, 54, 0.20)';
+      if (key.includes('steady') || key.includes('run')) return 'rgba(76, 175, 80, 0.18)';
+      if (key.includes('shutdown') || key.includes('cooldown')) return 'rgba(255, 152, 0, 0.18)';
+      return 'rgba(156, 163, 175, 0.14)';
+    };
+    phaseList.forEach((phase) => {
+      const startOffsetMs = Number(phase.start_offset_s || 0) * 1000.0;
+      const endOffsetMs = Number(phase.end_offset_s || 0) * 1000.0;
+      const segStartMs = eventStartDt.getTime() + startOffsetMs;
+      const segEndMs = eventStartDt.getTime() + Math.max(endOffsetMs, startOffsetMs);
+      const x0 = Math.max(padding, Math.min(xFromMs(segStartMs), width - 20));
+      const x1 = Math.max(padding, Math.min(xFromMs(segEndMs), width - 20));
+      if (x1 <= x0) return;
+      ctx.fillStyle = phaseColor(phase.phase_type);
+      ctx.fillRect(x0, 20, x1 - x0, height - padding - 20);
+
+      ctx.fillStyle = inkColor;
+      ctx.font = '10px sans-serif';
+      ctx.textAlign = 'center';
+      const labelX = x0 + ((x1 - x0) / 2);
+      const label = String(phase.phase_type || '').replace(/_/g, ' ');
+      if ((x1 - x0) > 42) {
+        ctx.fillText(label, labelX, 30);
+      }
+    });
+  }
+
   // Baseline reference line.
   const baseline = Array.isArray(contextPayload.baseline) ? contextPayload.baseline : [];
   if (baseline.length >= 2) {
@@ -2342,7 +2373,8 @@ function renderPatternContextChart(contextPayload) {
   }
   if (infoEl) {
     const zoomTxt = zoomFactor > 1 ? ` | Zoom x${zoomFactor.toFixed(1)}` : '';
-    infoEl.textContent = `Kontext: ${contextPayload.requested_pre_seconds || 0}s davor / ${contextPayload.requested_post_seconds || 0}s danach | Eventdauer ${evtDuration.toFixed(2)}s${zoomTxt}`;
+    const phaseTxt = phaseList.length > 0 ? ` | Phasen ${phaseList.length}` : '';
+    infoEl.textContent = `Kontext: ${contextPayload.requested_pre_seconds || 0}s davor / ${contextPayload.requested_post_seconds || 0}s danach | Eventdauer ${evtDuration.toFixed(2)}s${phaseTxt}${zoomTxt}`;
   }
   if (msgEl) {
     const warning = contextPayload.warning ? String(contextPayload.warning) : '';
@@ -2557,6 +2589,13 @@ function renderPatternStats(pattern) {
   const startTs = context ? String(context.start_time || '-') : '-';
   const endTs = context ? String(context.end_time || '-') : '-';
   const prePost = context ? `${context.requested_pre_seconds || 0}s / ${context.requested_post_seconds || 0}s` : '-';
+  const phaseRows = Array.isArray(context && context.event_phases) ? context.event_phases : [];
+  const sumPhase = (nameMatches) => phaseRows
+    .filter(item => nameMatches.some(key => String(item.phase_type || '').toLowerCase().includes(key)))
+    .reduce((acc, item) => acc + Number(item.duration_s || 0), 0);
+  const inrushDur = sumPhase(['inrush']);
+  const steadyDur = sumPhase(['steady', 'run', 'modulated']);
+  const shutdownDur = sumPhase(['shutdown', 'cooldown']);
   statsDiv.innerHTML = `
     <div style="padding:8px;background:var(--bg-elev);border-radius:6px;">
       <div style="color:var(--muted);font-size:0.75rem;">${t('statsAvgPower')}</div>
@@ -2613,6 +2652,18 @@ function renderPatternStats(pattern) {
     <div style="padding:8px;background:var(--bg-elev);border-radius:6px;">
       <div style="color:var(--muted);font-size:0.75rem;">Vorlauf / Nachlauf</div>
       <div style="font-weight:600;font-size:1rem;">${prePost}</div>
+    </div>
+    <div style="padding:8px;background:var(--bg-elev);border-radius:6px;">
+      <div style="color:var(--muted);font-size:0.75rem;">Inrush</div>
+      <div style="font-weight:600;font-size:1rem;">${fmt(inrushDur)}s</div>
+    </div>
+    <div style="padding:8px;background:var(--bg-elev);border-radius:6px;">
+      <div style="color:var(--muted);font-size:0.75rem;">Steady</div>
+      <div style="font-weight:600;font-size:1rem;">${fmt(steadyDur)}s</div>
+    </div>
+    <div style="padding:8px;background:var(--bg-elev);border-radius:6px;">
+      <div style="color:var(--muted);font-size:0.75rem;">Shutdown</div>
+      <div style="font-weight:600;font-size:1rem;">${fmt(shutdownDur)}s</div>
     </div>
   `;
 }

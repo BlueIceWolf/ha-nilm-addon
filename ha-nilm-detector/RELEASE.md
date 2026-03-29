@@ -4,6 +4,33 @@
 
 ---
 
+# Release 0.6.35 (BETA)
+
+## Store Kurztext
+- **🧱 Lernpipeline modularisiert**: klare Stage-Trennung, bessere Event-Inspektion im Kontextchart und robuster Import/Export-Roundtrip.
+
+## Highlights
+- **Deterministische Pipeline-Stages als Modul**
+  - Neues Modul `app/learning/pipeline_stages.py`
+  - Lernfluss ist jetzt klar getrennt in `prepare -> match -> dedup-decision`
+  - `sqlite_store.learn_cycle_pattern` bleibt API-stabil, ist intern aber besser testbar
+- **Dedup-Konfiguration zentralisiert**
+  - `dedup_update_similarity` und `dedup_merge_similarity` als zentrale Parameter
+  - Zusatzausgabe im Log: dedup-Entscheidung inkl. Grund und Similarity
+- **UI-Inspektion erweitert**
+  - Pattern-Kontextansicht zeigt jetzt segmentierte Event-Phasen (Inrush/Steady/Shutdown) direkt im Chart
+  - Stats im Modal enthalten zusaetzlich die Phasen-Dauern
+- **Persistenz & Roundtrip gehaertet**
+  - Export liefert Schema-Metadaten
+  - Import uebernimmt erweiterte Pattern-/Device-/Event-Felder
+  - Timestamp-Repair fuer Patterns wird nach Import automatisch forciert
+- **Tests ausgebaut**
+  - Neue Unit-Tests fuer Pipeline-Stages
+  - Restart-Persistenz- und Import/Export-Roundtrip-Test
+  - Dedup-Regression fuer leicht variierenden Inrush beim selben Geraet
+
+---
+
 # Release 0.6.34 (BETA)
 
 ## Store Kurztext

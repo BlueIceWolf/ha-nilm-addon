@@ -2,6 +2,24 @@
 
 > ⚠️ **Hinweis**: Dieses Projekt ist experimentell (BETA) - Breaking Changes und Bugs können auftreten.
 
+## 0.6.35 (BETA)
+
+**Pipeline-Stabilisierung abgeschlossen: modulare Lernstufen + bessere Inspektion + Roundtrip-Haertung**
+
+- Lernpipeline in explizite Stufen ausgelagert (`prepare -> match -> dedup-decision`) in neuem Modul `app/learning/pipeline_stages.py`
+- `learn_cycle_pattern` nutzt jetzt diese deterministischen Stage-Helper fuer bessere Lesbarkeit und Testbarkeit
+- Dedup-Schwellwerte zentralisiert (`dedup_update_similarity`, `dedup_merge_similarity`) statt verstreuter Literale
+- Pattern-Kontext-API liefert jetzt auch segmentierte `event_phases` pro Event
+- UI-Kontextchart hebt Inrush/Steady/Shutdown visuell hervor und zeigt Phasen-Dauern in den Muster-Stats
+- Import/Export gehaertet:
+  - Export enthaelt jetzt Schema-Metadaten
+  - Import uebernimmt mehr Pattern-/Device-/Event-Felder fuer robusteren Roundtrip
+  - Timestamp-Repair wird nach Import erzwungen ausgefuehrt
+- Neue Tests:
+  - `test_learning_pipeline_stages.py`
+  - `test_persistence_roundtrip.py`
+  - erweiterter Dedup-Test fuer "gleiches Geraet, leicht anderer Inrush"
+
 ## 0.6.32 (BETA)
 
 ## 0.6.34 (BETA)
