@@ -23,6 +23,24 @@ if TYPE_CHECKING:
 logger = get_logger(__name__)
 
 
+def _json_safe(value: Any) -> Any:
+    """Best-effort conversion to JSON-serializable values."""
+    if value is None or isinstance(value, (str, int, float, bool)):
+        return value
+    if isinstance(value, datetime):
+        return value.isoformat()
+    if isinstance(value, dict):
+        return {str(k): _json_safe(v) for k, v in value.items()}
+    if isinstance(value, (list, tuple, set)):
+        return [_json_safe(v) for v in value]
+    if hasattr(value, "isoformat"):
+        try:
+            return value.isoformat()
+        except Exception:
+            pass
+    return str(value)
+
+
 @dataclass
 class StageResult:
     """Result from a single pipeline stage."""
@@ -70,13 +88,13 @@ class PipelineResult:
             "label": self.label,
             "confidence": self.confidence,
             "stages": {
-                "baseline": self.baseline.data,
-                "edges": self.edges.data,
-                "events": self.events.data,
-                "cycles": self.cycles.data,
-                "features": self.features.data,
-                "classification": self.classification.data,
-                "persistence": self.persistence.data,
+                "baseline": _json_safe(self.baseline.data),
+                "edges": _json_safe(self.edges.data),
+                "events": _json_safe(self.events.data),
+                "cycles": _json_safe(self.cycles.data),
+                "features": _json_safe(self.features.data),
+                "classification": _json_safe(self.classification.data),
+                "persistence": _json_safe(self.persistence.data),
             },
             "errors": {
                 k: v

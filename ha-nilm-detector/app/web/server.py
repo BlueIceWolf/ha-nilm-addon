@@ -2819,13 +2819,17 @@ class StatsWebServer:
 
                 if parsed.path == "/api/debug/pipeline-buffer":
                     # Returns recent pipeline debug events if a NILMPipeline ref is stored
-                    buf = getattr(parent, "_pipeline_debug_buffer", None)
-                    if callable(buf):
-                        result = buf()
-                        self._send_json(result if isinstance(result, (dict, list)) else [])
-                    elif isinstance(buf, list):
-                        self._send_json(buf)
-                    else:
+                    try:
+                        buf = getattr(parent, "_pipeline_debug_buffer", None)
+                        if callable(buf):
+                            result = buf()
+                            self._send_json(result if isinstance(result, (dict, list)) else [])
+                        elif isinstance(buf, list):
+                            self._send_json(buf)
+                        else:
+                            self._send_json([])
+                    except Exception as e:
+                        logger.error(f"Pipeline buffer fetch failed: {e}", exc_info=True)
                         self._send_json([])
                     return
 
