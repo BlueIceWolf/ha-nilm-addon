@@ -1,7 +1,6 @@
 paho-mqtt==1.6.1
 requests==2.31.0
-# Heavy scientific packages are installed via apk in Dockerfile:
+# Heavy scientific dependencies are installed via apk in Dockerfile:
 # - py3-numpy
 # - py3-scipy
 # - py3-scikit-learn
-# Keeping them out of pip requirements prevents slow source builds on ARM.

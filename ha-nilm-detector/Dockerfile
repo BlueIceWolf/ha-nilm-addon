@@ -1,12 +1,15 @@
 ARG BUILD_FROM
 FROM ${BUILD_FROM}
 
-# Install pre-built Alpine Python packages for heavy scientific deps.
-# This avoids source compilation on ARM during addon updates.
+# Fast dependency install path for HA add-on updates:
+# - use Alpine system Python + prebuilt py3-* packages for heavy deps
+# - keep pip only for small pure-Python extras
 RUN apk add --no-cache \
+    python3 \
+    py3-pip \
     py3-numpy \
-    py3-scikit-learn \
-    py3-scipy
+    py3-scipy \
+    py3-scikit-learn
 
 # Set working directory
 WORKDIR /app
@@ -14,9 +17,8 @@ WORKDIR /app
 # Copy dependency manifest first so pip install can use layer cache
 COPY requirements.txt /tmp/requirements.txt
 
-# Install Python dependencies
-# Keep pip installs lightweight (pure Python deps from requirements.txt).
-RUN pip3 install --no-cache-dir --prefer-binary -r /tmp/requirements.txt \
+# Install only lightweight pip dependencies.
+RUN pip3 install --no-cache-dir -r /tmp/requirements.txt \
     && rm -f /tmp/requirements.txt
 
 # Copy application sources after dependencies
