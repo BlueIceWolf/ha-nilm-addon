@@ -20,6 +20,7 @@ from app.publishers.mqtt import MQTTPublisher
 from app.state_engine import StateEngine
 from app.storage import SQLiteStore
 from app.utils.logging import get_logger, setup_logging
+from app.version import get_build_info
 from app.web import StatsWebServer
 
 logger = get_logger(__name__)
@@ -50,9 +51,17 @@ class NILMDetectionSystem:
             log_file=self.config.log_file,
             max_backups=self.config.max_log_backups
         )
-        logger.info("Starting NILM Detection System...")
+        self.build_info = get_build_info()
+        self.app_version = self.build_info["version"]
+        logger.info(
+            "Starting NILM Detection System v%s (%s)...",
+            self.app_version,
+            self.build_info.get("git_short_commit", "unknown"),
+        )
         logger.info(
             "Runtime configuration loaded: "
+            f"version={self.app_version}, "
+            f"git_commit={self.build_info.get('git_short_commit', 'unknown')}, "
             f"log_level={self.config.log_level}, "
             f"update_interval_seconds={self.config.update_interval_seconds}, "
             f"devices={len(self.config.devices)}, "
@@ -327,6 +336,9 @@ class NILMDetectionSystem:
                 })
 
         return {
+            "build": dict(self.build_info),
+            "app_version": self.app_version,
+            "git_commit": self.build_info.get("git_short_commit", "unknown"),
             "current_power_w": float(latest.power_w) if latest else None,
             "timestamp": latest.timestamp.isoformat() if latest else None,
             "phases": phases_info,
@@ -487,12 +499,16 @@ class NILMDetectionSystem:
     def _build_summary_payload(self) -> Dict:
         if not self.storage:
             return {
+                "build": dict(self.build_info),
                 "reading_count": 0,
                 "avg_power_w": 0.0,
                 "min_power_w": 0.0,
                 "max_power_w": 0.0,
             }
-        return self.storage.get_summary(hours=24)
+        summary = self.storage.get_summary(hours=24)
+        if isinstance(summary, dict):
+            summary["build"] = dict(self.build_info)
+        return summary
 
     def _build_series_payload(self, limit: int, offset: int = 0) -> List[Dict]:
         if not self.storage:

@@ -1,4 +1,10 @@
-"""Optional local ML classifier for NILM pattern/event labeling."""
+"""Optional local ML classifier for NILM pattern/event labeling.
+
+Phase 1 hybrid-ML kickoff:
+- Prefer gradient boosting (tabular features)
+- Keep safe RandomForest fallback
+- Prioritize confirmed/user-labeled patterns for cleaner training
+"""
 
 from __future__ import annotations
 
@@ -40,13 +46,14 @@ class MLPrediction:
 
 
 class LocalMLClassifier:
-    """Local optional RandomForest classifier with safe fallbacks."""
+    """Local optional boosting-first classifier with safe fallbacks."""
 
     def __init__(self) -> None:
         self._model: Any = None
         self._labels: List[str] = []
         self._trained = False
         self._fingerprint: Tuple[int, str] = (0, "")
+        self._model_source = "ml_unavailable"
 
     @staticmethod
     def _normalize_label(label: object) -> str:
@@ -92,11 +99,12 @@ class LocalMLClassifier:
             return True
 
         try:
-            from sklearn.ensemble import RandomForestClassifier  # type: ignore
+            from sklearn.ensemble import HistGradientBoostingClassifier, RandomForestClassifier  # type: ignore
         except Exception:
             self._model = None
             self._labels = []
             self._trained = False
+            self._model_source = "ml_unavailable"
             return False
 
         x_train: List[List[float]] = []
@@ -106,6 +114,13 @@ class LocalMLClassifier:
             label = self._normalize_label(pattern.get("user_label") or pattern.get("suggestion_type") or "unknown")
             if label == "unknown":
                 continue
+
+            # Prefer trustworthy labels for online training.
+            has_user_label = bool(str(pattern.get("user_label") or "").strip())
+            is_confirmed = bool(pattern.get("is_confirmed"))
+            if not (has_user_label or is_confirmed):
+                continue
+
             seen_count = int(pattern.get("seen_count", 0) or 0)
             if seen_count < 2:
                 continue
@@ -117,26 +132,42 @@ class LocalMLClassifier:
             self._model = None
             self._labels = []
             self._fingerprint = fingerprint
+            self._model_source = "ml_insufficient_data"
             return False
 
-        model = RandomForestClassifier(
-            n_estimators=80,
-            max_depth=10,
-            min_samples_leaf=2,
-            random_state=42,
-            n_jobs=1,
-        )
-        model.fit(x_train, y_train)
+        model: Any = None
+        model_source = "ml_boosting"
+        try:
+            model = HistGradientBoostingClassifier(
+                max_depth=6,
+                max_iter=180,
+                learning_rate=0.08,
+                min_samples_leaf=4,
+                random_state=42,
+            )
+            model.fit(x_train, y_train)
+        except Exception:
+            # Conservative fallback when boosting fails on edge environments.
+            model = RandomForestClassifier(
+                n_estimators=100,
+                max_depth=10,
+                min_samples_leaf=2,
+                random_state=42,
+                n_jobs=1,
+            )
+            model.fit(x_train, y_train)
+            model_source = "ml_random_forest_fallback"
 
         self._model = model
         self._labels = list(model.classes_)
         self._trained = True
         self._fingerprint = fingerprint
+        self._model_source = model_source
         return True
 
     def predict(self, patterns: Sequence[Dict[str, Any]], cycle: Dict[str, Any], confidence_threshold: float = 0.55) -> MLPrediction:
         if not self._ensure_trained(patterns):
-            return MLPrediction(label="unknown", confidence=0.0, top_n=[], source="ml_unavailable")
+            return MLPrediction(label="unknown", confidence=0.0, top_n=[], source=self._model_source)
 
         assert self._model is not None
         vec = [self._to_features(cycle)]
@@ -152,5 +183,5 @@ class LocalMLClassifier:
             label=self._normalize_label(best_label),
             confidence=float(best_score),
             top_n=top_n,
-            source="ml_random_forest",
+            source=self._model_source,
         )

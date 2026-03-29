@@ -81,6 +81,25 @@ def _html_page(default_language: str = "de") -> str:
       letter-spacing: 0.01em;
       font-weight: 600;
     }
+    .head-meta {
+      display: flex;
+      flex-direction: column;
+      align-items: flex-end;
+      gap: 4px;
+    }
+    .version-badge {
+      display: inline-flex;
+      align-items: center;
+      justify-content: center;
+      padding: 4px 10px;
+      border-radius: 999px;
+      border: 1px solid rgba(3, 169, 244, 0.3);
+      background: var(--accent-soft);
+      color: var(--accent-strong);
+      font-size: 0.8rem;
+      font-weight: 600;
+      letter-spacing: 0.02em;
+    }
     .muted { color: var(--muted); font-size: 0.88rem; }
     .grid {
       display: grid;
@@ -276,6 +295,7 @@ def _html_page(default_language: str = "de") -> str:
     }
     @media (max-width: 700px) {
       .head { flex-direction: column; align-items: flex-start; }
+      .head-meta { align-items: flex-start; }
       canvas { height: 220px; }
     }
     /* ── Tab navigation ──────────────────────────────────────── */
@@ -312,7 +332,10 @@ def _html_page(default_language: str = "de") -> str:
   <div class=\"wrap\">
     <div class=\"head\">
       <h1 id=\"pageTitle\">HA NILM Live-Statistik</h1>
-      <div id=\"ts\" class=\"muted\">Lädt...</div>
+      <div class=\"head-meta\">
+        <div id=\"versionBadge\" class=\"version-badge\" data-version=\"-\">Version -</div>
+        <div id=\"ts\" class=\"muted\">Lädt...</div>
+      </div>
     </div>
     <div style=\"margin-bottom: 12px; display: flex; gap: 8px; flex-wrap: wrap; align-items: center;\">
       <button id=\"runLearningBtn\" title=\"Lernlauf sofort starten\">Lernen jetzt ausführen</button>
@@ -468,7 +491,7 @@ def _html_page(default_language: str = "de") -> str:
       <table>
         <thead>
           <tr>
-            <th>Zeitpunkt</th><th>Event ID</th><th>Entscheidung</th><th>Label</th><th>Grund</th><th>Dedup</th><th>Score</th><th>Pattern</th>
+            <th>Zeitpunkt</th><th>Event ID</th><th>Entscheidung</th><th>Label</th><th>Grund</th><th>Dedup</th><th>Score</th><th>Hybrid</th><th>Pattern</th>
           </tr>
         </thead>
         <tbody id=\"trainingLogRows\"></tbody>
@@ -528,6 +551,7 @@ def _html_page(default_language: str = "de") -> str:
         <div id=\"hybridDebugTitle\" class=\"label\">Hybrid AI – letztes Ergebnis</div>
         <div style=\"display:grid;grid-template-columns:repeat(auto-fit,minmax(170px,1fr));gap:8px;\">
           <div><span class=\"muted\" id=\"hybridSourceLabel\">Quelle</span><div id=\"hybridSourceValue\">-</div></div>
+          <div><span class=\"muted\" id=\"hybridReasonLabel\">Entscheidung</span><div id=\"hybridReasonValue\">-</div></div>
           <div><span class=\"muted\" id=\"hybridLabelLabel\">Label</span><div id=\"hybridLabelValue\">-</div></div>
           <div><span class=\"muted\" id=\"hybridConfidenceLabel\">Konfidenz</span><div id=\"hybridConfidenceValue\">-</div></div>
           <div><span class=\"muted\" id=\"hybridDistanceLabel\">Distanz</span><div id=\"hybridDistanceValue\">-</div></div>
@@ -535,6 +559,27 @@ def _html_page(default_language: str = "de") -> str:
           <div><span class=\"muted\" id=\"hybridShapeLabel\">Shape-Score</span><div id=\"hybridShapeValue\">-</div></div>
           <div><span class=\"muted\" id=\"hybridRepeatLabel\">Repeatability</span><div id=\"hybridRepeatValue\">-</div></div>
           <div><span class=\"muted\" id=\"hybridMlLabel\">ML</span><div id=\"hybridMlValue\">-</div></div>
+        </div>
+      </div>
+
+      <div class=\"card\" style=\"margin-bottom:12px;\">
+        <div id=\"buildInfoTitle\" class=\"label\">Build-Informationen</div>
+        <div style=\"display:grid;grid-template-columns:repeat(auto-fit,minmax(170px,1fr));gap:8px;\">
+          <div><span class=\"muted\" id=\"buildVersionLabel\">Version</span><div id=\"buildVersionValue\">-</div></div>
+          <div><span class=\"muted\" id=\"buildCommitLabel\">Git-Commit</span><div id=\"buildCommitValue\">-</div></div>
+        </div>
+      </div>
+
+      <div class=\"grid\" style=\"margin-bottom:12px;\">
+        <div class=\"card\">
+          <div class=\"label\">Boosting/Shape Agreement (letzte 100)</div>
+          <div class=\"value\" id=\"hybridAgreementValue\">-</div>
+          <div class=\"muted\" id=\"hybridAgreementMeta\" style=\"margin-top:4px;font-size:0.82rem;\">-</div>
+        </div>
+        <div class=\"card\">
+          <div class=\"label\">ML Override Rate (letzte 100)</div>
+          <div class=\"value\" id=\"hybridOverrideValue\">-</div>
+          <div class=\"muted\" id=\"hybridOverrideMeta\" style=\"margin-top:4px;font-size:0.82rem;\">-</div>
         </div>
       </div>
 
@@ -611,6 +656,7 @@ def _html_page(default_language: str = "de") -> str:
 const canvas = document.getElementById('powerChart');
 const ctx = canvas.getContext('2d');
 const statusEl = document.getElementById('ts');
+const versionBadgeEl = document.getElementById('versionBadge');
 const selectionOverlay = document.getElementById('selectionOverlay');
 
 // Task progress elements
@@ -631,6 +677,7 @@ let currentPatternPage = 1;
 let currentPatternPageSize = 50;
 let seriesWindow = 360;
 let seriesOffset = 0;
+let currentBuildInfo = null;
 let patternModalState = {
   pattern: null,
   view: 'context',
@@ -645,6 +692,9 @@ const defaultLanguage = document.documentElement.lang === 'en' ? 'en' : 'de';
 const I18N = {
   de: {
     pageTitle: 'HA NILM Live-Statistik',
+    versionLabel: 'Version',
+    buildInfoTitle: 'Build-Informationen',
+    buildCommitLabel: 'Git-Commit',
     languageLabel: 'Sprache:',
     runLearningBtn: 'Lernen jetzt ausführen',
     clearReadingsBtn: 'Live-Daten löschen',
@@ -777,6 +827,7 @@ const I18N = {
     patternCountLabel: '{total} ({confirmed} bestätigt)',
     hybridDebugTitle: 'Hybrid AI Debug',
     hybridSourceLabel: 'Quelle',
+    hybridReasonLabel: 'Entscheidung',
     hybridLabelLabel: 'Label',
     hybridConfidenceLabel: 'Konfidenz',
     hybridDistanceLabel: 'Distanz',
@@ -804,6 +855,9 @@ const I18N = {
   },
   en: {
     pageTitle: 'HA NILM Live Statistics',
+    versionLabel: 'Version',
+    buildInfoTitle: 'Build Information',
+    buildCommitLabel: 'Git Commit',
     languageLabel: 'Language:',
     runLearningBtn: 'Run learning now',
     clearReadingsBtn: 'Clear live data',
@@ -936,6 +990,7 @@ const I18N = {
     patternCountLabel: '{total} ({confirmed} confirmed)',
     hybridDebugTitle: 'Hybrid AI Debug',
     hybridSourceLabel: 'Source',
+    hybridReasonLabel: 'Decision',
     hybridLabelLabel: 'Label',
     hybridConfidenceLabel: 'Confidence',
     hybridDistanceLabel: 'Distance',
@@ -992,6 +1047,9 @@ function applyLanguage() {
   };
 
   assignText('pageTitle', 'pageTitle');
+  assignText('buildInfoTitle', 'buildInfoTitle');
+  assignText('buildVersionLabel', 'versionLabel');
+  assignText('buildCommitLabel', 'buildCommitLabel');
   assignText('languageLabel', 'languageLabel');
   assignText('runLearningBtn', 'runLearningBtn');
   assignText('clearReadingsBtn', 'clearReadingsBtn');
@@ -1011,6 +1069,7 @@ function applyLanguage() {
   assignText('lblPatternCount', 'lblPatternCount');
   assignText('hybridDebugTitle', 'hybridDebugTitle');
   assignText('hybridSourceLabel', 'hybridSourceLabel');
+  assignText('hybridReasonLabel', 'hybridReasonLabel');
   assignText('hybridLabelLabel', 'hybridLabelLabel');
   assignText('hybridConfidenceLabel', 'hybridConfidenceLabel');
   assignText('hybridDistanceLabel', 'hybridDistanceLabel');
@@ -1089,6 +1148,29 @@ function applyLanguage() {
   }
 
   updateDarkModeButtonText();
+  updateVersionBadge();
+}
+
+function updateVersionBadge(version = null) {
+  if (!versionBadgeEl) return;
+  const safeVersion = version || versionBadgeEl.dataset.version || '-';
+  versionBadgeEl.dataset.version = safeVersion;
+  versionBadgeEl.textContent = `${t('versionLabel')} ${safeVersion}`;
+}
+
+function updateBuildInfo(build = null) {
+  if (build && typeof build === 'object') {
+    currentBuildInfo = build;
+  }
+  const info = currentBuildInfo || {};
+  const version = info.version || info.app_version || versionBadgeEl?.dataset.version || '-';
+  const commit = info.git_short_commit || info.git_commit || '-';
+  updateVersionBadge(commit && commit !== '-' ? `${version} (${commit})` : version);
+
+  const buildVersionValueEl = document.getElementById('buildVersionValue');
+  if (buildVersionValueEl) buildVersionValueEl.textContent = version;
+  const buildCommitValueEl = document.getElementById('buildCommitValue');
+  if (buildCommitValueEl) buildCommitValueEl.textContent = commit;
 }
 
 // Dark Mode initialisieren
@@ -1769,6 +1851,7 @@ async function refresh() {
     const series = seriesRes;
     const live = liveRes;
     const patterns = patternsRes;
+    updateBuildInfo((live && live.build) || (summary && summary.build) || null);
 
     // Update task progress if available
     if (live && live.task) {
@@ -1835,6 +1918,7 @@ async function refresh() {
 
 function renderHybridDebug(info) {
   const sourceEl = document.getElementById('hybridSourceValue');
+  const reasonEl = document.getElementById('hybridReasonValue');
   const labelEl = document.getElementById('hybridLabelValue');
   const confEl = document.getElementById('hybridConfidenceValue');
   const distEl = document.getElementById('hybridDistanceValue');
@@ -1842,10 +1926,11 @@ function renderHybridDebug(info) {
   const shapeEl = document.getElementById('hybridShapeValue');
   const repeatEl = document.getElementById('hybridRepeatValue');
   const mlEl = document.getElementById('hybridMlValue');
-  if (!sourceEl || !labelEl || !confEl || !distEl || !protoEl || !shapeEl || !repeatEl || !mlEl) return;
+  if (!sourceEl || !reasonEl || !labelEl || !confEl || !distEl || !protoEl || !shapeEl || !repeatEl || !mlEl) return;
 
   if (!info || typeof info !== 'object') {
     sourceEl.textContent = t('hybridNoData');
+    reasonEl.textContent = '-';
     labelEl.textContent = '-';
     confEl.textContent = '-';
     distEl.textContent = '-';
@@ -1858,6 +1943,7 @@ function renderHybridDebug(info) {
 
   const explain = (info.explain && typeof info.explain === 'object') ? info.explain : {};
   sourceEl.textContent = String(info.source || '-');
+  reasonEl.textContent = String(explain.decision_reason || '-');
   labelEl.textContent = String(info.label || '-');
   confEl.textContent = fmt(info.confidence, '');
   distEl.textContent = explain.best_distance != null ? fmt(explain.best_distance, '') : '-';
@@ -2886,13 +2972,13 @@ async function loadLernenTab() {
   // Training stats
   try {
     const patterns = await fetchJson('api/patterns');
-    const arr = Array.isArray(patterns) ? patterns : [];
+  tbody.innerHTML = '<tr><td colspan="9" style="text-align:center">Lade…</td></tr>';
     const confirmed = arr.filter(p => p.is_confirmed).length;
     // Update the stat card in LERNEN tab if present
     const patternCountEl = document.getElementById('learnPatterns');
     if (patternCountEl) patternCountEl.textContent = `${arr.length} (${confirmed} ✓)`;
     // Sync the shared allPatterns array so filterAndSortPatterns() works in LERNEN tab
-    allPatterns = arr;
+      tbody.innerHTML = '<tr><td colspan="9">Kein Trainingsprotokoll vorhanden</td></tr>';
     currentPatternPage = 1;
     filterAndSortPatterns();
   } catch (err) { /* patterns non-critical */ }
@@ -2917,11 +3003,17 @@ async function loadLernenTab() {
       const dedup = row.dedup_result || '-';
       const sim = Number(row.similarity_score);
       const score = Number.isFinite(sim) && sim > 0 ? sim.toFixed(3) : '-';
-      tr.innerHTML = `<td>${ts}</td><td>${row.event_id ?? '-'}</td><td>${result}</td><td>${row.label || '-'}</td><td>${row.reason || '-'}</td><td>${dedup}</td><td>${score}</td><td>${row.matched_pattern_id ?? '-'}</td>`;
+      const p = Number(row.prototype_score);
+      const s = Number(row.shape_score);
+      const m = Number(row.ml_score);
+      const f = Number(row.final_score);
+      const hybridSummary = `P:${Number.isFinite(p) ? p.toFixed(2) : '-'} S:${Number.isFinite(s) ? s.toFixed(2) : '-'} M:${Number.isFinite(m) ? m.toFixed(2) : '-'} F:${Number.isFinite(f) ? f.toFixed(2) : '-'}`;
+      const reason = row.decision_reason ? `${row.reason || '-'} (${row.decision_reason})` : (row.reason || '-');
+      tr.innerHTML = `<td>${ts}</td><td>${row.event_id ?? '-'}</td><td>${result}</td><td>${row.label || '-'}</td><td>${reason}</td><td>${dedup}</td><td>${score}</td><td>${hybridSummary}</td><td>${row.matched_pattern_id ?? '-'}</td>`;
       tbody.appendChild(tr);
     });
   } catch (err) {
-    tbody.innerHTML = `<tr><td colspan="8">Fehler: ${err}</td></tr>`;
+    tbody.innerHTML = `<tr><td colspan="9">Fehler: ${err}</td></tr>`;
   }
 }
 const lernenRefreshBtn = document.getElementById('lernenRefreshBtn');
@@ -2929,6 +3021,17 @@ if (lernenRefreshBtn) lernenRefreshBtn.addEventListener('click', loadLernenTab);
 
 // ── Debug tab ──────────────────────────────────────────────────────────────
 async function loadDebugTab() {
+  if (!currentBuildInfo) {
+    try {
+      const summary = await fetchJson('api/summary');
+      updateBuildInfo(summary && summary.build ? summary.build : null);
+    } catch (err) {
+      updateBuildInfo(null);
+    }
+  } else {
+    updateBuildInfo(currentBuildInfo);
+  }
+
   // Hybrid debug panel
   try {
     const hybrid = await fetchJson('api/debug/hybrid-status');
@@ -2947,6 +3050,34 @@ async function loadDebugTab() {
       setCard('confTotal', cb.total);
     }
   } catch (err) { /* hybrid debug non-critical */ }
+
+  // Agreement metric from recent training log
+  try {
+    const rows = await fetchJson('api/training-log?limit=100');
+    const arr = Array.isArray(rows) ? rows : [];
+    const eligible = arr.filter(row => Number(row.ml_score) > 0 && Number(row.shape_score) > 0);
+    const agreed = eligible.filter(row => Number(row.agreement_flag || 0) === 1).length;
+    const overrides = eligible.filter(row => String(row.decision_reason || '') === 'boosting_strong_override').length;
+    const pct = eligible.length > 0 ? ((agreed / eligible.length) * 100.0) : null;
+    const overridePct = eligible.length > 0 ? ((overrides / eligible.length) * 100.0) : null;
+    const valEl = document.getElementById('hybridAgreementValue');
+    const metaEl = document.getElementById('hybridAgreementMeta');
+    const overValEl = document.getElementById('hybridOverrideValue');
+    const overMetaEl = document.getElementById('hybridOverrideMeta');
+    if (valEl) valEl.textContent = pct == null ? '-' : `${pct.toFixed(1)}%`;
+    if (metaEl) metaEl.textContent = `${agreed}/${eligible.length} agreement events`;
+    if (overValEl) overValEl.textContent = overridePct == null ? '-' : `${overridePct.toFixed(1)}%`;
+    if (overMetaEl) overMetaEl.textContent = `${overrides}/${eligible.length} override events`;
+  } catch (err) {
+    const valEl = document.getElementById('hybridAgreementValue');
+    const metaEl = document.getElementById('hybridAgreementMeta');
+    const overValEl = document.getElementById('hybridOverrideValue');
+    const overMetaEl = document.getElementById('hybridOverrideMeta');
+    if (valEl) valEl.textContent = '-';
+    if (metaEl) metaEl.textContent = 'training-log not available';
+    if (overValEl) overValEl.textContent = '-';
+    if (overMetaEl) overMetaEl.textContent = 'training-log not available';
+  }
 
   // Pipeline buffer
   const pipelineBody = document.getElementById('pipelineDebugRows');

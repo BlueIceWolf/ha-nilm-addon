@@ -55,6 +55,7 @@ Was funktioniert bereits, was ist noch in Arbeit und wo soll das Projekt hin.
 **Was demnächst kommt oder schon angedacht ist:**
 
 ### Kurzfristig (nächste Versionen)
+- Hybrid-ML Programm starten (v0.6.34-dev): Boosting + Shape-Fusion als neue Hauptlinie
 - ML-Modell-Metriken anzeigen: Training Samples, Accuracy, Feature-Importance
 - Bessere Erkennung für stark variable Lasten (Induktionsherd, Staubsauger) durch erweiterte Features
 - Rule-Engine je Gerätetyp verfeinern (z. B. mehr klare Regeln für Heizung/Pumpe/Küche)
@@ -65,16 +66,34 @@ Was funktioniert bereits, was ist noch in Arbeit und wo soll das Projekt hin.
 - Pipeline-Buffer API um Stage-Fehleraggregation und Filter (Phase/Zeitraum) erweitern
 
 ### Mittelfristig
+- Hybrid-ML Phase 2: Unknown/Anomaly-Gating (IsolationForest/OneClassSVM) plus harte Unknown-Blockade
 - MQTT Integration für Home Assistant
 - Vordefinierte Muster für Standard-Geräte (damit nicht jeder neu lernen muss)
 - Warnung wenn Gerät ungewöhnlich läuft
 - Kostenberechnung basierend auf Strompreisen
 
 ### Langfristig (Nice to Have)
+- Hybrid-ML Phase 3: Session/HMM für Multi-State-Geräte (Kompressor, Inverter, Waschzyklen)
 - Natives Home Assistant Integration (Services, Automations)
 - Benachrichtigungen wenn interessante Dinge passieren
 - Export/Import von Patterns zwischen Systemen
 - Community-Muster teilen (wer hat einen guten Waschmaschinen-Pattern?)
+
+### Hybrid-ML Plan (gestartet)
+- Zielbild: Kein Einzelmodell entscheidet alleine, sondern Fusion aus Boosting + Shape (später Session + Unknown-Gating).
+- Phase 1 (jetzt):
+	- Boosting-first Klassifikator auf tabellarischen Features (statt nur RandomForest)
+	- DTW/Shape bleibt als zweite Stimme in der Fusion
+	- Debug-Ausgabe mit klarer Decision-Reason je Event
+- Phase 2:
+	- Unknown/Anomaly-Detektor trainieren und in Final-Entscheidung als Gate einsetzen
+	- Unknown lieber konservativ setzen statt falsch zu lernen
+- Phase 3:
+	- Session-/State-Modell (HMM/State-Machine) fuer mehrstufige Geraete
+	- Betriebsmodi und Zustandsfolgen im Debug sichtbar machen
+- Qualitätsregeln fuer Training:
+	- Bestaetigte/User-gelabelte Events priorisieren
+	- Overlap/abgeschnittener Kontext/Low-Quality nicht direkt trainieren
 
 ---
 

@@ -1190,7 +1190,8 @@ class SQLiteStore:
                        final_label, final_confidence, rejected_reason,
                        baseline_before_w, baseline_after_w,
                       delta_avg_power_w, delta_peak_power_w, delta_energy_wh,
-                      dedup_result, matched_pattern_id, similarity_score, dedup_reason
+                        dedup_result, matched_pattern_id, similarity_score, dedup_reason,
+                        prototype_score, dtw_score, hybrid_score, decision_reason
                 FROM events
                 ORDER BY event_id DESC
                 LIMIT ?
@@ -1225,6 +1226,10 @@ class SQLiteStore:
                     "matched_pattern_id": int(r[23] or 0),
                     "similarity_score": float(r[24] or 0.0),
                     "dedup_reason": str(r[25] or ""),
+                    "prototype_score": float(r[26] or 0.0),
+                    "dtw_score": float(r[27] or 0.0),
+                    "hybrid_score": float(r[28] or 0.0),
+                    "decision_reason": str(r[29] or ""),
                 }
                 for r in rows
             ]
@@ -1843,6 +1848,10 @@ class SQLiteStore:
             self._ensure_column(self._patterns_conn, "events", "matched_pattern_id", "INTEGER")
             self._ensure_column(self._patterns_conn, "events", "similarity_score", "REAL")
             self._ensure_column(self._patterns_conn, "events", "dedup_reason", "TEXT")
+            self._ensure_column(self._patterns_conn, "events", "prototype_score", "REAL")
+            self._ensure_column(self._patterns_conn, "events", "dtw_score", "REAL")
+            self._ensure_column(self._patterns_conn, "events", "hybrid_score", "REAL")
+            self._ensure_column(self._patterns_conn, "events", "decision_reason", "TEXT")
 
             self._patterns_conn.execute(
                 """
@@ -2049,6 +2058,12 @@ class SQLiteStore:
             self._ensure_column(self._patterns_conn, "training_log", "matched_pattern_id", "INTEGER")
             self._ensure_column(self._patterns_conn, "training_log", "similarity_score", "REAL")
             self._ensure_column(self._patterns_conn, "training_log", "dedup_reason", "TEXT")
+            self._ensure_column(self._patterns_conn, "training_log", "prototype_score", "REAL")
+            self._ensure_column(self._patterns_conn, "training_log", "shape_score", "REAL")
+            self._ensure_column(self._patterns_conn, "training_log", "ml_score", "REAL")
+            self._ensure_column(self._patterns_conn, "training_log", "final_score", "REAL")
+            self._ensure_column(self._patterns_conn, "training_log", "decision_reason", "TEXT")
+            self._ensure_column(self._patterns_conn, "training_log", "agreement_flag", "INTEGER DEFAULT 0")
 
             self._ensure_schema_version(self._patterns_conn, self.PATTERNS_SCHEMA_VERSION)
 
@@ -2711,6 +2726,13 @@ class SQLiteStore:
         now = datetime.now().isoformat()
         try:
             enriched = self._augment_cycle_baseline_delta(cycle)
+            explain = dict(self._last_hybrid_decision.get("explain") or {})
+            fusion = dict(explain.get("fusion") or {})
+            prototype_score = float(explain.get("prototype_confidence", 0.0) or 0.0)
+            shape_score = float(explain.get("shape_confidence", 0.0) or 0.0)
+            ml_score = float((dict(explain.get("ml") or {}).get("confidence", 0.0)) or 0.0)
+            decision_reason = str(explain.get("decision_reason") or "")
+            hybrid_score = float(fusion.get("final_score", final_confidence) or final_confidence or 0.0)
             start_ts_iso = str(enriched.get("start_ts", ""))
             end_ts_iso = str(enriched.get("end_ts", ""))
             profile_points = self._normalize_profile_points(enriched.get("profile_points", []))
@@ -2743,8 +2765,8 @@ class SQLiteStore:
                 int(assigned_pattern_id) if assigned_pattern_id else None,
                 int(assigned_device_id) if assigned_device_id else None,
                 float(self._last_hybrid_decision.get("confidence", 0.0) or 0.0),
-                float((self._last_hybrid_decision.get("explain") or {}).get("shape_confidence", 0.0) or 0.0),
-                float((((self._last_hybrid_decision.get("explain") or {}).get("ml") or {}).get("confidence", 0.0) or 0.0)),
+                shape_score,
+                ml_score,
                 str(final_label or "unknown"),
                 float(final_confidence or 0.0),
                 str(rejected_reason) if rejected_reason else None,
@@ -2752,6 +2774,10 @@ class SQLiteStore:
                 int(matched_pattern_id) if matched_pattern_id else None,
                 float(similarity_score) if similarity_score is not None else None,
                 str(dedup_reason) if dedup_reason else None,
+                prototype_score,
+                shape_score,
+                hybrid_score,
+                decision_reason,
             )
             placeholders = ", ".join(["?"] * len(params))
             with self._patterns_conn:
@@ -2768,7 +2794,8 @@ class SQLiteStore:
                         assigned_pattern_id, assigned_device_id,
                         match_score, shape_score, ml_score,
                         final_label, final_confidence, rejected_reason,
-                        dedup_result, matched_pattern_id, similarity_score, dedup_reason
+                        dedup_result, matched_pattern_id, similarity_score, dedup_reason,
+                        prototype_score, dtw_score, hybrid_score, decision_reason
                     ) VALUES ({placeholders})
                     """,
                     params,
@@ -4103,22 +4130,37 @@ class SQLiteStore:
 
         final_label = best_label
         final_confidence = heuristic_confidence
-        source = "hybrid_prototype_shape"
+        source = "hybrid_phase1_shape_proto"
+        decision_reason = "shape_prototype_only"
+
+        ml_label = "unknown"
+        ml_conf = 0.0
+        if ml_result:
+            ml_label = str(ml_result.label or "unknown")
+            ml_conf = float(ml_result.confidence or 0.0)
 
         if ml_result and ml_result.source.startswith("ml"):
-            ml_label = str(ml_result.label or "unknown")
-            ml_conf = float(ml_result.confidence)
-            if ml_label != "unknown" and ml_conf >= self.ml_confidence_threshold:
-                # If ML agrees with prototype-ish class, boost confidence strongly.
+            ml_valid = ml_label != "unknown" and ml_conf >= self.ml_confidence_threshold
+            if ml_valid:
+                # Phase 1 fusion: boosting 45%, shape 35%, prototype 20%.
+                fused_score = (0.45 * ml_conf) + (0.35 * shape_confidence) + (0.20 * prototype_confidence)
+                final_confidence = max(final_confidence, fused_score)
+
+                # Agreement: keep matcher label but increase trust.
                 if ml_label == best_group or ml_label == best_label:
                     final_label = best_label
-                    final_confidence = max(final_confidence, (0.65 * final_confidence) + (0.35 * ml_conf))
-                    source = "hybrid_with_ml_agreement"
-                elif ml_conf > (heuristic_confidence + 0.15):
-                    # ML can override only when significantly more confident.
-                    final_label = ml_label
-                    final_confidence = (0.45 * heuristic_confidence) + (0.55 * ml_conf)
-                    source = "hybrid_ml_override"
+                    source = "hybrid_phase1_agreement"
+                    decision_reason = "boosting_and_shape_agree"
+                else:
+                    # Controlled override: only with clear margin and acceptable shape fit.
+                    if ml_conf > (heuristic_confidence + 0.12) and shape_confidence >= 0.40:
+                        final_label = ml_label
+                        source = "hybrid_phase1_ml_override"
+                        decision_reason = "boosting_strong_override"
+                    else:
+                        final_label = best_label
+                        source = "hybrid_phase1_shape_proto"
+                        decision_reason = "shape_prototype_preferred"
 
         confidence = max(0.0, min(1.0, float(final_confidence)))
 
@@ -4131,6 +4173,7 @@ class SQLiteStore:
                 "source": "phase_lock_reject",
                 "explain": {
                     **dict(matcher_result.explain),
+                    "decision_reason": "phase_lock_reject",
                     "cycle_phase": cycle_phase,
                     "phase_lock": {
                         "label": normalized_final_label,
@@ -4149,6 +4192,7 @@ class SQLiteStore:
                 "source": "fallback_unknown_label",
                 "explain": {
                     **dict(matcher_result.explain),
+                    "decision_reason": "unknown_label_blocked",
                     "unknown_label_capped": True,
                     "ml": (
                         {
@@ -4171,7 +4215,10 @@ class SQLiteStore:
                 "label": fallback,
                 "confidence": confidence,
                 "source": "fallback_distance_gate",
-                "explain": dict(matcher_result.explain),
+                "explain": {
+                    **dict(matcher_result.explain),
+                    "decision_reason": "distance_gate_reject",
+                },
             })
 
         # Keep fallback if confidence is too low.
@@ -4180,7 +4227,10 @@ class SQLiteStore:
                 "label": fallback,
                 "confidence": confidence,
                 "source": "fallback_low_confidence",
-                "explain": dict(matcher_result.explain),
+                "explain": {
+                    **dict(matcher_result.explain),
+                    "decision_reason": "low_confidence_reject",
+                },
             })
 
         return _remember({
@@ -4189,6 +4239,21 @@ class SQLiteStore:
             "source": source,
             "explain": {
                 **dict(matcher_result.explain),
+                "decision_reason": decision_reason,
+                "fusion": {
+                    "phase": "phase1",
+                    "weights": {
+                        "boosting": 0.45,
+                        "shape": 0.35,
+                        "prototype": 0.20,
+                    },
+                    "inputs": {
+                        "boosting": round(float(ml_conf), 4),
+                        "shape": round(float(shape_confidence), 4),
+                        "prototype": round(float(prototype_confidence), 4),
+                    },
+                    "final_score": round(float(confidence), 4),
+                },
                 "ml": (
                     {
                         "label": ml_result.label,
@@ -5469,20 +5534,35 @@ class SQLiteStore:
         matched_pattern_id: Optional[int] = None,
         similarity_score: Optional[float] = None,
         dedup_reason: Optional[str] = None,
+        prototype_score: Optional[float] = None,
+        shape_score: Optional[float] = None,
+        ml_score: Optional[float] = None,
+        final_score: Optional[float] = None,
+        decision_reason: Optional[str] = None,
+        agreement_flag: Optional[int] = None,
     ) -> None:
         """Record a training-filter accept/reject decision in the training_log table."""
         if not self._patterns_conn:
             return
         try:
             now = datetime.now(timezone.utc).isoformat()
+            explain = dict(self._last_hybrid_decision.get("explain") or {})
+            fusion = dict(explain.get("fusion") or {})
+            score_prototype = float(prototype_score) if prototype_score is not None else float(explain.get("prototype_confidence", 0.0) or 0.0)
+            score_shape = float(shape_score) if shape_score is not None else float(explain.get("shape_confidence", 0.0) or 0.0)
+            score_ml = float(ml_score) if ml_score is not None else float((dict(explain.get("ml") or {}).get("confidence", 0.0)) or 0.0)
+            score_final = float(final_score) if final_score is not None else float(fusion.get("final_score", self._last_hybrid_decision.get("confidence", 0.0)) or 0.0)
+            decision = str(decision_reason) if decision_reason else str(explain.get("decision_reason") or "")
+            agreed = int(agreement_flag) if agreement_flag is not None else (1 if decision == "boosting_and_shape_agree" else 0)
             with self._patterns_conn:
                 self._patterns_conn.execute(
                     """
                     INSERT INTO training_log (
                         created_at, event_id, accepted, rejected, reason, label,
-                        dedup_result, matched_pattern_id, similarity_score, dedup_reason
+                        dedup_result, matched_pattern_id, similarity_score, dedup_reason,
+                        prototype_score, shape_score, ml_score, final_score, decision_reason, agreement_flag
                     )
-                    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                     """,
                     (
                         now,
@@ -5495,6 +5575,12 @@ class SQLiteStore:
                         int(matched_pattern_id) if matched_pattern_id else None,
                         float(similarity_score) if similarity_score is not None else None,
                         str(dedup_reason) if dedup_reason else None,
+                        score_prototype,
+                        score_shape,
+                        score_ml,
+                        score_final,
+                        decision,
+                        agreed,
                     ),
                 )
         except Exception as e:
@@ -5508,7 +5594,8 @@ class SQLiteStore:
             rows = self._patterns_conn.execute(
                 """
                 SELECT id, created_at, event_id, accepted, rejected, reason, label,
-                       dedup_result, matched_pattern_id, similarity_score, dedup_reason
+                      dedup_result, matched_pattern_id, similarity_score, dedup_reason,
+                      prototype_score, shape_score, ml_score, final_score, decision_reason, agreement_flag
                 FROM training_log
                 ORDER BY created_at DESC
                 LIMIT ?
@@ -5528,6 +5615,12 @@ class SQLiteStore:
                     "matched_pattern_id": row[8],
                     "similarity_score": float(row[9] or 0.0),
                     "dedup_reason": row[10],
+                    "prototype_score": float(row[11] or 0.0),
+                    "shape_score": float(row[12] or 0.0),
+                    "ml_score": float(row[13] or 0.0),
+                    "final_score": float(row[14] or 0.0),
+                    "decision_reason": row[15],
+                    "agreement_flag": int(row[16] or 0),
                 }
                 for row in rows
             ]
