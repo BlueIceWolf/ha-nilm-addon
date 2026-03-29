@@ -468,7 +468,7 @@ def _html_page(default_language: str = "de") -> str:
       <table>
         <thead>
           <tr>
-            <th>Zeitpunkt</th><th>Event ID</th><th>Entscheidung</th><th>Grund</th><th>Label</th>
+            <th>Zeitpunkt</th><th>Event ID</th><th>Entscheidung</th><th>Label</th><th>Grund</th><th>Dedup</th><th>Score</th><th>Pattern</th>
           </tr>
         </thead>
         <tbody id=\"trainingLogRows\"></tbody>
@@ -581,9 +581,24 @@ def _html_page(default_language: str = "de") -> str:
           <h2 style=\"margin:0;font-size:1.2rem;\" id=\"patternModalTitle\">Muster-Profil</h2>
           <button onclick=\"document.getElementById('patternModal').style.display='none'\" style=\"background:none;border:none;font-size:1.5rem;cursor:pointer;color:var(--muted);\">✕</button>
         </div>
+        <div style=\"margin-bottom:8px;display:flex;gap:8px;align-items:center;flex-wrap:wrap;\">
+          <button id=\"patternViewContextBtn\" class=\"active\" title=\"Zeige Rohsignal mit Vor- und Nachlauf\">Mit Kontext</button>
+          <button id=\"patternViewPatternBtn\" title=\"Zeige nur normalisierte Musterkurve\">Nur Muster</button>
+          <span style=\"width:1px;height:20px;background:var(--line);display:inline-block;\"></span>
+          <button id=\"patternWindow2Btn\" class=\"active\" title=\"2 Sekunden Vor-/Nachlauf\">2s</button>
+          <button id=\"patternWindow5Btn\" title=\"5 Sekunden Vor-/Nachlauf\">5s</button>
+          <button id=\"patternWindow10Btn\" title=\"10 Sekunden Vor-/Nachlauf\">10s</button>
+          <label style=\"display:flex;align-items:center;gap:5px;font-size:0.82rem;color:var(--muted);margin-left:6px;\">
+            <input type=\"checkbox\" id=\"patternShowPoints\" /> Punkte
+          </label>
+          <span class=\"muted\" style=\"font-size:0.82rem;\">Mausrad: Zoom</span>
+        </div>
+        <div id=\"patternContextMeta\" class=\"muted\" style=\"margin-bottom:6px;font-size:0.82rem;\">Kontext: lädt...</div>
+        <div id=\"patternContextMessage\" class=\"muted\" style=\"margin-bottom:8px;font-size:0.82rem;display:none;\"></div>
         <div style=\"margin-bottom:12px;\">
           <div id=\"patternProfileSource\" class=\"muted\" style=\"margin-bottom:6px;font-size:0.82rem;\">Quelle: Rekonstruierte Kurve</div>
           <canvas id=\"patternChart\" width=\"800\" height=\"300\" style=\"border:1px solid var(--line);border-radius:6px;background:var(--bg-elev);width:100%;\"></canvas>
+          <div id=\"patternHoverInfo\" class=\"muted\" style=\"margin-top:6px;font-size:0.8rem;\">-</div>
         </div>
         <div id=\"patternStats\" style=\"display:grid;grid-template-columns:repeat(auto-fit,minmax(150px,1fr));gap:8px;font-size:0.85rem;\">
           <!-- Stats werden eingefüllt -->
@@ -616,6 +631,15 @@ let currentPatternPage = 1;
 let currentPatternPageSize = 50;
 let seriesWindow = 360;
 let seriesOffset = 0;
+let patternModalState = {
+  pattern: null,
+  view: 'context',
+  preSeconds: 2,
+  postSeconds: 2,
+  context: null,
+  zoom: 1,
+  showPoints: false,
+};
 const defaultLanguage = document.documentElement.lang === 'en' ? 'en' : 'de';
 
 const I18N = {
@@ -764,6 +788,7 @@ const I18N = {
     ,btnLabel: 'Label'
     ,btnPhase: 'Phase fixieren'
     ,btnDelete: 'Löschen'
+    ,btnDetails: 'Details'
     ,promptPhase: 'Auf welcher Phase liegt dieses Gerät? (L1, L2, L3)'
     ,invalidPhase: 'Bitte L1, L2 oder L3 eingeben.'
     ,phaseLockSaved: 'Phase-Lock gespeichert: {label} -> {phase}'
@@ -922,6 +947,7 @@ const I18N = {
     ,btnLabel: 'Label'
     ,btnPhase: 'Lock phase'
     ,btnDelete: 'Delete'
+    ,btnDetails: 'Details'
     ,promptPhase: 'On which phase is this device? (L1, L2, L3)'
     ,invalidPhase: 'Please enter L1, L2 or L3.'
     ,phaseLockSaved: 'Phase lock saved: {label} -> {phase}'
@@ -1635,13 +1661,32 @@ function renderPatterns(patterns) {
       ? `<td><div class="tooltip" style="font-size:0.85rem;color:#666;">${timeText}<span class="tooltiptext">${timeTooltip}</span></div></td>`
       : `<td style="font-size:0.85rem;color:#666;">${timeText}</td>`;
     
-    tr.innerHTML = `<td>${p.id}</td><td>${typeText}</td><td>${label}</td><td>${groupChip}</td><td style="font-size:0.85rem;color:#666;">${frequency}</td>${intervalCell}${timeCell}<td style="padding:4px 2px;">${stabilityBar}</td><td>${confidenceChip}</td><td>${phaseDisplay}</td><td>${fmt(p.avg_power_w)}</td><td>${fmt(p.peak_power_w)}</td><td>${fmt(p.duration_s)}</td><td>${p.seen_count ?? 0}</td><td><button data-id="${p.id}" class="btn-label">${t('btnLabel')}</button> <button data-id="${p.id}" data-label="${(p.user_label || p.candidate_name || p.suggestion_type || '').replace(/"/g, '&quot;')}" class="btn-phase">${t('btnPhase')}</button> <button data-id="${p.id}" class="btn-delete">${t('btnDelete')}</button></td>`;
+    tr.innerHTML = `<td>${p.id}</td><td>${typeText}</td><td>${label}</td><td>${groupChip}</td><td style="font-size:0.85rem;color:#666;">${frequency}</td>${intervalCell}${timeCell}<td style="padding:4px 2px;">${stabilityBar}</td><td>${confidenceChip}</td><td>${phaseDisplay}</td><td>${fmt(p.avg_power_w)}</td><td>${fmt(p.peak_power_w)}</td><td>${fmt(p.duration_s)}</td><td>${p.seen_count ?? 0}</td><td><button data-id="${p.id}" class="btn-detail">${t('btnDetails')}</button> <button data-id="${p.id}" class="btn-label">${t('btnLabel')}</button> <button data-id="${p.id}" data-label="${(p.user_label || p.candidate_name || p.suggestion_type || '').replace(/"/g, '&quot;')}" class="btn-phase">${t('btnPhase')}</button> <button data-id="${p.id}" class="btn-delete">${t('btnDelete')}</button></td>`;
     tr.style.cursor = 'pointer';
+    tr.style.touchAction = 'manipulation';
+    tr.addEventListener('pointerup', (e) => {
+      const target = (e.target instanceof Element) ? e.target : null;
+      if (target && target.closest('button')) return;
+      showPatternChart(p);
+    });
     tr.addEventListener('click', (e) => {
-      if (e.target.tagName === 'BUTTON') return;
+      // Fallback for older browsers without PointerEvent support.
+      if (window.PointerEvent) return;
+      const target = (e.target instanceof Element) ? e.target : null;
+      if (target && target.closest('button')) return;
       showPatternChart(p);
     });
     tbody.appendChild(tr);
+  });
+
+  tbody.querySelectorAll('button.btn-detail[data-id]').forEach(btn => {
+    btn.addEventListener('click', () => {
+      const id = Number(btn.getAttribute('data-id'));
+      const pattern = (patterns || []).find(item => Number(item.id) === id);
+      if (pattern) {
+        showPatternChart(pattern);
+      }
+    });
   });
 
   tbody.querySelectorAll('button.btn-label[data-id]').forEach(btn => {
@@ -1956,15 +2001,301 @@ function showPatternChart(pattern) {
   modal.style.display = 'flex';
   document.getElementById('patternModalTitle').textContent = 
     t('patternModalTitle', { name: pattern.user_label || pattern.suggestion_type || t('unknownPattern'), id: pattern.id });
-  
+
+  patternModalState.pattern = pattern;
+  patternModalState.view = 'context';
+  patternModalState.preSeconds = 2;
+  patternModalState.postSeconds = 2;
+  patternModalState.zoom = 1;
+  patternModalState.context = null;
+
+  updatePatternModalControls();
   renderPatternChart(pattern);
   renderPatternStats(pattern);
+  loadPatternContext(pattern.id, patternModalState.preSeconds, patternModalState.postSeconds);
+}
+
+function updatePatternModalControls() {
+  const ctxBtn = document.getElementById('patternViewContextBtn');
+  const patBtn = document.getElementById('patternViewPatternBtn');
+  if (ctxBtn) ctxBtn.classList.toggle('active', patternModalState.view === 'context');
+  if (patBtn) patBtn.classList.toggle('active', patternModalState.view === 'pattern');
+
+  const mapping = [
+    { id: 'patternWindow2Btn', sec: 2 },
+    { id: 'patternWindow5Btn', sec: 5 },
+    { id: 'patternWindow10Btn', sec: 10 },
+  ];
+  mapping.forEach(item => {
+    const el = document.getElementById(item.id);
+    if (el) el.classList.toggle('active', Number(patternModalState.preSeconds) === item.sec);
+  });
+
+  const pointsToggle = document.getElementById('patternShowPoints');
+  if (pointsToggle) pointsToggle.checked = !!patternModalState.showPoints;
+}
+
+async function loadPatternContext(patternId, preSeconds, postSeconds) {
+  const sourceEl = document.getElementById('patternProfileSource');
+  const infoEl = document.getElementById('patternContextMeta');
+  const msgEl = document.getElementById('patternContextMessage');
+
+  if (sourceEl) sourceEl.textContent = 'Quelle: Kontext wird geladen...';
+  if (infoEl) infoEl.textContent = `Kontextfenster: ${preSeconds}s davor, ${postSeconds}s danach`;
+  if (msgEl) {
+    msgEl.style.display = 'none';
+    msgEl.textContent = '';
+  }
+
+  try {
+    const payload = await fetchJson(`api/patterns/${patternId}/context?pre=${Number(preSeconds)}&post=${Number(postSeconds)}`);
+    patternModalState.context = payload && typeof payload === 'object' ? payload : null;
+
+    if (!patternModalState.context || !patternModalState.context.ok) {
+      const reason = (patternModalState.context && patternModalState.context.error) ? String(patternModalState.context.error) : 'unknown_error';
+      if (msgEl) {
+        msgEl.style.display = 'block';
+        msgEl.textContent = `Kontext konnte nicht geladen werden (${reason}). Es wird die Musteransicht gezeigt.`;
+      }
+      patternModalState.view = 'pattern';
+      updatePatternModalControls();
+      if (patternModalState.pattern) {
+        renderPatternChart(patternModalState.pattern);
+      }
+      return;
+    }
+
+    if (patternModalState.view === 'context') {
+      renderPatternContextChart(patternModalState.context);
+    }
+    renderPatternStats(patternModalState.pattern || {}, patternModalState.context);
+  } catch (err) {
+    if (msgEl) {
+      msgEl.style.display = 'block';
+      msgEl.textContent = `Fehler beim Laden des Kontexts: ${err}`;
+    }
+    patternModalState.view = 'pattern';
+    updatePatternModalControls();
+    if (patternModalState.pattern) {
+      renderPatternChart(patternModalState.pattern);
+    }
+  }
+}
+
+function renderPatternContextChart(contextPayload) {
+  const canvas = document.getElementById('patternChart');
+  if (!canvas) return;
+  const ctx = canvas.getContext('2d');
+  const sourceEl = document.getElementById('patternProfileSource');
+  const infoEl = document.getElementById('patternContextMeta');
+  const hoverEl = document.getElementById('patternHoverInfo');
+  const msgEl = document.getElementById('patternContextMessage');
+
+  const width = canvas.width;
+  const height = canvas.height;
+  const padding = 40;
+  const styles = getComputedStyle(document.documentElement);
+  const bgColor = styles.getPropertyValue('--bg-elev').trim() || '#ffffff';
+  const lineColor = styles.getPropertyValue('--line').trim() || '#cccccc';
+  const inkColor = styles.getPropertyValue('--ink').trim() || '#000000';
+  const signalColor = '#03a9f4';
+  const baselineColor = '#6b7280';
+
+  const allSamples = Array.isArray(contextPayload.samples) ? contextPayload.samples : [];
+  const points = allSamples
+    .map(item => ({
+      ts: String(item.ts || ''),
+      power: Number(item.power),
+      dt: new Date(String(item.ts || '')),
+    }))
+    .filter(item => item.ts && Number.isFinite(item.power) && Number.isFinite(item.dt.getTime()));
+
+  if (!points.length) {
+    ctx.clearRect(0, 0, width, height);
+    ctx.fillStyle = bgColor;
+    ctx.fillRect(0, 0, width, height);
+    ctx.fillStyle = inkColor;
+    ctx.font = '13px sans-serif';
+    ctx.fillText('Keine Rohsamples im Kontextfenster vorhanden.', 16, 28);
+    if (sourceEl) sourceEl.textContent = 'Quelle: Keine Rohsamples verfügbar';
+    if (hoverEl) hoverEl.textContent = '-';
+    return;
+  }
+
+  const startDt = new Date(String(contextPayload.context_start || points[0].ts));
+  const endDt = new Date(String(contextPayload.context_end || points[points.length - 1].ts));
+  const eventStartDt = new Date(String(contextPayload.start_time || contextPayload.event_start_time || points[0].ts));
+  const eventEndDt = new Date(String(contextPayload.end_time || contextPayload.event_end_time || points[points.length - 1].ts));
+
+  const baseStartMs = startDt.getTime();
+  const baseEndMs = endDt.getTime();
+  const totalRangeMs = Math.max(baseEndMs - baseStartMs, 1);
+
+  const zoomFactor = Math.max(1, Number(patternModalState.zoom) || 1);
+  const viewRangeMs = totalRangeMs / zoomFactor;
+  const eventCenterMs = (eventStartDt.getTime() + eventEndDt.getTime()) / 2;
+  const viewStartMs = Math.max(baseStartMs, Math.min(eventCenterMs - (viewRangeMs / 2), baseEndMs - viewRangeMs));
+  const viewEndMs = Math.min(baseEndMs, viewStartMs + viewRangeMs);
+
+  const viewPoints = points.filter(item => {
+    const ms = item.dt.getTime();
+    return ms >= viewStartMs && ms <= viewEndMs;
+  });
+  const chartPoints = viewPoints.length >= 2 ? viewPoints : points;
+
+  const powers = chartPoints.map(p => p.power);
+  const minPower = Math.min(...powers);
+  const maxPower = Math.max(...powers);
+  const chartMin = minPower - Math.max((maxPower - minPower) * 0.08, 10);
+  const chartMax = maxPower + Math.max((maxPower - minPower) * 0.08, 10);
+  const chartRange = Math.max(chartMax - chartMin, 1);
+
+  const xFromMs = (ms) => padding + ((ms - viewStartMs) / Math.max(viewEndMs - viewStartMs, 1)) * (width - padding - 20);
+  const yFromPower = (p) => height - padding - ((p - chartMin) / chartRange) * (height - padding - 20);
+
+  ctx.clearRect(0, 0, width, height);
+  ctx.fillStyle = bgColor;
+  ctx.fillRect(0, 0, width, height);
+
+  ctx.strokeStyle = lineColor;
+  ctx.lineWidth = 1;
+  ctx.beginPath();
+  ctx.moveTo(padding, height - padding);
+  ctx.lineTo(width - 20, height - padding);
+  ctx.stroke();
+  ctx.beginPath();
+  ctx.moveTo(padding, height - padding);
+  ctx.lineTo(padding, 20);
+  ctx.stroke();
+
+  const eventStartX = xFromMs(eventStartDt.getTime());
+  const eventEndX = xFromMs(eventEndDt.getTime());
+  const shadeStartX = Math.max(padding, Math.min(eventStartX, width - 20));
+  const shadeEndX = Math.max(padding, Math.min(eventEndX, width - 20));
+  if (shadeEndX > shadeStartX) {
+    ctx.fillStyle = 'rgba(3, 169, 244, 0.12)';
+    ctx.fillRect(shadeStartX, 20, shadeEndX - shadeStartX, height - padding - 20);
+  }
+
+  // Baseline reference line.
+  const baseline = Array.isArray(contextPayload.baseline) ? contextPayload.baseline : [];
+  if (baseline.length >= 2) {
+    const basePts = baseline
+      .map(item => ({ dt: new Date(String(item.ts || '')), power: Number(item.power) }))
+      .filter(item => Number.isFinite(item.dt.getTime()) && Number.isFinite(item.power));
+    if (basePts.length >= 2) {
+      ctx.strokeStyle = baselineColor;
+      ctx.lineWidth = 1.5;
+      ctx.setLineDash([5, 4]);
+      ctx.beginPath();
+      basePts.forEach((item, idx) => {
+        const x = xFromMs(item.dt.getTime());
+        const y = yFromPower(item.power);
+        if (idx === 0) ctx.moveTo(x, y);
+        else ctx.lineTo(x, y);
+      });
+      ctx.stroke();
+      ctx.setLineDash([]);
+    }
+  }
+
+  ctx.strokeStyle = signalColor;
+  ctx.lineWidth = 2.5;
+  ctx.beginPath();
+  chartPoints.forEach((item, idx) => {
+    const x = xFromMs(item.dt.getTime());
+    const y = yFromPower(item.power);
+    if (idx === 0) ctx.moveTo(x, y);
+    else ctx.lineTo(x, y);
+  });
+  ctx.stroke();
+
+  if (patternModalState.showPoints) {
+    ctx.fillStyle = '#0277bd';
+    chartPoints.forEach(item => {
+      ctx.beginPath();
+      ctx.arc(xFromMs(item.dt.getTime()), yFromPower(item.power), 2.2, 0, Math.PI * 2);
+      ctx.fill();
+    });
+  }
+
+  ctx.strokeStyle = '#ef4444';
+  ctx.lineWidth = 1.5;
+  ctx.beginPath();
+  ctx.moveTo(eventStartX, 20);
+  ctx.lineTo(eventStartX, height - padding);
+  ctx.stroke();
+  ctx.beginPath();
+  ctx.moveTo(eventEndX, 20);
+  ctx.lineTo(eventEndX, height - padding);
+  ctx.stroke();
+
+  ctx.fillStyle = inkColor;
+  ctx.font = '10px sans-serif';
+  ctx.textAlign = 'right';
+  for (let i = 0; i <= 5; i++) {
+    const p = chartMin + (chartRange * i / 5);
+    const y = yFromPower(p);
+    ctx.fillText(`${Math.round(p)}W`, padding - 5, y + 3);
+  }
+
+  ctx.textAlign = 'center';
+  for (let i = 0; i <= 4; i++) {
+    const ms = viewStartMs + ((viewEndMs - viewStartMs) * i / 4);
+    const x = xFromMs(ms);
+    const d = new Date(ms);
+    const hh = String(d.getHours()).padStart(2, '0');
+    const mm = String(d.getMinutes()).padStart(2, '0');
+    const ss = String(d.getSeconds()).padStart(2, '0');
+    ctx.fillText(`${hh}:${mm}:${ss}`, x, height - padding + 14);
+  }
+
+  const evtDuration = Number(contextPayload.event?.duration_s || 0);
+  if (sourceEl) {
+    sourceEl.textContent = `Quelle: Rohsignal (${chartPoints.length} Samples, Phase ${contextPayload.phase || '-'})`;
+  }
+  if (infoEl) {
+    const zoomTxt = zoomFactor > 1 ? ` | Zoom x${zoomFactor.toFixed(1)}` : '';
+    infoEl.textContent = `Kontext: ${contextPayload.requested_pre_seconds || 0}s davor / ${contextPayload.requested_post_seconds || 0}s danach | Eventdauer ${evtDuration.toFixed(2)}s${zoomTxt}`;
+  }
+  if (msgEl) {
+    const warning = contextPayload.warning ? String(contextPayload.warning) : '';
+    if (warning) {
+      msgEl.style.display = 'block';
+      msgEl.textContent = `Hinweis: ${warning}`;
+    } else {
+      msgEl.style.display = 'none';
+      msgEl.textContent = '';
+    }
+  }
+
+  canvas.onmousemove = (ev) => {
+    const rect = canvas.getBoundingClientRect();
+    const x = (ev.clientX - rect.left) * (canvas.width / Math.max(rect.width, 1));
+    const ms = viewStartMs + ((x - padding) / Math.max(width - padding - 20, 1)) * (viewEndMs - viewStartMs);
+    let best = chartPoints[0];
+    let bestDist = Math.abs(best.dt.getTime() - ms);
+    for (let i = 1; i < chartPoints.length; i++) {
+      const dist = Math.abs(chartPoints[i].dt.getTime() - ms);
+      if (dist < bestDist) {
+        best = chartPoints[i];
+        bestDist = dist;
+      }
+    }
+    if (hoverEl && best) {
+      const inEvent = best.dt >= eventStartDt && best.dt <= eventEndDt;
+      hoverEl.textContent = `${best.ts} | ${best.power.toFixed(2)} W${inEvent ? ' | Event-Fenster' : ' | Kontext'}`;
+    }
+  };
 }
 
 function renderPatternChart(pattern) {
   const canvas = document.getElementById('patternChart');
   const ctx = canvas.getContext('2d');
   const sourceEl = document.getElementById('patternProfileSource');
+  const metaEl = document.getElementById('patternContextMeta');
+  const hoverEl = document.getElementById('patternHoverInfo');
+  const msgEl = document.getElementById('patternContextMessage');
   const width = canvas.width;
   const height = canvas.height;
   const padding = 40;
@@ -2009,6 +2340,13 @@ function renderPatternChart(pattern) {
       ? `${t('sourceReal')} (${chartPoints.length} points)`
       : t('sourceLegacy');
   }
+  if (metaEl) metaEl.textContent = 'Ansicht: Normalisierte Musterform';
+  if (hoverEl) hoverEl.textContent = '-';
+  if (msgEl) {
+    msgEl.style.display = 'none';
+    msgEl.textContent = '';
+  }
+  canvas.onmousemove = null;
 
   ctx.strokeStyle = lineColor;
   ctx.lineWidth = 1;
@@ -2117,9 +2455,22 @@ function renderPatternChart(pattern) {
 
 function renderPatternStats(pattern) {
   const statsDiv = document.getElementById('patternStats');
+  const context = patternModalState && patternModalState.context && patternModalState.context.ok
+    ? patternModalState.context
+    : null;
   const phaseText = String(pattern.phase_mode || 'unknown') === 'single_phase'
     ? t('modeSingle')
     : (String(pattern.phase_mode || 'unknown') === 'multi_phase' ? t('modeMulti') : t('modeUnknown'));
+  const evt = context && context.event ? context.event : {};
+  const baselineBefore = Number.isFinite(Number((context && context.baseline && context.baseline[1] && context.baseline[1].power)))
+    ? Number(context.baseline[1].power)
+    : Number(pattern.baseline_before_w_avg || 0);
+  const baselineAfter = Number.isFinite(Number((context && context.baseline && context.baseline[2] && context.baseline[2].power)))
+    ? Number(context.baseline[2].power)
+    : Number(pattern.baseline_after_w_avg || 0);
+  const startTs = context ? String(context.start_time || '-') : '-';
+  const endTs = context ? String(context.end_time || '-') : '-';
+  const prePost = context ? `${context.requested_pre_seconds || 0}s / ${context.requested_post_seconds || 0}s` : '-';
   statsDiv.innerHTML = `
     <div style="padding:8px;background:var(--bg-elev);border-radius:6px;">
       <div style="color:var(--muted);font-size:0.75rem;">${t('statsAvgPower')}</div>
@@ -2148,6 +2499,34 @@ function renderPatternStats(pattern) {
     <div style="padding:8px;background:var(--bg-elev);border-radius:6px;">
       <div style="color:var(--muted);font-size:0.75rem;">${t('statsPhase')}</div>
       <div style="font-weight:600;font-size:1rem;">${phaseText}</div>
+    </div>
+    <div style="padding:8px;background:var(--bg-elev);border-radius:6px;">
+      <div style="color:var(--muted);font-size:0.75rem;">Start</div>
+      <div style="font-weight:600;font-size:0.92rem;word-break:break-all;">${startTs}</div>
+    </div>
+    <div style="padding:8px;background:var(--bg-elev);border-radius:6px;">
+      <div style="color:var(--muted);font-size:0.75rem;">Ende</div>
+      <div style="font-weight:600;font-size:0.92rem;word-break:break-all;">${endTs}</div>
+    </div>
+    <div style="padding:8px;background:var(--bg-elev);border-radius:6px;">
+      <div style="color:var(--muted);font-size:0.75rem;">Delta-Leistung</div>
+      <div style="font-weight:600;font-size:1rem;">${fmt(evt.delta_avg_power_w || pattern.delta_avg_power_w || 0)} W</div>
+    </div>
+    <div style="padding:8px;background:var(--bg-elev);border-radius:6px;">
+      <div style="color:var(--muted);font-size:0.75rem;">Peak Delta</div>
+      <div style="font-weight:600;font-size:1rem;">${fmt(evt.delta_peak_power_w || pattern.delta_peak_power_w || 0)} W</div>
+    </div>
+    <div style="padding:8px;background:var(--bg-elev);border-radius:6px;">
+      <div style="color:var(--muted);font-size:0.75rem;">Baseline vorher</div>
+      <div style="font-weight:600;font-size:1rem;">${fmt(baselineBefore)} W</div>
+    </div>
+    <div style="padding:8px;background:var(--bg-elev);border-radius:6px;">
+      <div style="color:var(--muted);font-size:0.75rem;">Baseline nachher</div>
+      <div style="font-weight:600;font-size:1rem;">${fmt(baselineAfter)} W</div>
+    </div>
+    <div style="padding:8px;background:var(--bg-elev);border-radius:6px;">
+      <div style="color:var(--muted);font-size:0.75rem;">Vorlauf / Nachlauf</div>
+      <div style="font-weight:600;font-size:1rem;">${prePost}</div>
     </div>
   `;
 }
@@ -2214,6 +2593,82 @@ document.getElementById('patternNextPage').addEventListener('click', () => {
   currentPatternPage += 1;
   filterAndSortPatterns();
 });
+
+const patternViewContextBtn = document.getElementById('patternViewContextBtn');
+if (patternViewContextBtn) {
+  patternViewContextBtn.addEventListener('click', () => {
+    patternModalState.view = 'context';
+    updatePatternModalControls();
+    if (patternModalState.context && patternModalState.context.ok) {
+      renderPatternContextChart(patternModalState.context);
+      renderPatternStats(patternModalState.pattern || {});
+    }
+  });
+}
+
+const patternViewPatternBtn = document.getElementById('patternViewPatternBtn');
+if (patternViewPatternBtn) {
+  patternViewPatternBtn.addEventListener('click', () => {
+    patternModalState.view = 'pattern';
+    updatePatternModalControls();
+    if (patternModalState.pattern) {
+      renderPatternChart(patternModalState.pattern);
+      renderPatternStats(patternModalState.pattern);
+    }
+  });
+}
+
+[
+  { id: 'patternWindow2Btn', sec: 2 },
+  { id: 'patternWindow5Btn', sec: 5 },
+  { id: 'patternWindow10Btn', sec: 10 },
+].forEach(item => {
+  const el = document.getElementById(item.id);
+  if (!el) return;
+  el.addEventListener('click', async () => {
+    patternModalState.preSeconds = item.sec;
+    patternModalState.postSeconds = item.sec;
+    patternModalState.zoom = 1;
+    updatePatternModalControls();
+    if (patternModalState.pattern) {
+      await loadPatternContext(patternModalState.pattern.id, patternModalState.preSeconds, patternModalState.postSeconds);
+      if (patternModalState.view === 'context' && patternModalState.context && patternModalState.context.ok) {
+        renderPatternContextChart(patternModalState.context);
+      }
+    }
+  });
+});
+
+const patternShowPoints = document.getElementById('patternShowPoints');
+if (patternShowPoints) {
+  patternShowPoints.addEventListener('change', () => {
+    patternModalState.showPoints = !!patternShowPoints.checked;
+    if (patternModalState.view === 'context' && patternModalState.context && patternModalState.context.ok) {
+      renderPatternContextChart(patternModalState.context);
+    }
+  });
+}
+
+const patternChartCanvas = document.getElementById('patternChart');
+if (patternChartCanvas) {
+  patternChartCanvas.addEventListener('wheel', (ev) => {
+    if (patternModalState.view !== 'context' || !patternModalState.context || !patternModalState.context.ok) return;
+    ev.preventDefault();
+    const direction = ev.deltaY > 0 ? -0.25 : 0.25;
+    const nextZoom = Math.max(1.0, Math.min(8.0, Number(patternModalState.zoom || 1) + direction));
+    patternModalState.zoom = nextZoom;
+    renderPatternContextChart(patternModalState.context);
+  }, { passive: false });
+}
+
+const patternModal = document.getElementById('patternModal');
+if (patternModal) {
+  patternModal.addEventListener('click', (ev) => {
+    if (ev.target === patternModal) {
+      patternModal.style.display = 'none';
+    }
+  });
+}
 
 function toggleDarkMode() {
   const isDark = document.documentElement.classList.toggle('dark-mode');
@@ -2445,13 +2900,13 @@ async function loadLernenTab() {
   // Training log
   const tbody = document.getElementById('trainingLogRows');
   if (!tbody) return;
-  tbody.innerHTML = '<tr><td colspan="5" style="text-align:center">Lade…</td></tr>';
+  tbody.innerHTML = '<tr><td colspan="8" style="text-align:center">Lade…</td></tr>';
   try {
     const log = await fetchJson('api/training-log?limit=100');
     tbody.innerHTML = '';
     const arr = Array.isArray(log) ? log : [];
     if (!arr.length) {
-      tbody.innerHTML = '<tr><td colspan="5">Kein Trainingsprotokoll vorhanden</td></tr>';
+      tbody.innerHTML = '<tr><td colspan="8">Kein Trainingsprotokoll vorhanden</td></tr>';
       return;
     }
     arr.forEach(row => {
@@ -2459,11 +2914,14 @@ async function loadLernenTab() {
       const ts = (row.created_at || '').replace('T',' ').replace(/[.]\\d+/,'');
       const result = row.accepted ? '<span style="color:var(--success,#22c55e)">✓ akzeptiert</span>'
                                   : '<span style="color:var(--danger,#ef4444)">✗ abgelehnt</span>';
-      tr.innerHTML = `<td>${ts}</td><td>${row.event_id ?? '-'}</td><td>${result}</td><td>${row.label || '-'}</td><td>${row.reason || '-'}</td>`;
+      const dedup = row.dedup_result || '-';
+      const sim = Number(row.similarity_score);
+      const score = Number.isFinite(sim) && sim > 0 ? sim.toFixed(3) : '-';
+      tr.innerHTML = `<td>${ts}</td><td>${row.event_id ?? '-'}</td><td>${result}</td><td>${row.label || '-'}</td><td>${row.reason || '-'}</td><td>${dedup}</td><td>${score}</td><td>${row.matched_pattern_id ?? '-'}</td>`;
       tbody.appendChild(tr);
     });
   } catch (err) {
-    tbody.innerHTML = `<tr><td colspan="5">Fehler: ${err}</td></tr>`;
+    tbody.innerHTML = `<tr><td colspan="8">Fehler: ${err}</td></tr>`;
   }
 }
 const lernenRefreshBtn = document.getElementById('lernenRefreshBtn');
@@ -2680,6 +3138,33 @@ class StatsWebServer:
                     else:
                         self._send_json([])
                     return
+
+                if parsed.path.startswith("/api/patterns/") and parsed.path.endswith("/context"):
+                  if not parent.storage or not hasattr(parent.storage, "get_pattern_context"):
+                    self._send_json({"ok": False, "error": "storage_not_available"}, status=400)
+                    return
+                  parts = [p for p in parsed.path.split("/") if p]
+                  if len(parts) != 4:
+                    self._send_json({"ok": False, "error": "invalid_pattern_context_path"}, status=400)
+                    return
+                  try:
+                    pattern_id = int(parts[2])
+                  except ValueError:
+                    self._send_json({"ok": False, "error": "invalid_pattern_id"}, status=400)
+                    return
+                  query = parse_qs(parsed.query or "")
+                  try:
+                    pre_s = max(0.0, min(float((query.get("pre") or ["2"])[0]), 60.0))
+                  except (TypeError, ValueError):
+                    pre_s = 2.0
+                  try:
+                    post_s = max(0.0, min(float((query.get("post") or ["2"])[0]), 60.0))
+                  except (TypeError, ValueError):
+                    post_s = 2.0
+                  payload = parent.storage.get_pattern_context(pattern_id=pattern_id, pre_seconds=pre_s, post_seconds=post_s)
+                  status = 200 if bool(payload.get("ok")) else 404
+                  self._send_json(payload, status=status)
+                  return
 
                 if parsed.path == "/api/devices":
                   if not parent.storage or not hasattr(parent.storage, "list_devices"):

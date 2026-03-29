@@ -24,7 +24,7 @@ class SQLiteStore:
     """Persists readings/detections for diagnostics and future learning."""
 
     LIVE_SCHEMA_VERSION = 2
-    PATTERNS_SCHEMA_VERSION = 3
+    PATTERNS_SCHEMA_VERSION = 4
 
     # Legacy DB paths checked during recovery/migration (order matters: most likely first)
     LEGACY_PATTERNS_CANDIDATES: List[str] = [
@@ -73,6 +73,7 @@ class SQLiteStore:
             "timestamp": None,
             "explain": None,
         }
+        self._learning_session_keys: Dict[str, str] = {}
 
     def configure_hybrid_ai(
         self,
@@ -459,7 +460,7 @@ class SQLiteStore:
                         profile_points_json, delta_profile_points_json, shape_vector_json, delta_shape_vector_json, prototype_hash,
                         num_substates, step_count, plateau_count,
                         shape_similarity_score, cluster_similarity_score
-                    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                     """,
                     (
                         int(pattern.get("id", 0) or 0),
@@ -1188,7 +1189,8 @@ class SQLiteStore:
                        match_score, shape_score, ml_score,
                        final_label, final_confidence, rejected_reason,
                        baseline_before_w, baseline_after_w,
-                       delta_avg_power_w, delta_peak_power_w, delta_energy_wh
+                      delta_avg_power_w, delta_peak_power_w, delta_energy_wh,
+                      dedup_result, matched_pattern_id, similarity_score, dedup_reason
                 FROM events
                 ORDER BY event_id DESC
                 LIMIT ?
@@ -1219,6 +1221,10 @@ class SQLiteStore:
                     "delta_avg_power_w": float(r[19] or 0.0),
                     "delta_peak_power_w": float(r[20] or 0.0),
                     "delta_energy_wh": float(r[21] or 0.0),
+                    "dedup_result": str(r[22] or ""),
+                    "matched_pattern_id": int(r[23] or 0),
+                    "similarity_score": float(r[24] or 0.0),
+                    "dedup_reason": str(r[25] or ""),
                 }
                 for r in rows
             ]
@@ -1679,6 +1685,11 @@ class SQLiteStore:
             self._ensure_column(self._patterns_conn, "patterns", "delta_energy_wh", "REAL")
             self._ensure_column(self._patterns_conn, "patterns", "delta_profile_points_json", "TEXT DEFAULT '[]'")
             self._ensure_column(self._patterns_conn, "patterns", "delta_shape_vector_json", "TEXT DEFAULT '[]'")
+            self._ensure_column(self._patterns_conn, "patterns", "curve_hash", "TEXT DEFAULT ''")
+            self._ensure_column(self._patterns_conn, "patterns", "shape_signature", "TEXT DEFAULT ''")
+            self._ensure_column(self._patterns_conn, "patterns", "occurrence_count", "INTEGER DEFAULT 1")
+            self._ensure_column(self._patterns_conn, "patterns", "device_group_id", "TEXT")
+            self._ensure_column(self._patterns_conn, "patterns", "mode_key", "TEXT")
 
             self._patterns_conn.execute(
                 """
@@ -1744,6 +1755,21 @@ class SQLiteStore:
             self._ensure_column(self._patterns_conn, "learned_patterns", "delta_profile_points_json", "TEXT DEFAULT '[]'")
             self._ensure_column(self._patterns_conn, "learned_patterns", "delta_shape_vector_json", "TEXT DEFAULT '[]'")
             self._ensure_column(self._patterns_conn, "learned_patterns", "plateau_count", "INTEGER DEFAULT 0")
+            self._ensure_column(self._patterns_conn, "learned_patterns", "curve_hash", "TEXT DEFAULT ''")
+            self._ensure_column(self._patterns_conn, "learned_patterns", "shape_signature", "TEXT DEFAULT ''")
+            self._ensure_column(self._patterns_conn, "learned_patterns", "avg_delta_power_w", "REAL")
+            self._ensure_column(self._patterns_conn, "learned_patterns", "avg_duration_s", "REAL")
+            self._ensure_column(self._patterns_conn, "learned_patterns", "avg_peak_power_w", "REAL")
+            self._ensure_column(self._patterns_conn, "learned_patterns", "avg_inrush_duration_s", "REAL")
+            self._ensure_column(self._patterns_conn, "learned_patterns", "occurrence_count", "INTEGER DEFAULT 1")
+            self._ensure_column(self._patterns_conn, "learned_patterns", "device_group_id", "TEXT")
+            self._ensure_column(self._patterns_conn, "learned_patterns", "mode_key", "TEXT")
+            self._patterns_conn.execute(
+                "CREATE INDEX IF NOT EXISTS idx_learned_patterns_curve_hash ON learned_patterns(curve_hash)"
+            )
+            self._patterns_conn.execute(
+                "CREATE INDEX IF NOT EXISTS idx_learned_patterns_group_mode ON learned_patterns(device_group_id, mode_key)"
+            )
 
             self._patterns_conn.execute(
                 """
@@ -1808,6 +1834,15 @@ class SQLiteStore:
             self._ensure_column(self._patterns_conn, "events", "delta_energy_wh", "REAL")
             self._ensure_column(self._patterns_conn, "events", "delta_points_json", "TEXT DEFAULT '[]'")
             self._ensure_column(self._patterns_conn, "events", "delta_resampled_points_json", "TEXT DEFAULT '[]'")
+            self._ensure_column(self._patterns_conn, "events", "start_time", "TEXT")
+            self._ensure_column(self._patterns_conn, "events", "end_time", "TEXT")
+            self._ensure_column(self._patterns_conn, "events", "sample_start_index", "INTEGER")
+            self._ensure_column(self._patterns_conn, "events", "sample_end_index", "INTEGER")
+            self._ensure_column(self._patterns_conn, "events", "raw_trace_id", "TEXT")
+            self._ensure_column(self._patterns_conn, "events", "dedup_result", "TEXT")
+            self._ensure_column(self._patterns_conn, "events", "matched_pattern_id", "INTEGER")
+            self._ensure_column(self._patterns_conn, "events", "similarity_score", "REAL")
+            self._ensure_column(self._patterns_conn, "events", "dedup_reason", "TEXT")
 
             self._patterns_conn.execute(
                 """
@@ -2010,6 +2045,10 @@ class SQLiteStore:
             self._patterns_conn.execute(
                 "CREATE INDEX IF NOT EXISTS idx_training_log_event ON training_log(event_id)"
             )
+            self._ensure_column(self._patterns_conn, "training_log", "dedup_result", "TEXT")
+            self._ensure_column(self._patterns_conn, "training_log", "matched_pattern_id", "INTEGER")
+            self._ensure_column(self._patterns_conn, "training_log", "similarity_score", "REAL")
+            self._ensure_column(self._patterns_conn, "training_log", "dedup_reason", "TEXT")
 
             self._ensure_schema_version(self._patterns_conn, self.PATTERNS_SCHEMA_VERSION)
 
@@ -2462,6 +2501,120 @@ class SQLiteStore:
         return hashlib.sha1(raw.encode("utf-8")).hexdigest()
 
     @staticmethod
+    def _safe_float(value: Any, default: float = 0.0) -> float:
+        try:
+            out = float(value)
+            if math.isfinite(out):
+                return out
+        except Exception:
+            pass
+        return float(default)
+
+    @classmethod
+    def _shape_signature_from_cycle(cls, cycle: Dict[str, Any]) -> str:
+        profile_points = cls._normalize_profile_points(cycle.get("delta_profile_points", []))
+        if not profile_points:
+            profile_points = cls._normalize_profile_points(cycle.get("profile_points", []))
+        vec = cls._resample_profile_points(profile_points, sample_count=16)
+        if not vec:
+            return ""
+        vec_max = max((abs(float(v)) for v in vec), default=1.0)
+        denom = max(vec_max, 1.0)
+        normalized = [round(float(v) / denom, 3) for v in vec]
+        return json.dumps(normalized, separators=(",", ":"))
+
+    @classmethod
+    def _curve_hash_from_cycle(cls, cycle: Dict[str, Any]) -> str:
+        payload = {
+            "phase": str(cycle.get("phase") or "L1"),
+            "avg": round(cls._safe_float(cycle.get("avg_power_w"), 0.0), 2),
+            "peak": round(cls._safe_float(cycle.get("peak_power_w"), 0.0), 2),
+            "dur": round(cls._safe_float(cycle.get("duration_s"), 0.0), 2),
+            "delta": round(cls._safe_float(cycle.get("delta_avg_power_w"), 0.0), 2),
+            "inrush": round(cls._safe_float(cycle.get("inrush_peak_w"), 0.0), 2),
+            "shape": cls._shape_signature_from_cycle(cycle),
+        }
+        raw = json.dumps(payload, sort_keys=True, separators=(",", ":"))
+        return hashlib.sha1(raw.encode("utf-8")).hexdigest()
+
+    @staticmethod
+    def _mode_key_from_cycle(cycle: Dict[str, Any]) -> str:
+        phase_mode = str(cycle.get("phase_mode") or "unknown")
+        substates = int(cycle.get("num_substates", 0) or 0)
+        duty = SQLiteStore._safe_float(cycle.get("duty_cycle"), 0.0)
+        duration = SQLiteStore._safe_float(cycle.get("duration_s"), 0.0)
+        duration_bucket = "short" if duration < 90.0 else ("long" if duration > 900.0 else "normal")
+        duty_bucket = "low" if duty < 0.2 else ("high" if duty > 0.8 else "mid")
+        return f"{phase_mode}:{substates}:{duration_bucket}:{duty_bucket}"
+
+    @staticmethod
+    def _device_group_id(label: str, cycle: Dict[str, Any]) -> str:
+        clean = SQLiteStore._normalize_pattern_name(label)
+        phase = str(cycle.get("phase") or "L1")
+        return f"{clean or 'unknown'}:{phase}"
+
+    @classmethod
+    def _dedup_similarity(cls, existing: Dict[str, Any], candidate: Dict[str, Any]) -> float:
+        def sim_rel(a: float, b: float) -> float:
+            base = max(abs(a), abs(b), 1.0)
+            return max(0.0, 1.0 - (abs(a - b) / base))
+
+        profile_dist = cls._profile_shape_distance(existing, candidate)
+        if profile_dist is None:
+            shape_sim = 0.0
+        else:
+            shape_sim = max(0.0, min(1.0, 1.0 - profile_dist))
+
+        duration_sim = sim_rel(
+            cls._safe_float(existing.get("duration_s"), cls._safe_float(existing.get("avg_duration_s"), 0.0)),
+            cls._safe_float(candidate.get("duration_s"), 0.0),
+        )
+        delta_sim = sim_rel(
+            cls._safe_float(existing.get("delta_avg_power_w"), cls._safe_float(existing.get("avg_delta_power_w"), 0.0)),
+            cls._safe_float(candidate.get("delta_avg_power_w"), 0.0),
+        )
+        peak_sim = sim_rel(
+            cls._safe_float(existing.get("peak_power_w"), cls._safe_float(existing.get("avg_peak_power_w"), 0.0)),
+            cls._safe_float(candidate.get("peak_power_w"), 0.0),
+        )
+        inrush_sim = sim_rel(
+            cls._safe_float(existing.get("avg_inrush_duration_s"), 0.0),
+            cls._safe_float(candidate.get("settling_time_s"), 0.0),
+        )
+        peak_inrush_sim = (peak_sim * 0.7) + (inrush_sim * 0.3)
+
+        score = (
+            (shape_sim * 0.50)
+            + (duration_sim * 0.20)
+            + (delta_sim * 0.20)
+            + (peak_inrush_sim * 0.10)
+        )
+        return max(0.0, min(1.0, score))
+
+    def _is_session_duplicate(self, cycle: Dict[str, Any], label: str) -> bool:
+        start_ts = str(cycle.get("start_ts") or "")
+        end_ts = str(cycle.get("end_ts") or "")
+        key = "|".join(
+            [
+                str(cycle.get("phase") or "L1"),
+                str(self._normalize_pattern_name(label) or "unknown"),
+                start_ts,
+                end_ts,
+                str(round(self._safe_float(cycle.get("duration_s"), 0.0), 1)),
+                str(round(self._safe_float(cycle.get("avg_power_w"), 0.0), 1)),
+                str(round(self._safe_float(cycle.get("delta_avg_power_w"), 0.0), 1)),
+            ]
+        )
+        if key in self._learning_session_keys:
+            return True
+        self._learning_session_keys[key] = end_ts or datetime.now().isoformat()
+        if len(self._learning_session_keys) > 2000:
+            # Keep memory bounded during long runtimes.
+            for old_key in list(self._learning_session_keys.keys())[:500]:
+                self._learning_session_keys.pop(old_key, None)
+        return False
+
+    @staticmethod
     def _infer_unknown_subclass(cycle: Dict) -> str:
         """Refine unknown classes for better internal diagnostics and future ML."""
         avg_power = float(cycle.get("avg_power_w", 0.0) or 0.0)
@@ -2547,6 +2700,10 @@ class SQLiteStore:
         final_label: str,
         final_confidence: float,
         rejected_reason: str | None = None,
+        dedup_result: str | None = None,
+        matched_pattern_id: int | None = None,
+        similarity_score: float | None = None,
+        dedup_reason: str | None = None,
     ) -> int | None:
         """Persist one detected cycle event for long-term training/replay."""
         if not self._patterns_conn:
@@ -2554,51 +2711,67 @@ class SQLiteStore:
         now = datetime.now().isoformat()
         try:
             enriched = self._augment_cycle_baseline_delta(cycle)
+            start_ts_iso = str(enriched.get("start_ts", ""))
+            end_ts_iso = str(enriched.get("end_ts", ""))
             profile_points = self._normalize_profile_points(enriched.get("profile_points", []))
             resampled = self._resample_profile_points(profile_points, sample_count=32)
             delta_points = self._normalize_profile_points(enriched.get("delta_profile_points", []))
             delta_resampled = self._resample_profile_points(delta_points, sample_count=32)
+            params = (
+                now,
+                str(enriched.get("phase", "L1")),
+                start_ts_iso,
+                end_ts_iso,
+                float(enriched.get("duration_s", 0.0)),
+                start_ts_iso,
+                end_ts_iso,
+                float(enriched.get("avg_power_w", 0.0)),
+                float(enriched.get("peak_power_w", 0.0)),
+                float(enriched.get("energy_wh", 0.0)),
+                float(enriched.get("baseline_before_w", 0.0) or 0.0),
+                float(enriched.get("baseline_after_w", 0.0) or 0.0),
+                float(enriched.get("delta_avg_power_w", 0.0) or 0.0),
+                float(enriched.get("delta_peak_power_w", 0.0) or 0.0),
+                float(enriched.get("delta_energy_wh", 0.0) or 0.0),
+                json.dumps(profile_points),
+                json.dumps(delta_points),
+                json.dumps(resampled),
+                json.dumps(delta_resampled),
+                None,
+                None,
+                str(enriched.get("raw_trace_id") or ""),
+                int(assigned_pattern_id) if assigned_pattern_id else None,
+                int(assigned_device_id) if assigned_device_id else None,
+                float(self._last_hybrid_decision.get("confidence", 0.0) or 0.0),
+                float((self._last_hybrid_decision.get("explain") or {}).get("shape_confidence", 0.0) or 0.0),
+                float((((self._last_hybrid_decision.get("explain") or {}).get("ml") or {}).get("confidence", 0.0) or 0.0)),
+                str(final_label or "unknown"),
+                float(final_confidence or 0.0),
+                str(rejected_reason) if rejected_reason else None,
+                str(dedup_result) if dedup_result else None,
+                int(matched_pattern_id) if matched_pattern_id else None,
+                float(similarity_score) if similarity_score is not None else None,
+                str(dedup_reason) if dedup_reason else None,
+            )
+            placeholders = ", ".join(["?"] * len(params))
             with self._patterns_conn:
                 cur = self._patterns_conn.execute(
-                    """
+                    f"""
                     INSERT INTO events (
                         created_at, phase, start_ts, end_ts, duration_s,
+                        start_time, end_time,
                         avg_power_w, peak_power_w, energy_wh,
                         baseline_before_w, baseline_after_w,
                         delta_avg_power_w, delta_peak_power_w, delta_energy_wh,
                         raw_points_json, delta_points_json, resampled_points_json, delta_resampled_points_json,
+                        sample_start_index, sample_end_index, raw_trace_id,
                         assigned_pattern_id, assigned_device_id,
                         match_score, shape_score, ml_score,
-                        final_label, final_confidence, rejected_reason
-                    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                        final_label, final_confidence, rejected_reason,
+                        dedup_result, matched_pattern_id, similarity_score, dedup_reason
+                    ) VALUES ({placeholders})
                     """,
-                    (
-                        now,
-                        str(enriched.get("phase", "L1")),
-                        str(enriched.get("start_ts", "")),
-                        str(enriched.get("end_ts", "")),
-                        float(enriched.get("duration_s", 0.0)),
-                        float(enriched.get("avg_power_w", 0.0)),
-                        float(enriched.get("peak_power_w", 0.0)),
-                        float(enriched.get("energy_wh", 0.0)),
-                        float(enriched.get("baseline_before_w", 0.0) or 0.0),
-                        float(enriched.get("baseline_after_w", 0.0) or 0.0),
-                        float(enriched.get("delta_avg_power_w", 0.0) or 0.0),
-                        float(enriched.get("delta_peak_power_w", 0.0) or 0.0),
-                        float(enriched.get("delta_energy_wh", 0.0) or 0.0),
-                        json.dumps(profile_points),
-                        json.dumps(delta_points),
-                        json.dumps(resampled),
-                        json.dumps(delta_resampled),
-                        int(assigned_pattern_id) if assigned_pattern_id else None,
-                        int(assigned_device_id) if assigned_device_id else None,
-                        float(self._last_hybrid_decision.get("confidence", 0.0) or 0.0),
-                        float((self._last_hybrid_decision.get("explain") or {}).get("shape_confidence", 0.0) or 0.0),
-                        float((((self._last_hybrid_decision.get("explain") or {}).get("ml") or {}).get("confidence", 0.0) or 0.0)),
-                        str(final_label or "unknown"),
-                        float(final_confidence or 0.0),
-                        str(rejected_reason) if rejected_reason else None,
-                    ),
+                    params,
                 )
                 event_id = int(cur.lastrowid or 0)
 
@@ -2618,8 +2791,220 @@ class SQLiteStore:
                 )
             return event_id
         except Exception as e:
-            logger.debug("_record_cycle_event failed: %s", e)
+            logger.error("_record_cycle_event failed: %s", e, exc_info=True)
             return None
+
+    @staticmethod
+    def _parse_iso_timestamp(ts: str) -> datetime | None:
+        raw = str(ts or "").strip()
+        if not raw:
+            return None
+        try:
+            return datetime.fromisoformat(raw.replace("Z", "+00:00"))
+        except Exception:
+            return None
+
+    def get_pattern_context(self, pattern_id: int, pre_seconds: float = 2.0, post_seconds: float = 2.0) -> Dict[str, Any]:
+        """Return one pattern detail payload including raw context samples around the latest event."""
+        if not self._patterns_conn:
+            return {"ok": False, "error": "patterns_storage_not_connected"}
+
+        pre_s = max(0.0, min(float(pre_seconds), 60.0))
+        post_s = max(0.0, min(float(post_seconds), 60.0))
+
+        try:
+            pattern_row = self._patterns_conn.execute(
+                """
+                SELECT id, COALESCE(user_label, ''), COALESCE(suggestion_type, 'unknown'),
+                       COALESCE(phase, 'L1'), COALESCE(avg_power_w, 0.0),
+                       COALESCE(peak_power_w, 0.0), COALESCE(duration_s, 0.0)
+                FROM learned_patterns
+                WHERE id = ?
+                LIMIT 1
+                """,
+                (int(pattern_id),),
+            ).fetchone()
+            if not pattern_row:
+                return {"ok": False, "error": "pattern_not_found", "pattern_id": int(pattern_id)}
+
+            event_row = self._patterns_conn.execute(
+                """
+                SELECT event_id, phase,
+                       COALESCE(start_time, start_ts), COALESCE(end_time, end_ts),
+                       COALESCE(start_ts, start_time), COALESCE(end_ts, end_time),
+                       COALESCE(duration_s, 0.0),
+                       COALESCE(avg_power_w, 0.0), COALESCE(peak_power_w, 0.0), COALESCE(energy_wh, 0.0),
+                       COALESCE(baseline_before_w, 0.0), COALESCE(baseline_after_w, 0.0),
+                       COALESCE(delta_avg_power_w, 0.0), COALESCE(delta_peak_power_w, 0.0),
+                       COALESCE(raw_points_json, '[]'),
+                       sample_start_index, sample_end_index, COALESCE(raw_trace_id, '')
+                FROM events
+                WHERE assigned_pattern_id = ?
+                ORDER BY event_id DESC
+                LIMIT 1
+                """,
+                (int(pattern_id),),
+            ).fetchone()
+            if not event_row:
+                return {
+                    "ok": False,
+                    "error": "no_event_for_pattern",
+                    "pattern_id": int(pattern_id),
+                }
+
+            event_phase = str(event_row[1] or pattern_row[3] or "L1")
+            event_start_iso = str(event_row[2] or event_row[4] or "")
+            event_end_iso = str(event_row[3] or event_row[5] or "")
+            event_start_dt = self._parse_iso_timestamp(event_start_iso)
+            event_end_dt = self._parse_iso_timestamp(event_end_iso)
+            if not event_start_dt or not event_end_dt:
+                return {
+                    "ok": False,
+                    "error": "invalid_event_timestamps",
+                    "pattern_id": int(pattern_id),
+                    "event_id": int(event_row[0] or 0),
+                }
+
+            requested_context_start = event_start_dt - timedelta(seconds=pre_s)
+            requested_context_end = event_end_dt + timedelta(seconds=post_s)
+
+            samples: List[Dict[str, Any]] = []
+            min_ts: datetime | None = None
+            max_ts: datetime | None = None
+            min_max_row = None
+            if self._conn and self._table_exists(self._conn, "power_readings"):
+                min_max_row = self._conn.execute(
+                    """
+                    SELECT MIN(ts), MAX(ts)
+                    FROM power_readings
+                    WHERE phase = ?
+                    """,
+                    (event_phase,),
+                ).fetchone()
+                if min_max_row and min_max_row[0] and min_max_row[1]:
+                    min_ts = self._parse_iso_timestamp(str(min_max_row[0]))
+                    max_ts = self._parse_iso_timestamp(str(min_max_row[1]))
+
+            context_start_dt = requested_context_start
+            context_end_dt = requested_context_end
+            if min_ts and max_ts:
+                context_start_dt = max(requested_context_start, min_ts)
+                context_end_dt = min(requested_context_end, max_ts)
+
+            if self._conn and self._table_exists(self._conn, "power_readings"):
+                rows = self._conn.execute(
+                    """
+                    SELECT ts, power_w
+                    FROM power_readings
+                    WHERE ts >= ? AND ts <= ? AND phase = ?
+                    ORDER BY ts ASC
+                    """,
+                    (
+                        context_start_dt.isoformat(),
+                        context_end_dt.isoformat(),
+                        event_phase,
+                    ),
+                ).fetchall()
+                if not rows and event_phase in {"L1", "L2", "L3"}:
+                    rows = self._conn.execute(
+                        """
+                        SELECT ts, power_w
+                        FROM power_readings
+                        WHERE ts >= ? AND ts <= ? AND phase = 'TOTAL'
+                        ORDER BY ts ASC
+                        """,
+                        (
+                            context_start_dt.isoformat(),
+                            context_end_dt.isoformat(),
+                        ),
+                    ).fetchall()
+
+                samples = [
+                    {"ts": str(r[0]), "power": float(r[1] or 0.0)}
+                    for r in rows
+                ]
+
+            context_warning = ""
+            if not samples:
+                try:
+                    raw_points = json.loads(str(event_row[14] or "[]"))
+                except Exception:
+                    raw_points = []
+                if isinstance(raw_points, list) and raw_points:
+                    samples = []
+                    for point in raw_points:
+                        if not isinstance(point, dict):
+                            continue
+                        t_offset = self._safe_float(point.get("t_s"), 0.0)
+                        p_w = self._safe_float(point.get("power_w"), 0.0)
+                        point_ts = event_start_dt + timedelta(seconds=t_offset)
+                        samples.append({"ts": point_ts.isoformat(), "power": p_w})
+                    context_start_dt = event_start_dt
+                    context_end_dt = event_end_dt
+                    context_warning = "live_raw_samples_unavailable_fallback_to_event_curve"
+                else:
+                    context_warning = "no_raw_samples_available"
+
+            offset_start_ms = int(max((event_start_dt - context_start_dt).total_seconds() * 1000.0, 0.0))
+            offset_end_ms = int(max((event_end_dt - context_start_dt).total_seconds() * 1000.0, 0.0))
+            peak_power = self._safe_float(event_row[8], 0.0)
+            baseline_before = self._safe_float(event_row[10], 0.0)
+            baseline_after = self._safe_float(event_row[11], 0.0)
+
+            return {
+                "ok": True,
+                "pattern_id": int(pattern_row[0]),
+                "pattern": {
+                    "id": int(pattern_row[0]),
+                    "label": str(pattern_row[1] or pattern_row[2] or "unknown"),
+                    "suggestion_type": str(pattern_row[2] or "unknown"),
+                    "phase": str(pattern_row[3] or event_phase),
+                    "avg_power_w": self._safe_float(pattern_row[4], 0.0),
+                    "peak_power_w": self._safe_float(pattern_row[5], 0.0),
+                    "duration_s": self._safe_float(pattern_row[6], 0.0),
+                },
+                "event_id": int(event_row[0] or 0),
+                "phase": event_phase,
+                "start_time": event_start_iso,
+                "end_time": event_end_iso,
+                "event_start_time": event_start_iso,
+                "event_end_time": event_end_iso,
+                "context_start": context_start_dt.isoformat(),
+                "context_end": context_end_dt.isoformat(),
+                "event_start_offset_ms": offset_start_ms,
+                "event_end_offset_ms": offset_end_ms,
+                "event": {
+                    "event_id": int(event_row[0] or 0),
+                    "phase": event_phase,
+                    "duration_s": self._safe_float(event_row[6], 0.0),
+                    "avg_power_w": self._safe_float(event_row[7], 0.0),
+                    "peak_power_w": peak_power,
+                    "energy_wh": self._safe_float(event_row[9], 0.0),
+                    "delta_avg_power_w": self._safe_float(event_row[12], 0.0),
+                    "delta_peak_power_w": self._safe_float(event_row[13], 0.0),
+                    "sample_start_index": int(event_row[15]) if event_row[15] is not None else None,
+                    "sample_end_index": int(event_row[16]) if event_row[16] is not None else None,
+                    "raw_trace_id": str(event_row[17] or "") or None,
+                },
+                "samples": samples,
+                "baseline": [
+                    {"ts": context_start_dt.isoformat(), "power": baseline_before},
+                    {"ts": event_start_iso, "power": baseline_before},
+                    {"ts": event_end_iso, "power": baseline_after},
+                    {"ts": context_end_dt.isoformat(), "power": baseline_after},
+                ],
+                "markers": {
+                    "event_start": event_start_iso,
+                    "event_end": event_end_iso,
+                    "peak_power_w": peak_power,
+                },
+                "requested_pre_seconds": pre_s,
+                "requested_post_seconds": post_s,
+                "warning": context_warning or None,
+            }
+        except Exception as e:
+            logger.error("get_pattern_context failed for pattern %s: %s", pattern_id, e, exc_info=True)
+            return {"ok": False, "error": str(e), "pattern_id": int(pattern_id)}
 
     def _record_event_phases(self, event_id: int, phase_rows: List[Dict[str, Any]]) -> None:
         if not self._patterns_conn or not event_id or not phase_rows:
@@ -4010,7 +4395,16 @@ class SQLiteStore:
                                                 delta_avg_power_w, delta_peak_power_w, delta_energy_wh,
                                                 COALESCE(delta_profile_points_json, '[]'),
                                                 COALESCE(delta_shape_vector_json, '[]'),
-                                                COALESCE(plateau_count, 0)
+                                                COALESCE(plateau_count, 0),
+                                                COALESCE(curve_hash, ''),
+                                                COALESCE(shape_signature, ''),
+                                                COALESCE(avg_delta_power_w, delta_avg_power_w),
+                                                COALESCE(avg_duration_s, duration_s),
+                                                COALESCE(avg_peak_power_w, peak_power_w),
+                                                COALESCE(avg_inrush_duration_s, 0.0),
+                                                COALESCE(occurrence_count, seen_count),
+                                                COALESCE(device_group_id, ''),
+                                                COALESCE(mode_key, '')
                 FROM learned_patterns
                 ORDER BY seen_count DESC, last_seen DESC
                 LIMIT ?
@@ -4146,6 +4540,15 @@ class SQLiteStore:
                         "delta_profile_points": self._normalize_profile_points(json.loads(str(row[45] or "[]"))) if str(row[45] or "").strip() else [],
                         "delta_shape_vector_json": str(row[46] or "[]"),
                         "plateau_count": int(row[47] or 0),
+                        "curve_hash": str(row[48] or ""),
+                        "shape_signature": str(row[49] or ""),
+                        "avg_delta_power_w": float(row[50] or 0.0),
+                        "avg_duration_s": float(row[51] or 0.0),
+                        "avg_peak_power_w": float(row[52] or 0.0),
+                        "avg_inrush_duration_s": float(row[53] or 0.0),
+                        "occurrence_count": int(row[54] or seen_count),
+                        "device_group_id": str(row[55] or ""),
+                        "mode_key": str(row[56] or ""),
                     }
                 )
 
@@ -4190,6 +4593,37 @@ class SQLiteStore:
             }
 
         cycle = self._augment_cycle_baseline_delta(cycle)
+        suggestion_seed = str(suggestion_type or "unknown").strip() or "unknown"
+        if suggestion_seed == "unknown":
+            suggestion_seed = self._infer_unknown_subclass(cycle)
+        cycle["shape_signature"] = self._shape_signature_from_cycle(cycle)
+        cycle["curve_hash"] = self._curve_hash_from_cycle(cycle)
+        cycle["mode_key"] = self._mode_key_from_cycle(cycle)
+        cycle["device_group_id"] = self._device_group_id(suggestion_seed, cycle)
+
+        if self._is_session_duplicate(cycle, suggestion_seed):
+            self.log_training_decision(
+                event_id=None,
+                accepted=False,
+                reason="session_duplicate_cycle",
+                label=suggestion_seed,
+                dedup_result="session_skip",
+                matched_pattern_id=None,
+                similarity_score=1.0,
+                dedup_reason="same_cycle_already_seen_in_runtime_session",
+            )
+            return {
+                "matched": False,
+                "pattern": None,
+                "skipped": True,
+                "reason": "session_duplicate_cycle",
+                "dedup": {
+                    "result": "session_skip",
+                    "matched_pattern_id": None,
+                    "similarity_score": 1.0,
+                    "reason": "same_cycle_already_seen_in_runtime_session",
+                },
+            }
 
         now = datetime.now().isoformat()
         patterns = self.list_patterns(limit=500)
@@ -4199,16 +4633,37 @@ class SQLiteStore:
 
         best = None
         best_distance = 999.0
+        best_similarity = 0.0
         for item in patterns:
             if item.get("status") != "active":
                 continue
             # Only match patterns on the same phase
             if item.get("phase", "L1") != cycle_phase:
                 continue
-            distance = self._pattern_distance(item, cycle)
+            similarity = self._dedup_similarity(item, cycle)
+            distance = 1.0 - similarity
             if distance < best_distance:
                 best_distance = distance
+                best_similarity = similarity
                 best = item
+
+        dedup_result = "new"
+        dedup_reason = "no_match"
+        force_match = False
+        if best:
+            same_group = str(best.get("device_group_id") or self._device_group_id(str(best.get("suggestion_type") or suggestion_seed), best)) == str(cycle.get("device_group_id") or "")
+            same_mode = str(best.get("mode_key") or self._mode_key_from_cycle(best)) == str(cycle.get("mode_key") or "")
+            if best_similarity >= 0.92:
+                dedup_result = "update_existing"
+                dedup_reason = "similarity_ge_0_92"
+                force_match = True
+            elif best_similarity >= 0.85 and (same_group or same_mode):
+                dedup_result = "merge_mode"
+                dedup_reason = "similarity_ge_0_85_group_or_mode_match"
+                force_match = True
+            else:
+                dedup_result = "create_new"
+                dedup_reason = "similarity_below_threshold"
 
         try:
             best_tolerance = tolerance
@@ -4216,7 +4671,7 @@ class SQLiteStore:
                 seen = max(int(best.get("seen_count", 1)), 1)
                 best_tolerance = max(0.22, tolerance - min((seen - 1) * 0.005, 0.14))
 
-            if best and best_distance <= best_tolerance:
+            if best and force_match:
                 seen_count = int(best["seen_count"]) + 1
                 alpha = 1.0 / seen_count
 
@@ -4251,6 +4706,15 @@ class SQLiteStore:
                 delta_peak_power_w = float(best.get("delta_peak_power_w", 0.0) or 0.0) * (1.0 - alpha) + float(cycle.get("delta_peak_power_w", 0.0) or 0.0) * alpha
                 delta_energy_wh = float(best.get("delta_energy_wh", 0.0) or 0.0) * (1.0 - alpha) + float(cycle.get("delta_energy_wh", 0.0) or 0.0) * alpha
                 plateau_count = int(round(float(best.get("plateau_count", 0) or 0.0) * (1.0 - alpha) + float(cycle.get("plateau_count", 0) or 0.0) * alpha))
+                avg_delta_power_w = float(best.get("avg_delta_power_w", best.get("delta_avg_power_w", 0.0)) or 0.0) * (1.0 - alpha) + float(cycle.get("delta_avg_power_w", 0.0) or 0.0) * alpha
+                avg_duration_s = float(best.get("avg_duration_s", best.get("duration_s", 0.0)) or 0.0) * (1.0 - alpha) + float(cycle.get("duration_s", 0.0) or 0.0) * alpha
+                avg_peak_power_w = float(best.get("avg_peak_power_w", best.get("peak_power_w", 0.0)) or 0.0) * (1.0 - alpha) + float(cycle.get("peak_power_w", 0.0) or 0.0) * alpha
+                avg_inrush_duration_s = float(best.get("avg_inrush_duration_s", 0.0) or 0.0) * (1.0 - alpha) + float(cycle.get("settling_time_s", 0.0) or 0.0) * alpha
+                occurrence_count = int(best.get("occurrence_count", seen_count - 1) or (seen_count - 1)) + 1
+                curve_hash = str(cycle.get("curve_hash") or self._curve_hash_from_cycle(cycle))
+                shape_signature = str(cycle.get("shape_signature") or self._shape_signature_from_cycle(cycle))
+                mode_key = str(cycle.get("mode_key") or self._mode_key_from_cycle(cycle))
+                device_group_id = str(cycle.get("device_group_id") or self._device_group_id(str(best.get("suggestion_type") or suggestion_seed), cycle))
                 quality_score_avg = float(best.get("quality_score_avg", 0.5)) * (1.0 - alpha) + quality_score * alpha
                 candidate_mode = self._build_mode_signature(cycle, str(cycle.get("end_ts", now)))
                 merged_modes = self._merge_operating_modes(
@@ -4333,6 +4797,9 @@ class SQLiteStore:
                             baseline_before_w_avg = ?, baseline_after_w_avg = ?,
                             delta_avg_power_w = ?, delta_peak_power_w = ?, delta_energy_wh = ?,
                             delta_profile_points_json = ?, delta_shape_vector_json = ?, plateau_count = ?,
+                            curve_hash = ?, shape_signature = ?,
+                            avg_delta_power_w = ?, avg_duration_s = ?, avg_peak_power_w = ?, avg_inrush_duration_s = ?,
+                            occurrence_count = ?, device_group_id = ?, mode_key = ?,
                             quality_score_avg = ?,
                             suggestion_type = ?,
                             device_id = ?,
@@ -4377,6 +4844,15 @@ class SQLiteStore:
                             delta_profile_points_json,
                             delta_shape_vector_json,
                             plateau_count,
+                            curve_hash,
+                            shape_signature,
+                            avg_delta_power_w,
+                            avg_duration_s,
+                            avg_peak_power_w,
+                            avg_inrush_duration_s,
+                            occurrence_count,
+                            device_group_id,
+                            mode_key,
                             quality_score_avg,
                             final_label,
                             int(device_id) if device_id else None,
@@ -4459,6 +4935,15 @@ class SQLiteStore:
                         "delta_profile_points": delta_profile_points,
                         "delta_shape_vector_json": delta_shape_vector_json,
                         "plateau_count": plateau_count,
+                        "curve_hash": curve_hash,
+                        "shape_signature": shape_signature,
+                        "avg_delta_power_w": avg_delta_power_w,
+                        "avg_duration_s": avg_duration_s,
+                        "avg_peak_power_w": avg_peak_power_w,
+                        "avg_inrush_duration_s": avg_inrush_duration_s,
+                        "occurrence_count": occurrence_count,
+                        "device_group_id": device_group_id,
+                        "mode_key": mode_key,
                         "quality_score_avg": quality_score_avg,
                         "suggestion_type": final_label,
                         "device_id": int(device_id) if device_id else int(best.get("device_id", 0) or 0),
@@ -4481,6 +4966,20 @@ class SQLiteStore:
                     assigned_device_id=int(device_id) if device_id else None,
                     final_label=final_label,
                     final_confidence=float(self._last_hybrid_decision.get("confidence", 0.0) or 0.0),
+                    dedup_result=dedup_result,
+                    matched_pattern_id=int(best["id"]),
+                    similarity_score=best_similarity,
+                    dedup_reason=dedup_reason,
+                )
+                self.log_training_decision(
+                    event_id=event_id,
+                    accepted=True,
+                    reason="dedup_update_existing",
+                    label=final_label,
+                    dedup_result=dedup_result,
+                    matched_pattern_id=int(best["id"]),
+                    similarity_score=best_similarity,
+                    dedup_reason=dedup_reason,
                 )
                 self._record_classification_log(
                     event_id=event_id,
@@ -4493,6 +4992,13 @@ class SQLiteStore:
                 return {
                     "matched": True,
                     "distance": best_distance,
+                    "similarity": best_similarity,
+                    "dedup": {
+                        "result": dedup_result,
+                        "matched_pattern_id": int(best["id"]),
+                        "similarity_score": best_similarity,
+                        "reason": dedup_reason,
+                    },
                     "pattern": best,
                 }
 
@@ -4514,12 +5020,20 @@ class SQLiteStore:
                 delta_profile_points_json = json.dumps(delta_profile_points)
                 delta_shape_vector_json = json.dumps(cycle.get("delta_shape_vector", []))
                 prototype_hash = self._prototype_hash_from_cycle(cycle)
+                curve_hash = str(cycle.get("curve_hash") or self._curve_hash_from_cycle(cycle))
+                shape_signature = str(cycle.get("shape_signature") or self._shape_signature_from_cycle(cycle))
                 baseline_before_w_avg = float(cycle.get("baseline_before_w", 0.0) or 0.0)
                 baseline_after_w_avg = float(cycle.get("baseline_after_w", 0.0) or 0.0)
                 delta_avg_power_w = float(cycle.get("delta_avg_power_w", 0.0) or 0.0)
                 delta_peak_power_w = float(cycle.get("delta_peak_power_w", 0.0) or 0.0)
                 delta_energy_wh = float(cycle.get("delta_energy_wh", 0.0) or 0.0)
                 plateau_count = int(cycle.get("plateau_count", 0) or 0)
+                avg_delta_power_w = delta_avg_power_w
+                avg_duration_s = float(cycle.get("duration_s", 0.0) or 0.0)
+                avg_peak_power_w = float(cycle.get("peak_power_w", 0.0) or 0.0)
+                avg_inrush_duration_s = float(cycle.get("settling_time_s", 0.0) or 0.0)
+                occurrence_count = 1
+                mode_key = str(cycle.get("mode_key") or self._mode_key_from_cycle(cycle))
                 
                 # Multi-mode learning
                 initial_mode = self._build_mode_signature(cycle, str(cycle.get("end_ts", now)))
@@ -4538,9 +5052,6 @@ class SQLiteStore:
                     initial_hour_of_day = 12.0
                     initial_hour_dist_json = "{}"
 
-                suggestion_seed = str(suggestion_type or "unknown").strip() or "unknown"
-                if suggestion_seed == "unknown":
-                    suggestion_seed = self._infer_unknown_subclass(cycle)
                 confidence_score_norm = max(0.0, min(1.0, quality_score))
                 frequency_per_day_seed = self._frequency_per_day(
                     seen_count=1,
@@ -4548,6 +5059,7 @@ class SQLiteStore:
                     last_seen_iso=str(cycle.get("end_ts") or now),
                 )
                 candidate_name = self._normalize_pattern_name(suggestion_seed)
+                device_group_id = str(cycle.get("device_group_id") or self._device_group_id(suggestion_seed, cycle))
                 device_id = self._get_or_create_device(
                     label=suggestion_seed,
                     phase=str(cycle.get("phase", "L1")),
@@ -4570,12 +5082,15 @@ class SQLiteStore:
                         baseline_before_w_avg, baseline_after_w_avg,
                         delta_avg_power_w, delta_peak_power_w, delta_energy_wh,
                         delta_profile_points_json, delta_shape_vector_json, plateau_count,
+                        curve_hash, shape_signature,
+                        avg_delta_power_w, avg_duration_s, avg_peak_power_w, avg_inrush_duration_s,
+                        occurrence_count, device_group_id, mode_key,
                         quality_score_avg,
                         device_id, confidence_score, frequency_per_day,
                         candidate_name, is_confirmed, shape_vector_json, prototype_hash,
                         operating_modes, has_multiple_modes,
                         typical_interval_s, avg_hour_of_day, last_intervals_json, hour_distribution_json
-                    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                     """,
                     (
                         now,
@@ -4611,6 +5126,15 @@ class SQLiteStore:
                         delta_profile_points_json,
                         delta_shape_vector_json,
                         plateau_count,
+                        curve_hash,
+                        shape_signature,
+                        avg_delta_power_w,
+                        avg_duration_s,
+                        avg_peak_power_w,
+                        avg_inrush_duration_s,
+                        occurrence_count,
+                        device_group_id,
+                        mode_key,
                         quality_score,
                         int(device_id) if device_id else None,
                         confidence_score_norm,
@@ -4680,6 +5204,15 @@ class SQLiteStore:
                 "delta_profile_points": delta_profile_points,
                 "delta_shape_vector_json": delta_shape_vector_json,
                 "plateau_count": plateau_count,
+                "curve_hash": curve_hash,
+                "shape_signature": shape_signature,
+                "avg_delta_power_w": avg_delta_power_w,
+                "avg_duration_s": avg_duration_s,
+                "avg_peak_power_w": avg_peak_power_w,
+                "avg_inrush_duration_s": avg_inrush_duration_s,
+                "occurrence_count": occurrence_count,
+                "device_group_id": device_group_id,
+                "mode_key": mode_key,
                 "quality_score_avg": quality_score,
                 "device_id": int(device_id) if device_id else 0,
                 "confidence_score_db": confidence_score_norm,
@@ -4709,6 +5242,20 @@ class SQLiteStore:
                 assigned_device_id=int(device_id) if device_id else None,
                 final_label=suggestion_seed,
                 final_confidence=float(self._last_hybrid_decision.get("confidence", 0.0) or 0.0),
+                dedup_result="create_new",
+                matched_pattern_id=int(best.get("id", 0) or 0) if best else None,
+                similarity_score=best_similarity if best else 0.0,
+                dedup_reason=dedup_reason,
+            )
+            self.log_training_decision(
+                event_id=event_id,
+                accepted=True,
+                reason="dedup_create_new",
+                label=suggestion_seed,
+                dedup_result="create_new",
+                matched_pattern_id=int(best.get("id", 0) or 0) if best else None,
+                similarity_score=best_similarity if best else 0.0,
+                dedup_reason=dedup_reason,
             )
             self._record_classification_log(
                 event_id=event_id,
@@ -4718,7 +5265,18 @@ class SQLiteStore:
                 final_confidence=float(self._last_hybrid_decision.get("confidence", 0.0) or 0.0),
                 decision_source=str(self._last_hybrid_decision.get("source", "pattern_create")),
             )
-            return {"matched": False, "distance": None, "pattern": created}
+            return {
+                "matched": False,
+                "distance": None,
+                "similarity": best_similarity if best else 0.0,
+                "dedup": {
+                    "result": "create_new",
+                    "matched_pattern_id": int(best.get("id", 0) or 0) if best else None,
+                    "similarity_score": best_similarity if best else 0.0,
+                    "reason": dedup_reason,
+                },
+                "pattern": created,
+            }
         except Exception as e:
             logger.error(f"Failed to learn cycle pattern: {e}", exc_info=True)
             return {"matched": False, "pattern": None}
@@ -4907,18 +5465,24 @@ class SQLiteStore:
         accepted: bool = False,
         reason: Optional[str] = None,
         label: Optional[str] = None,
+        dedup_result: Optional[str] = None,
+        matched_pattern_id: Optional[int] = None,
+        similarity_score: Optional[float] = None,
+        dedup_reason: Optional[str] = None,
     ) -> None:
         """Record a training-filter accept/reject decision in the training_log table."""
         if not self._patterns_conn:
             return
         try:
-            from datetime import datetime as _dt
-            now = _dt.utcnow().isoformat()
+            now = datetime.now(timezone.utc).isoformat()
             with self._patterns_conn:
                 self._patterns_conn.execute(
                     """
-                    INSERT INTO training_log (created_at, event_id, accepted, rejected, reason, label)
-                    VALUES (?, ?, ?, ?, ?, ?)
+                    INSERT INTO training_log (
+                        created_at, event_id, accepted, rejected, reason, label,
+                        dedup_result, matched_pattern_id, similarity_score, dedup_reason
+                    )
+                    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                     """,
                     (
                         now,
@@ -4927,6 +5491,10 @@ class SQLiteStore:
                         0 if accepted else 1,
                         str(reason) if reason else None,
                         str(label) if label else None,
+                        str(dedup_result) if dedup_result else None,
+                        int(matched_pattern_id) if matched_pattern_id else None,
+                        float(similarity_score) if similarity_score is not None else None,
+                        str(dedup_reason) if dedup_reason else None,
                     ),
                 )
         except Exception as e:
@@ -4939,7 +5507,8 @@ class SQLiteStore:
         try:
             rows = self._patterns_conn.execute(
                 """
-                SELECT id, created_at, event_id, accepted, rejected, reason, label
+                SELECT id, created_at, event_id, accepted, rejected, reason, label,
+                       dedup_result, matched_pattern_id, similarity_score, dedup_reason
                 FROM training_log
                 ORDER BY created_at DESC
                 LIMIT ?
@@ -4955,6 +5524,10 @@ class SQLiteStore:
                     "rejected": bool(row[4]),
                     "reason": row[5],
                     "label": row[6],
+                    "dedup_result": row[7],
+                    "matched_pattern_id": row[8],
+                    "similarity_score": float(row[9] or 0.0),
+                    "dedup_reason": row[10],
                 }
                 for row in rows
             ]

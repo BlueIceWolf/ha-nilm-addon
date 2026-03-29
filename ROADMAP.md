@@ -32,6 +32,9 @@ Was funktioniert bereits, was ist noch in Arbeit und wo soll das Projekt hin.
 - **Overlap-Detection (v0.6.30)**: Strong/Weak-Event-Zerlegung mit `overlap_score` fuer bessere Trennschaerfe bei gleichzeitigen Lasten
 - **Training-Audit + Debug-APIs (v0.6.30)**: `training_log` inkl. Endpunkten fuer Training-Entscheidungen und Pipeline-Puffer
 - **Web-UI 5-Tab Struktur (v0.6.30)**: `LIVE`, `EVENTS`, `GERÄTE`, `LERNEN`, `DEBUG` als getrennte Arbeitsbereiche
+- **Pattern-Dedup vor Insert (v0.6.33)**: doppelte Kurven werden vor dem Speichern zusammengefuehrt oder verworfen
+- **Muster-Kontextansicht (v0.6.33)**: Detailansicht zeigt Vorlauf/Event/Nachlauf mit Markerlinien und Baseline
+- **Touch-robuste Musterauswahl (v0.6.33)**: Muster-Details lassen sich auf Handy/Tablet zuverlaessig oeffnen
 
 ---
 
@@ -126,7 +129,7 @@ Damit das Projekt irgendwann "produktiv-ready" ist sollte gelten:
 - Gute Dokumentation damit neue User nicht völlig verloren sind
 - Ein paar Video-Guides zum Einrichten
 
-**Aktuell (v0.6.30):** Etwa 86-91% davon erreicht. Core, Persistenz, Lernpipeline, ML-Training, Inrush/Runtime-Modell und der neue Pipeline-/Debug-Unterbau sind stabil. Fokus liegt jetzt auf variablen Lasten, praxisnahem ML-Tuning und Debug-Auswertungen im Betrieb.
+**Aktuell (v0.6.33):** Etwa 88-92% davon erreicht. Core, Persistenz, Lernpipeline, ML-Training, Inrush/Runtime-Modell, Dedup-Lernpfad und die neue Kontext-Debug-Ansicht sind stabil. Fokus liegt jetzt auf variablen Lasten, praxisnahem ML-Tuning und weiterem UI-Feinschliff.
 
 ---
 

@@ -11,7 +11,7 @@
 
 <p align="center">
   <img src="https://img.shields.io/badge/Status-BETA-orange" alt="BETA" />
-   <img src="https://img.shields.io/badge/Version-0.6.31-blue" alt="Version" />
+   <img src="https://img.shields.io/badge/Version-0.6.33-blue" alt="Version" />
 </p>
 
 > ⚠️ **EXPERIMENTELLES PROJEKT (BETA)**: Dieses Add-on befindet sich in aktiver Entwicklung. Viele Features funktionieren bereits gut, aber es ist **nicht production-ready**. Erwarte Bugs, unvollständige Features und Breaking Changes zwischen Versionen. Nutze es zum Experimentieren und Testen, aber nicht für kritische Automatisierungen.
@@ -27,7 +27,7 @@
 
 ---
 
-**Aktuell:** `v0.6.31` - Startup-Hotfix: numpy/scipy/sklearn Runtime-Guard im Startskript und erzwungener Rebuild via Versionsbump.
+**Aktuell:** `v0.6.33` - Dedup vor Insert, neue Kontext-Musteransicht (2s/5s/10s) und Touch-feste Musterauswahl.
 
 > ℹ️ **v0.6.11 Hinweis**: Auch die oberen Dashboard-Karten (`Gesamtleistung`, `Durchschnitt`, `Messwerte`, `Gelernte Muster`) schalten jetzt sauber zwischen DE/EN um.
 
@@ -68,6 +68,9 @@
 - **📋 Detaillierte Analytics** – Häufigkeit, Betriebszeiten, typische Tageszeiten, stability scores
 - **🗂️ 5-Tab Dashboard (v0.6.30)** – Bereiche `LIVE`, `EVENTS`, `GERÄTE`, `LERNEN`, `DEBUG` getrennt fuer klare Workflows
 - **🧰 Debug-Endpunkte (v0.6.30)** – `GET /api/training-log` und `GET /api/debug/pipeline-buffer` fuer Nachvollziehbarkeit
+- **🧬 Pattern-Dedup (v0.6.33)** – Doppeltes Lernen wird vor Insert verhindert (Similarity-Entscheidung + Session-Guard)
+- **🪟 Kontext-Musteransicht (v0.6.33)** – Pattern-Detail zeigt Rohsignal mit Vor-/Nachlauf, Start/End-Marker, Baseline und Zoom
+- **📱 Touch-Fix Musterauswahl (v0.6.33)** – Auswahl per Touchscreen/Handy stabil, inkl. explizitem `Details`-Button
 
 ### Phase Detection & Learning
 - **⚖️ Intelligente 3-Phasen-Erkennung** – Echte 3-Phasen-Geräte (Motor, großer Herd) vs. einzelne Geräte auf verschiedenen Phasen

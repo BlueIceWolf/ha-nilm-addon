@@ -11,6 +11,30 @@
 - `py3-requests` und `py3-paho-mqtt` werden ebenfalls per `apk` installiert
 - Default fuer `ARG BUILD_FROM` gesetzt, wodurch die Build-Warnung zu leerem Base-Image reduziert wird
 
+## 0.6.33 (BETA)
+
+**Muster-Qualitaet & Detail-Debugging verbessert (Dedup + Kontextansicht + Touch-Fix)**
+
+- Lernpfad um robuste Dedup-Entscheidung vor Insert erweitert:
+  - Similarity-Scoring (Shape/Duration/Delta/Peak-Inrush)
+  - Schwellwerte: `>=0.92 update_existing`, `0.85..0.92 merge_mode`, sonst `create_new`
+  - Session-Guard verhindert Doppel-Lernen derselben Kurve im selben Lauf
+- Datenmodell erweitert fuer Dedup/Debug:
+  - `learned_patterns`: `curve_hash`, `shape_signature`, `avg_*`, `occurrence_count`, `device_group_id`, `mode_key`
+  - `events`/`training_log`: dedup-Felder (`dedup_result`, `matched_pattern_id`, `similarity_score`, `dedup_reason`)
+- Neue Muster-Kontext-API:
+  - `GET /api/patterns/<id>/context?pre=2&post=2`
+  - Liefert Event-Meta, Kontextfenster, Rohsamples, Start/End-Marker, Baseline
+- Pattern-Modal in der UI erweitert:
+  - Kontextansicht mit Vor-/Nachlauf (2s/5s/10s), Event-Hervorhebung, Start/End-Linien
+  - Zoom via Mausrad, Hover-Infos (Zeit/Leistung), Umschaltung `Mit Kontext`/`Nur Muster`
+- Touch/Mobile-Usability verbessert:
+  - Zuverlaessige Musterauswahl per `pointerup`
+  - Expliziter `Details`-Button pro Musterzeile fuer Handy/Tablet
+- Neue Tests:
+  - `test_pattern_dedup.py`
+  - `test_pattern_context.py`
+
 ## 0.6.31 (BETA)
 
 **Hotfix: numpy/scipy/sklearn Importfehler beim Add-on-Start behoben**

@@ -4,6 +4,33 @@
 
 ---
 
+# Release 0.6.33 (BETA)
+
+## Store Kurztext
+- **🔎 Muster-Detailansicht deutlich besser**: Kontextkurve mit Vor-/Nachlauf, Event-Markierungen, Dedup-Entscheidungen und Touch-feste Musterauswahl.
+
+## Highlights
+- **Robuste Dedup-Lernlogik vor Insert**
+  - Similarity-Scoring mit gewichteten Komponenten (Shape, Duration, Delta, Peak/Inrush)
+  - Entscheidungsregeln: `update_existing`, `merge_mode`, `create_new`
+  - Session-Guard verhindert doppelte Lern-Eintraege im selben Lauf
+- **Neue Kontext-API fuer Musterdetails**
+  - `GET /api/patterns/<id>/context?pre=2&post=2`
+  - Liefert Event-Zeitpunkte, Kontextgrenzen, Rohsamples, Offsets, Baseline und Marker
+- **Pattern-Modal fuer Debugging ausgebaut**
+  - Umschaltung `Mit Kontext` / `Nur Muster`
+  - Presets `2s`, `5s`, `10s` Vor-/Nachlauf
+  - Event-Fenster farblich hervorgehoben, Start/Ende als Linien
+  - Hover-Werte + Zoom (Mausrad) + optionale Sample-Punkte
+- **Mobile/Touch-Fix in der Musterliste**
+  - Auswahl funktioniert jetzt zuverlaessig auf Touchscreens
+  - Neuer `Details`-Button als klarer Tap-Target
+- **Schema und Debug-Transparenz verbessert**
+  - Dedup-Felder in `learned_patterns`, `events`, `training_log`
+  - Event-Metafelder fuer Kontext-Reproduktion (`start_time`, `end_time`, `sample_*`, `raw_trace_id`)
+
+---
+
 # Release 0.6.30 (BETA)
 
 ## Store Kurztext
