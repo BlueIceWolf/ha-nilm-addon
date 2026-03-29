@@ -164,6 +164,7 @@ class NILMDetectionSystem:
                 get_series_data=self._build_series_payload,
                 get_patterns_data=self._build_patterns_payload,
                 set_pattern_label=self._set_pattern_label,
+                set_pattern_phase_lock=self._set_pattern_phase_lock,
                 delete_pattern=self._delete_pattern,
                 flush_debug_data=self._flush_debug_db,
                 clear_readings_only=self._clear_readings_only,
@@ -478,6 +479,11 @@ class NILMDetectionSystem:
         if not self.storage:
             return False
         return self.storage.label_pattern(pattern_id=pattern_id, user_label=label)
+
+    def _set_pattern_phase_lock(self, pattern_id: int, phase: str) -> bool:
+        if not self.storage:
+            return False
+        return self.storage.set_pattern_phase_lock(pattern_id=pattern_id, phase=phase)
 
     def _create_pattern_from_range(self, start_time: str, end_time: str, label: str) -> Dict:
         """Create a new learned pattern from a manually selected time range."""

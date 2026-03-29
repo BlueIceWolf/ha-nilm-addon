@@ -1733,6 +1733,20 @@ class SQLiteStore:
                 "CREATE INDEX IF NOT EXISTS idx_pattern_history_pattern ON pattern_history(pattern_id, snapshot_ts DESC)"
             )
 
+            self._patterns_conn.execute(
+                """
+                CREATE TABLE IF NOT EXISTS label_phase_locks (
+                    label_key TEXT PRIMARY KEY,
+                    phase TEXT NOT NULL,
+                    updated_at TEXT NOT NULL,
+                    source TEXT
+                )
+                """
+            )
+            self._patterns_conn.execute(
+                "CREATE INDEX IF NOT EXISTS idx_label_phase_locks_phase ON label_phase_locks(phase)"
+            )
+
             # Migration tracking table – one row per migration event (unique key prevents re-runs)
             self._patterns_conn.execute(
                 """
@@ -2725,6 +2739,29 @@ class SQLiteStore:
         if not patterns:
             return _remember({"label": fallback, "confidence": 0.0, "source": "fallback"})
 
+        cycle_phase = str(cycle.get("phase") or "L1")
+        phase_locks = self.get_label_phase_locks()
+
+        if cycle_phase in {"L1", "L2", "L3"}:
+            filtered_patterns: List[Dict[str, Any]] = []
+            for pattern in patterns:
+                pattern_phase = str(pattern.get("phase") or "")
+                group_label = self._device_group_key(pattern)
+                locked_phase = str(phase_locks.get(group_label) or "")
+
+                # 1) Always avoid cross-phase matching for explicitly phase-tagged patterns.
+                if pattern_phase in {"L1", "L2", "L3"} and pattern_phase != cycle_phase:
+                    continue
+
+                # 2) If user locked label->phase, suppress this label on other phases.
+                if locked_phase in {"L1", "L2", "L3"} and locked_phase != cycle_phase:
+                    continue
+
+                filtered_patterns.append(pattern)
+
+            if filtered_patterns:
+                patterns = filtered_patterns
+
         # Enrich cycle with substate-derived features if missing.
         substate = analyze_profile_substates(cycle.get("profile_points", []))
         if int(cycle.get("num_substates", 0) or 0) <= 0:
@@ -2782,6 +2819,23 @@ class SQLiteStore:
                     source = "hybrid_ml_override"
 
         confidence = max(0.0, min(1.0, float(final_confidence)))
+
+        normalized_final_label = self._normalize_pattern_name(str(final_label or ""))
+        label_lock_phase = str(phase_locks.get(normalized_final_label) or "")
+        if label_lock_phase in {"L1", "L2", "L3"} and cycle_phase in {"L1", "L2", "L3"} and label_lock_phase != cycle_phase:
+            return _remember({
+                "label": fallback,
+                "confidence": min(confidence, 0.2),
+                "source": "phase_lock_reject",
+                "explain": {
+                    **dict(matcher_result.explain),
+                    "cycle_phase": cycle_phase,
+                    "phase_lock": {
+                        "label": normalized_final_label,
+                        "locked_phase": label_lock_phase,
+                    },
+                },
+            })
 
         # Unknown labels must never look "certain" in UI/debug output.
         normalized_label = str(final_label or "").strip().lower()
@@ -3705,6 +3759,105 @@ class SQLiteStore:
             return True
         except Exception as e:
             logger.error(f"Failed to label pattern {pattern_id}: {e}", exc_info=True)
+            return False
+
+    def get_label_phase_locks(self) -> Dict[str, str]:
+        """Return explicit label->phase locks (normalized label keys)."""
+        if not self._patterns_conn or not self._table_exists(self._patterns_conn, "label_phase_locks"):
+            return {}
+        try:
+            rows = self._patterns_conn.execute(
+                """
+                SELECT label_key, phase
+                FROM label_phase_locks
+                """
+            ).fetchall()
+            out: Dict[str, str] = {}
+            for row in rows:
+                key = self._normalize_pattern_name(row[0] or "")
+                phase = str(row[1] or "").upper()
+                if not key:
+                    continue
+                if phase in {"L1", "L2", "L3"}:
+                    out[key] = phase
+            return out
+        except Exception as e:
+            logger.warning("Failed to list label phase locks: %s", e)
+            return {}
+
+    def set_label_phase_lock(self, label: str, phase: str, source: str = "manual") -> bool:
+        """Persist an explicit phase lock for a label and align existing patterns/devices."""
+        if not self._patterns_conn:
+            return False
+        label_key = self._normalize_pattern_name(label)
+        target_phase = str(phase or "").upper()
+        if not label_key or target_phase not in {"L1", "L2", "L3"}:
+            return False
+
+        try:
+            now = datetime.now().isoformat()
+            with self._patterns_conn:
+                self._patterns_conn.execute(
+                    """
+                    INSERT INTO label_phase_locks (label_key, phase, updated_at, source)
+                    VALUES (?, ?, ?, ?)
+                    ON CONFLICT(label_key) DO UPDATE SET
+                        phase = excluded.phase,
+                        updated_at = excluded.updated_at,
+                        source = excluded.source
+                    """,
+                    (label_key, target_phase, now, str(source or "manual")),
+                )
+
+                self._patterns_conn.execute(
+                    """
+                    UPDATE learned_patterns
+                    SET phase = ?, updated_at = ?
+                    WHERE LOWER(REPLACE(COALESCE(user_label, suggestion_type, ''), ' ', '_')) = ?
+                       OR LOWER(REPLACE(COALESCE(candidate_name, ''), ' ', '_')) = ?
+                    """,
+                    (target_phase, now, label_key, label_key),
+                )
+
+                if self._table_exists(self._patterns_conn, "devices"):
+                    self._patterns_conn.execute(
+                        """
+                        UPDATE devices
+                        SET phase = ?, updated_at = ?, confirmed = 1
+                        WHERE LOWER(REPLACE(COALESCE(final_label, ''), ' ', '_')) = ?
+                           OR LOWER(REPLACE(COALESCE(user_label, ''), ' ', '_')) = ?
+                           OR LOWER(REPLACE(COALESCE(predicted_label, ''), ' ', '_')) = ?
+                        """,
+                        (target_phase, now, label_key, label_key, label_key),
+                    )
+
+            return True
+        except Exception as e:
+            logger.error("Failed to set phase lock for label %s: %s", label, e, exc_info=True)
+            return False
+
+    def set_pattern_phase_lock(self, pattern_id: int, phase: str) -> bool:
+        """Set label phase lock using the label resolved from a pattern ID."""
+        if not self._patterns_conn:
+            return False
+        try:
+            row = self._patterns_conn.execute(
+                """
+                SELECT user_label, candidate_name, suggestion_type
+                FROM learned_patterns
+                WHERE id = ?
+                """,
+                (int(pattern_id),),
+            ).fetchone()
+            if not row:
+                return False
+
+            label = str(row[0] or row[1] or row[2] or "").strip()
+            if not label:
+                return False
+            return self.set_label_phase_lock(label=label, phase=phase, source=f"pattern:{int(pattern_id)}")
+        except Exception as e:
+            logger.error("Failed to set pattern phase lock for pattern %s: %s", pattern_id, e, exc_info=True)
             return False
 
     def delete_pattern(self, pattern_id: int) -> bool:

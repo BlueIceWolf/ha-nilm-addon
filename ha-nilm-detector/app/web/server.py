@@ -381,6 +381,25 @@ def _html_page(default_language: str = "de") -> str:
     <h2 id=\"patternsHeading\" style=\"margin:14px 0 8px; font-size:1.1rem;\">Gelernte Muster</h2>
     <div style=\"margin-bottom: 8px; display: flex; gap: 8px; align-items: center; flex-wrap: wrap;\">
       <input type=\"text\" id=\"patternSearch\" placeholder=\"Muster suchen...\" style=\"padding: 6px 10px; border: 1px solid var(--line); border-radius: 6px; background: var(--card); color: var(--ink); flex: 1; min-width: 200px;\" />
+      <select id=\"patternTypeFilter\" style=\"padding: 6px 10px; border: 1px solid var(--line); border-radius: 6px; background: var(--card); color: var(--ink); min-width: 150px;\">
+        <option id=\"typeFilterAll\" value=\"all\">Typ: alle</option>
+      </select>
+      <select id=\"patternPhaseFilter\" style=\"padding: 6px 10px; border: 1px solid var(--line); border-radius: 6px; background: var(--card); color: var(--ink); min-width: 120px;\">
+        <option id=\"phaseFilterAll\" value=\"all\">Phase: alle</option>
+        <option id=\"phaseFilterL1\" value=\"L1\">L1</option>
+        <option id=\"phaseFilterL2\" value=\"L2\">L2</option>
+        <option id=\"phaseFilterL3\" value=\"L3\">L3</option>
+      </select>
+      <select id=\"patternConfirmFilter\" style=\"padding: 6px 10px; border: 1px solid var(--line); border-radius: 6px; background: var(--card); color: var(--ink); min-width: 150px;\">
+        <option id=\"confirmFilterAll\" value=\"all\">Status: alle</option>
+        <option id=\"confirmFilterConfirmed\" value=\"confirmed\">bestätigt</option>
+        <option id=\"confirmFilterUnconfirmed\" value=\"unconfirmed\">unbestätigt</option>
+      </select>
+      <select id=\"patternPageSize\" style=\"padding: 6px 10px; border: 1px solid var(--line); border-radius: 6px; background: var(--card); color: var(--ink); min-width: 120px;\">
+        <option id=\"pageSize25\" value=\"25\">25 / Seite</option>
+        <option id=\"pageSize50\" value=\"50\" selected>50 / Seite</option>
+        <option id=\"pageSize100\" value=\"100\">100 / Seite</option>
+      </select>
       <select id=\"patternSort\" style=\"padding: 6px 10px; border: 1px solid var(--line); border-radius: 6px; background: var(--card); color: var(--ink);\">
         <option id=\"sortSeenCount\" value=\"seen_count\">Sortieren: Häufigkeit ↓</option>
         <option id=\"sortConfidence\" value=\"confidence_score\">Sortieren: Confidence ↓</option>
@@ -391,6 +410,11 @@ def _html_page(default_language: str = "de") -> str:
         <option id=\"sortInterval\" value=\"typical_interval_s\">Sortieren: Intervall ↓</option>
         <option id=\"sortId\" value=\"id\">Sortieren: ID ↑</option>
       </select>
+    </div>
+    <div style=\"display:flex; gap:8px; justify-content:flex-end; align-items:center; margin-bottom:8px;\">
+      <span id=\"patternResultsInfo\" class=\"muted\" style=\"font-size:0.82rem;\">-</span>
+      <button id=\"patternPrevPage\" title=\"Vorherige Seite\">◀</button>
+      <button id=\"patternNextPage\" title=\"Nächste Seite\">▶</button>
     </div>
     <table>
       <thead>
@@ -437,6 +461,8 @@ let isSelectingRange = false;
 let selectionStart = null;
 let allPatterns = [];
 let currentSortBy = 'seen_count';
+let currentPatternPage = 1;
+let currentPatternPageSize = 50;
 let seriesWindow = 360;
 let seriesOffset = 0;
 const defaultLanguage = document.documentElement.lang === 'en' ? 'en' : 'de';
@@ -489,6 +515,15 @@ const I18N = {
     rangeBtnIdle: '📍 Bereich markieren',
     rangeBtnActive: '✓ Wähle Bereich aus',
     patternSearchPlaceholder: 'Muster suchen...',
+    typeFilterAll: 'Typ: alle',
+    phaseFilterAll: 'Phase: alle',
+    confirmFilterAll: 'Status: alle',
+    confirmFilterConfirmed: 'bestätigt',
+    confirmFilterUnconfirmed: 'unbestätigt',
+    pageSize25: '25 / Seite',
+    pageSize50: '50 / Seite',
+    pageSize100: '100 / Seite',
+    patternResultsInfo: 'Zeige {start}-{end} von {filtered} (gesamt {total})',
     sortSeenCount: 'Sortieren: Häufigkeit ↓',
     sortConfidence: 'Sortieren: Confidence ↓',
     sortGroupSize: 'Sortieren: Gruppe ↓',
@@ -560,7 +595,12 @@ const I18N = {
     hybridMlLabel: 'ML',
     hybridNoData: 'Noch keine Hybrid-Entscheidung'
     ,btnLabel: 'Label'
+    ,btnPhase: 'Phase fixieren'
     ,btnDelete: 'Löschen'
+    ,promptPhase: 'Auf welcher Phase liegt dieses Gerät? (L1, L2, L3)'
+    ,invalidPhase: 'Bitte L1, L2 oder L3 eingeben.'
+    ,phaseLockSaved: 'Phase-Lock gespeichert: {label} -> {phase}'
+    ,phaseLockFailed: 'Konnte Phase-Lock nicht speichern: {err}'
     ,titleRunLearning: 'Lernlauf sofort starten'
     ,titleClearReadings: 'Nur Live-Daten (Readings) löschen'
     ,titleClearPatterns: 'Nur gelernte Muster löschen'
@@ -617,6 +657,15 @@ const I18N = {
     rangeBtnIdle: '📍 Select range',
     rangeBtnActive: '✓ Select range now',
     patternSearchPlaceholder: 'Search patterns...',
+    typeFilterAll: 'Type: all',
+    phaseFilterAll: 'Phase: all',
+    confirmFilterAll: 'Status: all',
+    confirmFilterConfirmed: 'confirmed',
+    confirmFilterUnconfirmed: 'unconfirmed',
+    pageSize25: '25 / page',
+    pageSize50: '50 / page',
+    pageSize100: '100 / page',
+    patternResultsInfo: 'Showing {start}-{end} of {filtered} (total {total})',
     sortSeenCount: 'Sort: frequency ↓',
     sortConfidence: 'Sort: confidence ↓',
     sortGroupSize: 'Sort: group ↓',
@@ -688,7 +737,12 @@ const I18N = {
     hybridMlLabel: 'ML',
     hybridNoData: 'No hybrid decision yet'
     ,btnLabel: 'Label'
+    ,btnPhase: 'Lock phase'
     ,btnDelete: 'Delete'
+    ,promptPhase: 'On which phase is this device? (L1, L2, L3)'
+    ,invalidPhase: 'Please enter L1, L2 or L3.'
+    ,phaseLockSaved: 'Phase lock saved: {label} -> {phase}'
+    ,phaseLockFailed: 'Could not save phase lock: {err}'
     ,titleRunLearning: 'Start learning run now'
     ,titleClearReadings: 'Delete live readings only'
     ,titleClearPatterns: 'Delete learned patterns only'
@@ -784,6 +838,14 @@ function applyLanguage() {
   assignText('sortStability', 'sortStability');
   assignText('sortInterval', 'sortInterval');
   assignText('sortId', 'sortId');
+  assignText('typeFilterAll', 'typeFilterAll');
+  assignText('phaseFilterAll', 'phaseFilterAll');
+  assignText('confirmFilterAll', 'confirmFilterAll');
+  assignText('confirmFilterConfirmed', 'confirmFilterConfirmed');
+  assignText('confirmFilterUnconfirmed', 'confirmFilterUnconfirmed');
+  assignText('pageSize25', 'pageSize25');
+  assignText('pageSize50', 'pageSize50');
+  assignText('pageSize100', 'pageSize100');
   assignTitle('runLearningBtn', 'titleRunLearning');
   assignTitle('clearReadingsBtn', 'titleClearReadings');
   assignTitle('clearPatternsBtn', 'titleClearPatterns');
@@ -1242,11 +1304,6 @@ function renderDevices(devices) {
 }
 
 function renderPatterns(patterns) {
-  // Store all patterns for filtering/sorting  
-  if (patterns && patterns.length > 0) {
-    allPatterns = patterns;
-  }
-  
   const tbody = document.getElementById('patternRows');
   tbody.innerHTML = '';
   if (!patterns || !patterns.length) {
@@ -1343,7 +1400,7 @@ function renderPatterns(patterns) {
       ? `<td><div class="tooltip" style="font-size:0.85rem;color:#666;">${timeText}<span class="tooltiptext">${timeTooltip}</span></div></td>`
       : `<td style="font-size:0.85rem;color:#666;">${timeText}</td>`;
     
-    tr.innerHTML = `<td>${p.id}</td><td>${typeText}</td><td>${label}</td><td>${groupChip}</td><td style="font-size:0.85rem;color:#666;">${frequency}</td>${intervalCell}${timeCell}<td style="padding:4px 2px;">${stabilityBar}</td><td>${confidenceChip}</td><td>${phaseDisplay}</td><td>${fmt(p.avg_power_w)}</td><td>${fmt(p.peak_power_w)}</td><td>${fmt(p.duration_s)}</td><td>${p.seen_count ?? 0}</td><td><button data-id="${p.id}" class="btn-label">${t('btnLabel')}</button> <button data-id="${p.id}" class="btn-delete">${t('btnDelete')}</button></td>`;
+    tr.innerHTML = `<td>${p.id}</td><td>${typeText}</td><td>${label}</td><td>${groupChip}</td><td style="font-size:0.85rem;color:#666;">${frequency}</td>${intervalCell}${timeCell}<td style="padding:4px 2px;">${stabilityBar}</td><td>${confidenceChip}</td><td>${phaseDisplay}</td><td>${fmt(p.avg_power_w)}</td><td>${fmt(p.peak_power_w)}</td><td>${fmt(p.duration_s)}</td><td>${p.seen_count ?? 0}</td><td><button data-id="${p.id}" class="btn-label">${t('btnLabel')}</button> <button data-id="${p.id}" data-label="${(p.user_label || p.candidate_name || p.suggestion_type || '').replace(/"/g, '&quot;')}" class="btn-phase">${t('btnPhase')}</button> <button data-id="${p.id}" class="btn-delete">${t('btnDelete')}</button></td>`;
     tr.style.cursor = 'pointer';
     tr.addEventListener('click', (e) => {
       if (e.target.tagName === 'BUTTON') return;
@@ -1383,6 +1440,33 @@ function renderPatterns(patterns) {
         await refresh();
       } catch (err) {
         alert(t('deleteFailed', { err }));
+      }
+    });
+  });
+
+  tbody.querySelectorAll('button.btn-phase[data-id]').forEach(btn => {
+    btn.addEventListener('click', async () => {
+      const id = Number(btn.getAttribute('data-id'));
+      const patternLabel = String(btn.getAttribute('data-label') || '');
+      const phaseRaw = prompt(t('promptPhase'));
+      if (!phaseRaw) return;
+      const phase = String(phaseRaw).trim().toUpperCase();
+      if (!['L1', 'L2', 'L3'].includes(phase)) {
+        alert(t('invalidPhase'));
+        return;
+      }
+
+      try {
+        const res = await fetch(apiPath(`api/patterns/${id}/phase-lock`), {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ phase })
+        });
+        if (!res.ok) throw new Error(`HTTP ${res.status}`);
+        alert(t('phaseLockSaved', { label: patternLabel || id, phase }));
+        await refresh();
+      } catch (err) {
+        alert(t('phaseLockFailed', { err }));
       }
     });
   });
@@ -1451,7 +1535,9 @@ async function refresh() {
     setStatus(t('drawing'));
     drawChart(series.points || []);
     renderDevices(live.devices || {});
-    renderPatterns(Array.isArray(patterns) ? patterns : []);
+    allPatterns = Array.isArray(patterns) ? patterns : [];
+    currentPatternPage = 1;
+    filterAndSortPatterns();
     const windowInfo = document.getElementById('windowInfo');
     if (windowInfo) {
       const hours = Math.round((seriesWindow / 120.0) * 10) / 10;
@@ -1853,9 +1939,40 @@ document.getElementById('newerBtn').addEventListener('click', async () => {
   seriesOffset = Math.max(0, seriesOffset - seriesWindow);
   await refresh();
 });
-document.getElementById('patternSearch').addEventListener('input', filterAndSortPatterns);
+document.getElementById('patternSearch').addEventListener('input', () => {
+  currentPatternPage = 1;
+  filterAndSortPatterns();
+});
 document.getElementById('patternSort').addEventListener('change', (e) => {
   currentSortBy = e.target.value;
+  filterAndSortPatterns();
+});
+document.getElementById('patternTypeFilter').addEventListener('change', () => {
+  currentPatternPage = 1;
+  filterAndSortPatterns();
+});
+document.getElementById('patternPhaseFilter').addEventListener('change', () => {
+  currentPatternPage = 1;
+  filterAndSortPatterns();
+});
+document.getElementById('patternConfirmFilter').addEventListener('change', () => {
+  currentPatternPage = 1;
+  filterAndSortPatterns();
+});
+document.getElementById('patternPageSize').addEventListener('change', (e) => {
+  const size = Number(e.target.value);
+  currentPatternPageSize = Number.isFinite(size) && size > 0 ? size : 50;
+  currentPatternPage = 1;
+  filterAndSortPatterns();
+});
+document.getElementById('patternPrevPage').addEventListener('click', () => {
+  if (currentPatternPage > 1) {
+    currentPatternPage -= 1;
+    filterAndSortPatterns();
+  }
+});
+document.getElementById('patternNextPage').addEventListener('click', () => {
+  currentPatternPage += 1;
   filterAndSortPatterns();
 });
 
@@ -1874,11 +1991,31 @@ function updateDarkModeButtonText() {
 
 function filterAndSortPatterns() {
   const searchTerm = document.getElementById('patternSearch').value.toLowerCase();
-  let filtered = allPatterns;
-  
-  // Filtern
+  const selectedPhase = String(document.getElementById('patternPhaseFilter').value || 'all');
+  const selectedConfirm = String(document.getElementById('patternConfirmFilter').value || 'all');
+  let filtered = Array.isArray(allPatterns) ? [...allPatterns] : [];
+
+  const typeSelect = document.getElementById('patternTypeFilter');
+  if (typeSelect) {
+    const typeSet = new Set();
+    filtered.forEach(p => {
+      const value = String(p.candidate_name || p.suggestion_type || '').trim();
+      if (value) typeSet.add(value);
+    });
+    const currentType = String(typeSelect.value || 'all');
+    typeSelect.innerHTML = `<option id=\"typeFilterAll\" value=\"all\">${t('typeFilterAll')}</option>`;
+    Array.from(typeSet).sort((a, b) => a.localeCompare(b)).forEach(value => {
+      const opt = document.createElement('option');
+      opt.value = value;
+      opt.textContent = value;
+      typeSelect.appendChild(opt);
+    });
+    typeSelect.value = (currentType === 'all' || typeSet.has(currentType)) ? currentType : 'all';
+  }
+  const selectedType = String(document.getElementById('patternTypeFilter').value || 'all');
+
   if (searchTerm) {
-    filtered = allPatterns.filter(p => {
+    filtered = filtered.filter(p => {
       const label = (p.user_label || '').toLowerCase();
       const type = (p.suggestion_type || '').toLowerCase();
       const candidate = (p.candidate_name || '').toLowerCase();
@@ -1887,16 +2024,50 @@ function filterAndSortPatterns() {
              candidate.includes(searchTerm) || id.includes(searchTerm);
     });
   }
+
+  if (selectedType !== 'all') {
+    filtered = filtered.filter(p => String(p.candidate_name || p.suggestion_type || '') === selectedType);
+  }
+
+  if (selectedPhase !== 'all') {
+    filtered = filtered.filter(p => String(p.phase || 'L1') === selectedPhase);
+  }
+
+  if (selectedConfirm !== 'all') {
+    const mustBeConfirmed = selectedConfirm === 'confirmed';
+    filtered = filtered.filter(p => Boolean(p.is_confirmed) === mustBeConfirmed);
+  }
   
-  // Sortieren
   filtered.sort((a, b) => {
     const aVal = a[currentSortBy] ?? 0;
     const bVal = b[currentSortBy] ?? 0;
-    // Für ID aufsteigend, sonst absteigend
     return currentSortBy === 'id' ? aVal - bVal : bVal - aVal;
   });
-  
-  renderPatterns(filtered);
+
+  const totalFiltered = filtered.length;
+  const totalAll = Array.isArray(allPatterns) ? allPatterns.length : 0;
+  const maxPage = Math.max(1, Math.ceil(totalFiltered / currentPatternPageSize));
+  currentPatternPage = Math.min(Math.max(1, currentPatternPage), maxPage);
+  const startIdx = (currentPatternPage - 1) * currentPatternPageSize;
+  const endIdx = Math.min(startIdx + currentPatternPageSize, totalFiltered);
+  renderPatterns(filtered.slice(startIdx, endIdx));
+
+  const info = document.getElementById('patternResultsInfo');
+  if (info) {
+    const start = totalFiltered === 0 ? 0 : startIdx + 1;
+    const end = totalFiltered === 0 ? 0 : endIdx;
+    info.textContent = t('patternResultsInfo', {
+      start,
+      end,
+      filtered: totalFiltered,
+      total: totalAll,
+    });
+  }
+
+  const prevBtn = document.getElementById('patternPrevPage');
+  const nextBtn = document.getElementById('patternNextPage');
+  if (prevBtn) prevBtn.disabled = currentPatternPage <= 1;
+  if (nextBtn) nextBtn.disabled = currentPatternPage >= maxPage;
 }
 
 const languageSelect = document.getElementById('languageSelect');
@@ -1932,6 +2103,7 @@ class StatsWebServer:
         get_series_data: Callable[[int, int], List[Dict]],
         get_patterns_data: Optional[Callable[[], List[Dict]]] = None,
         set_pattern_label: Optional[Callable[[int, str], bool]] = None,
+        set_pattern_phase_lock: Optional[Callable[[int, str], bool]] = None,
         delete_pattern: Optional[Callable[[int], bool]] = None,
         flush_debug_data: Optional[Callable[[bool], Dict]] = None,
         clear_readings_only: Optional[Callable[[], Dict]] = None,
@@ -1949,6 +2121,7 @@ class StatsWebServer:
         self.get_series_data = get_series_data
         self.get_patterns_data = get_patterns_data
         self.set_pattern_label = set_pattern_label
+        self.set_pattern_phase_lock = set_pattern_phase_lock
         self.delete_pattern = delete_pattern
         self.flush_debug_data = flush_debug_data
         self.clear_readings_only = clear_readings_only
@@ -2265,6 +2438,43 @@ class StatsWebServer:
                         return
 
                     self._send_json({"ok": True})
+                    return
+
+                if parsed.path.startswith("/api/patterns/") and parsed.path.endswith("/phase-lock"):
+                    if not parent.set_pattern_phase_lock:
+                        self._send_json({"error": "phase lock not enabled"}, status=400)
+                        return
+
+                    parts = [part for part in parsed.path.split("/") if part]
+                    if len(parts) != 4:
+                        self._send_json({"error": "invalid path"}, status=400)
+                        return
+
+                    try:
+                        pattern_id = int(parts[2])
+                    except ValueError:
+                        self._send_json({"error": "invalid pattern id"}, status=400)
+                        return
+
+                    length = int(self.headers.get("Content-Length", "0") or 0)
+                    raw = self.rfile.read(length) if length > 0 else b"{}"
+                    try:
+                        payload = json.loads(raw.decode("utf-8")) if raw else {}
+                    except json.JSONDecodeError:
+                        self._send_json({"error": "invalid json"}, status=400)
+                        return
+
+                    phase = str(payload.get("phase", "")).strip().upper()
+                    if phase not in {"L1", "L2", "L3"}:
+                        self._send_json({"error": "phase must be one of L1/L2/L3"}, status=400)
+                        return
+
+                    ok = parent.set_pattern_phase_lock(pattern_id, phase)
+                    if not ok:
+                        self._send_json({"error": "failed to save phase lock"}, status=500)
+                        return
+
+                    self._send_json({"ok": True, "pattern_id": pattern_id, "phase": phase})
                     return
 
                 if parsed.path == "/api/patterns/create-from-range":
