@@ -45,6 +45,7 @@ class Config:
         self.learning_delta_off_w = 12.0
         self.learning_max_gap_s = 6.0
         self.learning_end_hold_s = 6.0
+        self.learning_derivative_threshold_w_per_s = 120.0
         self.learning_stabilization_grace_s = 12.0
         self.learning_pre_roll_s = 2.0
         self.learning_post_roll_s = 2.0
@@ -134,16 +135,22 @@ class Config:
             learning_config.get('min_cycle_seconds', self.learning_min_cycle_seconds)
         )
         self.learning_delta_on_w = float(
-            learning_config.get('delta_on_w', self.learning_delta_on_w)
+            learning_config.get('start_threshold_w', learning_config.get('delta_on_w', self.learning_delta_on_w))
         )
         self.learning_delta_off_w = float(
-            learning_config.get('delta_off_w', self.learning_delta_off_w)
+            learning_config.get('end_threshold_w', learning_config.get('delta_off_w', self.learning_delta_off_w))
         )
         self.learning_max_gap_s = float(
             learning_config.get('max_gap_s', self.learning_max_gap_s)
         )
         self.learning_end_hold_s = float(
-            learning_config.get('end_hold_s', self.learning_end_hold_s)
+            learning_config.get('hold_time_s', learning_config.get('end_hold_s', self.learning_end_hold_s))
+        )
+        self.learning_derivative_threshold_w_per_s = float(
+            learning_config.get(
+                'derivative_threshold_w_per_s',
+                self.learning_derivative_threshold_w_per_s,
+            )
         )
         self.learning_stabilization_grace_s = float(
             learning_config.get('stabilization_grace_s', self.learning_stabilization_grace_s)

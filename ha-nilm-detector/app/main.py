@@ -133,6 +133,7 @@ class NILMDetectionSystem:
                         pre_roll_seconds=self.config.learning_pre_roll_s,
                         post_roll_seconds=self.config.learning_post_roll_s,
                         stabilization_grace_s=self.config.learning_stabilization_grace_s,
+                        derivative_threshold_w_per_s=self.config.learning_derivative_threshold_w_per_s,
                     )
                     self.phase_learners[phase_name] = learner
                     self.phase_pipelines[phase_name] = NILMPipeline(
@@ -634,6 +635,7 @@ class NILMDetectionSystem:
                     pre_roll_seconds=self.config.learning_pre_roll_s,
                     post_roll_seconds=self.config.learning_post_roll_s,
                     stabilization_grace_s=self.config.learning_stabilization_grace_s,
+                    derivative_threshold_w_per_s=self.config.learning_derivative_threshold_w_per_s,
                 )
             return learners
 

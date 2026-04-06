@@ -2560,6 +2560,11 @@ class SQLiteStore:
         if delta_energy < SQLiteStore.LEARNING_PARAMS["delta_energy_min_wh"]:
             score -= 0.20
 
+        if bool(cycle.get("truncated_start", False)):
+            score -= 0.18
+        if bool(cycle.get("truncated_end", False)):
+            score -= 0.18
+
         return max(0.0, min(1.0, score))
 
     @classmethod
@@ -3048,6 +3053,8 @@ class SQLiteStore:
 
     @classmethod
     def _shape_signature_from_cycle(cls, cycle: Dict[str, Any]) -> str:
+        if bool(cycle.get("truncated_start", False) or cycle.get("truncated_end", False)):
+            return ""
         profile_points = cls._normalize_profile_points(cycle.get("delta_profile_points", []))
         if not profile_points:
             profile_points = cls._normalize_profile_points(cycle.get("profile_points", []))

@@ -4,6 +4,30 @@
 
 ---
 
+# Release 0.6.38 (BETA)
+
+## Store Kurztext
+- **🩺 Segmentierungs-Hotfix fuer Vollzyklen**: fruehere Start-Erkennung, spaeteres Event-Ende und weniger faelschliche Truncation bei Motoren und Kompressoren.
+
+## Highlights
+- **Vollzyklen statt Fragmenten**
+  - Event-Start nutzt jetzt Rolling-Baseline, Delta-Trigger und Derivative-Trigger
+  - Inrush-Spitzen werden frueher in das Eventfenster aufgenommen
+  - Pre-Roll/Post-Roll werden explizit in den Segmentierungsfluss eingebunden
+- **Robustere End-Erkennung**
+  - Rueckkehr zur Baseline muss ueber Hold-Time stabil sein
+  - kurze Einbrueche bei Motoren/Kompressoren beenden das Event nicht sofort
+- **Weniger falsche `truncated_start`-Faelle**
+  - harte Starts direkt aus Idle werden nicht mehr als abgeschnitten behandelt
+  - Truncation wird erst auf dem vollstaendigen Eventfenster bewertet
+- **Lern-/Shape-Gating verbessert**
+  - truncierte Events senken Confidence
+  - `shape_signature` wird fuer truncierte Events nicht als vollwertige Lernbasis genutzt
+- **Verifikation**
+  - neue Segmentierungsregressionen und fokussierte NILM-Suite sind gruen
+
+---
+
 # Release 0.6.37 (BETA)
 
 ## Store Kurztext

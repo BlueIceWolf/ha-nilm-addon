@@ -461,6 +461,10 @@ def resolve_final_decision(
         label_source = "hybrid"
         reasons.append("downgraded_from_fridge_due_to_weak_recurrence")
 
+    if bool(cycle.get("truncated_start", False) or cycle.get("truncated_end", False)):
+        final_confidence = max(0.2, final_confidence * 0.78)
+        reasons.append("segmentation_truncated_confidence_penalty")
+
     if label not in {"unknown", "unbekannt", "unknown_electronics"}:
         final_confidence = max(final_confidence, 0.35)
 

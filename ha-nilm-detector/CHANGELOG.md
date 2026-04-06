@@ -2,6 +2,29 @@
 
 > ⚠️ **Hinweis**: Dieses Projekt ist experimentell (BETA) - Breaking Changes und Bugs können auftreten.
 
+## 0.6.38 (BETA)
+
+**Segmentierungs-Hotfix fuer Vollzyklen: bessere Event-Grenzen, weniger Truncation und sauberere Lernsignaturen**
+
+- Event-Erkennung auf explizite Zustaende umgestellt: `IDLE -> PRE_EVENT -> ACTIVE -> ENDING`
+- Start-Erkennung erweitert:
+  - Rolling-Baseline statt nur impliziter statischer Grenze
+  - Delta-Trigger und zusaetzlicher Derivative-Trigger fuer fruehere Inrush-Erfassung
+  - Pre-Roll wird bei Start robuster uebernommen
+- End-Erkennung verbessert:
+  - Event endet erst nach stabiler Rueckkehr nahe Baseline ueber konfigurierbare Hold-Time
+  - kurze Dips fuehren nicht mehr sofort zu einem Event-Ende
+  - Post-Roll wird sauber gesammelt, bevor finalisiert wird
+- Truncation-Logik geschaerft:
+  - echte harte Inrush-Starts aus dem Idle werden nicht mehr faelschlich als `truncated_start` markiert
+  - `shape_signature` wird fuer truncierte Events nicht als vollwertige Lernbasis verwendet
+- Neue Segmentierungs-Regressionen fuer:
+  - Motorstart mit Inrush
+  - Kompressorzyklus
+  - Kurzspike
+  - verrauschtes Signal
+  - Mehrstufenlast
+
 ## 0.6.37 (BETA)
 
 **NILM-Lernpfad deutlich erweitert: bessere Segmentierung, feinere Unknown-Klassen und reichhaltigere Review-Daten fuer den HA-Test**
