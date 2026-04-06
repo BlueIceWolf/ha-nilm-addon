@@ -464,22 +464,54 @@ class PatternLearner:
     def _suggest_device_type_first_level(cycle: LearnedCycle) -> tuple[str, str]:
         """Rule-based first-level classification (no ML).
 
-        Required as deterministic baseline so the system does not collapse into
-        all-unknown predictions.
+        Only return concrete device types for highly distinctive signatures.
+        Ambiguous cycles should fall through to the richer classifier instead of
+        being forced into coarse buckets like "heater" or "long_running".
         """
         avg_power = float(cycle.avg_power_w)
+        peak_power = float(cycle.peak_power_w)
         duration_s = float(cycle.duration_s)
+        features = cycle.features
 
-        if avg_power > 1500.0:
-            return ("heater", "avg_power_gt_1500")
+        if features:
+            if (
+                features.has_heating_pattern
+                and features.rise_rate_w_per_s > 100.0
+                and peak_power >= 1400.0
+                and 30.0 <= duration_s <= 900.0
+                and features.power_variance / max(avg_power * avg_power, 1.0) < 0.08
+            ):
+                return ("kettle", "distinct_heating_fast_rise_short_cycle")
 
-        if avg_power > 500.0 and duration_s < 60.0:
-            return ("motor", "avg_power_gt_500_and_duration_lt_60")
+            if (
+                features.has_motor_pattern
+                and peak_power < 350.0
+                and 120.0 <= duration_s <= 3600.0
+                and features.duty_cycle < 0.7
+            ):
+                return ("fridge", "distinct_low_power_motor_cycle")
 
-        if avg_power < 300.0 and duration_s < 60.0:
-            return ("electronics", "avg_power_lt_300_and_duration_lt_60")
+            if (
+                features.num_substates >= 2
+                and features.has_motor_pattern
+                and 400.0 <= peak_power <= 1600.0
+                and 1200.0 <= duration_s <= 10800.0
+            ):
+                return ("washing_machine", "distinct_multistate_motor_cycle")
 
-        if duration_s > 300.0:
-            return ("long_running", "duration_gt_300")
+            if (
+                features.has_heating_pattern
+                and 700.0 <= peak_power <= 2600.0
+                and 1200.0 <= duration_s <= 14400.0
+            ):
+                return ("dishwasher", "distinct_heating_long_cycle")
+
+            if (
+                peak_power >= 800.0
+                and 30.0 <= duration_s <= 600.0
+                and features.power_variance / max(avg_power * avg_power, 1.0) < 0.05
+                and features.peak_to_avg_ratio < 1.35
+            ):
+                return ("microwave", "distinct_short_stable_high_power")
 
         return ("unknown", "no_rule_matched")

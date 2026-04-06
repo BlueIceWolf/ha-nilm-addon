@@ -4,6 +4,29 @@
 
 ---
 
+# Release 0.6.36 (BETA)
+
+## Store Kurztext
+- **🤝 Testweise kollaborative Musterfreigabe**: Privacy-sicherer Shared-Pattern-Export, neues LLM-Review-Bundle und sichtbare Exportflaechen in der UI.
+
+## Highlights
+- **Shared Pattern Pack fuer freiwilliges Community-Sharing**
+  - Neues Exportformat fuer bestaetigte Muster ohne Rohmesswerte, ohne Event-Historie und ohne Freitext-Kommentare
+  - Oeffentliche Labels werden sanitisiert, damit keine privaten Raum-/Geraetenamen unkontrolliert exportiert werden
+- **LLM-Review-Bundle fuer Entwickleranalyse**
+  - Kompaktes JSON mit Pattern-Features, Event-Summaries, Klassifikationslog und Trainingslog
+  - Direkt fuer ChatGPT-/LLM-gestuetzte Review-Loops nutzbar, ohne Voll-Export der lokalen Datenbank
+- **UI-Exportflaechen erweitert**
+  - Neue Buttons `Shared Pack` und `LLM Review` im Dashboard
+  - Downloads laufen ueber dieselbe JSON-Download-Logik wie der bisherige Voll-Export
+- **Erstklassifikation geschaerft**
+  - Markante Signaturen werden frueh als konkrete Geraetetypen erkannt (`kettle`, `fridge`, `washing_machine`, `dishwasher`, `microwave`)
+  - Unscharfe Faelle bleiben bewusst `unknown` statt in grobe Sammelkategorien zu rutschen
+- **Verifikation**
+  - Neue Regressionstests fuer Shared-Export und Erstklassifikation gruen
+
+---
+
 # Release 0.6.35 (BETA)
 
 ## Store Kurztext

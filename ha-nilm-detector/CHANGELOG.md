@@ -2,6 +2,28 @@
 
 > ⚠️ **Hinweis**: Dieses Projekt ist experimentell (BETA) - Breaking Changes und Bugs können auftreten.
 
+## 0.6.36 (BETA)
+
+**Kollaborative Musterfreigabe testweise aktiviert: Shared Pack + LLM-Review + UI-Exportflaechen**
+
+- Neue datensparsame Community-Exporte:
+  - `export_shared_pattern_pack()` fuer freiwillig teilbare Pattern-Packs
+  - keine Roh-Readings, keine Event-Historie, keine Kommentare, keine exakten Pattern-Zeitstempel
+  - freie User-Labels werden fuer den oeffentlichen Export auf sichere Typen reduziert
+- Neues Entwickler-/LLM-Analysebundle:
+  - `export_llm_review_bundle()` mit kompakten Pattern-Features, Event-Summaries, `classification_log` und `training_log`
+  - gedacht fuer Offline-Analyse und ChatGPT-/LLM-gestuetzte Verbesserung der Erkennung
+- Web-UI erweitert:
+  - neue Buttons fuer `Shared Pack` und `LLM Review`
+  - bestehende JSON-Exportlogik auf gemeinsamen Download-Helfer vereinheitlicht
+  - Build-Info wird jetzt korrekt in die HTML-Seite injiziert
+- Deterministische Erstklassifikation geschaerft:
+  - nur noch konkrete High-Confidence-Geraetetypen bei markanten Signaturen
+  - ambivalente Lasten bleiben `unknown` und werden nicht mehr zu groben Sammelkategorien gezwungen
+- Neue Tests:
+  - `test_shared_exports.py`
+  - `test_pattern_first_level_classification.py`
+
 ## 0.6.35 (BETA)
 
 **Pipeline-Stabilisierung abgeschlossen: modulare Lernstufen + bessere Inspektion + Roundtrip-Haertung**

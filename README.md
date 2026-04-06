@@ -11,7 +11,7 @@
 
 <p align="center">
   <img src="https://img.shields.io/badge/Status-BETA-orange" alt="BETA" />
-   <img src="https://img.shields.io/badge/Version-0.6.35-blue" alt="Version" />
+   <img src="https://img.shields.io/badge/Version-0.6.36-blue" alt="Version" />
 </p>
 
 > ⚠️ **EXPERIMENTELLES PROJEKT (BETA)**: Dieses Add-on befindet sich in aktiver Entwicklung. Viele Features funktionieren bereits gut, aber es ist **nicht production-ready**. Erwarte Bugs, unvollständige Features und Breaking Changes zwischen Versionen. Nutze es zum Experimentieren und Testen, aber nicht für kritische Automatisierungen.
@@ -27,7 +27,7 @@
 
 ---
 
-**Aktuell:** `v0.6.35` - Pipeline-Stages modularisiert, Kontext-Phasen visualisiert und Import/Export-Roundtrip gehaertet.
+**Aktuell:** `v0.6.36` - Shared-Pattern-Export, LLM-Review-Bundle und testweise UI-Exportflaechen fuer kollaborative Musterverbesserung.
 
 > ℹ️ **v0.6.11 Hinweis**: Auch die oberen Dashboard-Karten (`Gesamtleistung`, `Durchschnitt`, `Messwerte`, `Gelernte Muster`) schalten jetzt sauber zwischen DE/EN um.
 
@@ -52,12 +52,14 @@
 - **🧩 Device-Gruppen (v0.6.7+)** – Mehrere Pattern desselben Geraets werden gruppiert dargestellt und gruppenbasiert vorgeschlagen
 - **🔀 Besseres Mode-Clustering (v0.6.7+)** – Variable Lasten werden als Betriebsmodi in einem Pattern gebuendelt statt als viele Einzellabels
 - **📐 Echte Feature-Extraction (v0.6.24)** – Edge-basierte Rise/Fall-Raten, Plateau/Substates und `step_count` statt flacher Dummy-Features
-- **🧭 Deterministische Erstklassifikation (v0.6.24)** – First-Level-Regeln (`heater`, `motor`, `electronics`, `long_running`) vor ML-Fallback
+- **🧭 Deterministische Erstklassifikation (v0.6.24+)** – Nur noch konkrete, belastbare Geraetetypen bei wirklich markanten Signaturen; ambivalente Zyklen fallen kontrolliert weiter an den reicheren Klassifikationspfad
 - **🔁 Frequency-Refinement (v0.6.24)** – Nutzungshaeufigkeit wird in der Label-Verfeinerung beruecksichtigt, um `unknown` zu reduzieren
 - **🧠 Wissensbasis-Upgrade (v0.6.26)** – Neue persistente Tabellen fuer `events`, `devices`, `classification_log`, `user_labels`, `pattern_history` und exportierbare Trainingsdaten
 - **🧪 Trainings-Audit-Log (v0.6.30)** – `training_log` protokolliert akzeptierte/abgelehnte Trainings-Events inkl. Grund
 - **🔀 Overlap-Scoring (v0.6.30)** – Zweistufige Event-Zerlegung (`strong`/`weak`) berechnet `overlap_score` fuer robustere Lernentscheidungen
 - **🧱 Per-Phase NILMPipeline (v0.6.30)** – Main-Loop nutzt jetzt pro Phase eine dedizierte Pipeline mit durchgaengigem Stage-Debug
+- **🤝 Freigebbare Pattern-Packs (v0.6.36)** – Privacy-sicherer Export bestaetigter Muster fuer freiwilliges Community-Sharing ohne Rohmesswerte oder Freitext-Kommentare
+- **🧠 LLM-Review-Export (v0.6.36)** – Kompaktes Analyse-Bundle fuer ChatGPT/LLM-gestuetzte Bewertung von Mustern, Fehlklassifikationen und Regelideen
 
 ### Web-UI
 - **🌙 Dark Mode** – Durchgehend hell/dunkel Modus mit modernem Home-Assistant-Design
@@ -68,6 +70,7 @@
 - **📋 Detaillierte Analytics** – Häufigkeit, Betriebszeiten, typische Tageszeiten, stability scores
 - **🗂️ 5-Tab Dashboard (v0.6.30)** – Bereiche `LIVE`, `EVENTS`, `GERÄTE`, `LERNEN`, `DEBUG` getrennt fuer klare Workflows
 - **🧰 Debug-Endpunkte (v0.6.30)** – `GET /api/training-log` und `GET /api/debug/pipeline-buffer` fuer Nachvollziehbarkeit
+- **📦 Exportflaechen fuer Pattern-Sharing (v0.6.36)** – UI bietet jetzt getrennte Downloads fuer Voll-Export, Shared Pack und LLM Review
 - **🧬 Pattern-Dedup (v0.6.33)** – Doppeltes Lernen wird vor Insert verhindert (Similarity-Entscheidung + Session-Guard)
 - **🪟 Kontext-Musteransicht (v0.6.33)** – Pattern-Detail zeigt Rohsignal mit Vor-/Nachlauf, Start/End-Marker, Baseline und Zoom
 - **📱 Touch-Fix Musterauswahl (v0.6.33)** – Auswahl per Touchscreen/Handy stabil, inkl. explizitem `Details`-Button

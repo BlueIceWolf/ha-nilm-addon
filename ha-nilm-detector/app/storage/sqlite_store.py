@@ -1158,6 +1158,154 @@ class SQLiteStore:
             "user_labels": recent_labels,
         }
 
+    def export_shared_pattern_pack(self, limit: int = 1000, confirmed_only: bool = True) -> Dict[str, Any]:
+        """Export a privacy-safe pattern pack suitable for optional community sharing."""
+        patterns = self.list_patterns(limit=max(1, min(int(limit), 10000)))
+        shared_patterns: List[Dict[str, Any]] = []
+
+        for pattern in patterns:
+            if str(pattern.get("status") or "active") != "active":
+                continue
+            if confirmed_only and not bool(pattern.get("user_label")):
+                continue
+
+            public_label = self._public_pattern_label(pattern)
+            profile_points = self._normalize_profile_points(pattern.get("profile_points", []))
+            delta_profile_points = self._normalize_profile_points(pattern.get("delta_profile_points", []))
+            resampled_shape = self._resample_profile_points(delta_profile_points or profile_points, sample_count=24)
+
+            shared_patterns.append(
+                {
+                    "shared_pattern_id": self._shared_pattern_id(pattern, public_label),
+                    "public_label": public_label,
+                    "suggestion_type": str(pattern.get("suggestion_type") or "unknown"),
+                    "phase": str(pattern.get("phase") or "L1"),
+                    "phase_mode": str(pattern.get("phase_mode") or "unknown"),
+                    "device_group_id": str(pattern.get("device_group_id") or self._device_group_id(public_label, pattern)),
+                    "device_subclass": str(
+                        pattern.get("device_subclass")
+                        or self._derive_device_subclass(public_label, pattern)
+                    ),
+                    "prototype_hash": str(pattern.get("prototype_hash") or self._prototype_hash_from_cycle(pattern)),
+                    "curve_hash": str(pattern.get("curve_hash") or self._curve_hash_from_cycle(pattern)),
+                    "quality": {
+                        "seen_count": int(pattern.get("seen_count", 0) or 0),
+                        "quality_score_avg": round(self._safe_float(pattern.get("quality_score_avg"), 0.0), 4),
+                        "confidence_avg": round(self._safe_float(pattern.get("confidence_score") or pattern.get("confidence_avg"), 0.0), 4),
+                        "frequency_per_day": round(self._safe_float(pattern.get("frequency_per_day"), 0.0), 4),
+                    },
+                    "features": {
+                        "avg_power_w": round(self._safe_float(pattern.get("avg_power_w"), 0.0), 3),
+                        "peak_power_w": round(self._safe_float(pattern.get("peak_power_w"), 0.0), 3),
+                        "duration_s": round(self._safe_float(pattern.get("duration_s"), 0.0), 3),
+                        "energy_wh": round(self._safe_float(pattern.get("energy_wh"), 0.0), 4),
+                        "delta_avg_power_w": round(self._safe_float(pattern.get("delta_avg_power_w"), 0.0), 3),
+                        "delta_peak_power_w": round(self._safe_float(pattern.get("delta_peak_power_w"), 0.0), 3),
+                        "inrush_peak_w": round(self._safe_float(pattern.get("inrush_peak_w"), 0.0), 3),
+                        "power_variance": round(self._safe_float(pattern.get("power_variance"), 0.0), 3),
+                        "rise_rate_w_per_s": round(self._safe_float(pattern.get("rise_rate_w_per_s"), 0.0), 3),
+                        "fall_rate_w_per_s": round(self._safe_float(pattern.get("fall_rate_w_per_s"), 0.0), 3),
+                        "duty_cycle": round(self._safe_float(pattern.get("duty_cycle"), 0.0), 4),
+                        "peak_to_avg_ratio": round(self._safe_float(pattern.get("peak_to_avg_ratio"), 0.0), 4),
+                        "num_substates": int(pattern.get("num_substates", 0) or 0),
+                        "step_count": int(pattern.get("step_count", 0) or 0),
+                        "has_heating_pattern": bool(pattern.get("has_heating_pattern", False)),
+                        "has_motor_pattern": bool(pattern.get("has_motor_pattern", False)),
+                    },
+                    "shape": {
+                        "shape_signature": self._shape_signature_from_cycle(pattern),
+                        "resampled_delta_profile": [round(self._safe_float(v, 0.0), 4) for v in resampled_shape],
+                    },
+                }
+            )
+
+        return {
+            "exported_at": datetime.now(timezone.utc).isoformat(),
+            "format": "ha_nilm_shared_pattern_pack_v1",
+            "privacy": {
+                "raw_readings": False,
+                "event_history": False,
+                "user_comments": False,
+                "exact_timestamps": False,
+                "custom_free_text_labels": False,
+            },
+            "counts": {
+                "patterns": len(shared_patterns),
+                "confirmed_only": bool(confirmed_only),
+            },
+            "patterns": shared_patterns,
+        }
+
+    def export_llm_review_bundle(self, pattern_limit: int = 100, event_limit: int = 200) -> Dict[str, Any]:
+        """Export a compact bundle for offline or LLM-assisted review."""
+        patterns = self.list_patterns(limit=max(1, min(int(pattern_limit), 1000)))
+        classification_logs = self.list_classification_logs(limit=max(1, min(int(event_limit), 1000)))
+        training_log = self.get_training_log(limit=max(1, min(int(event_limit), 1000)))
+
+        event_rows: List[Dict[str, Any]] = []
+        if self._patterns_conn and self._table_exists(self._patterns_conn, "events"):
+            try:
+                rows = self._patterns_conn.execute(
+                    """
+                    SELECT event_id, created_at, phase, duration_s, avg_power_w, peak_power_w,
+                           energy_wh, assigned_pattern_id, assigned_device_id, final_label,
+                           final_confidence, resampled_points_json
+                    FROM events
+                    ORDER BY event_id DESC
+                    LIMIT ?
+                    """,
+                    (int(max(1, min(event_limit, 1000))),),
+                ).fetchall()
+                event_rows = [self._llm_event_summary_from_row(row) for row in rows]
+            except Exception as e:
+                logger.warning("Failed to export LLM review events: %s", e)
+
+        compact_patterns = [
+            {
+                "pattern_id": int(item.get("id", 0) or 0),
+                "public_label": self._public_pattern_label(item),
+                "suggestion_type": str(item.get("suggestion_type") or "unknown"),
+                "phase": str(item.get("phase") or "L1"),
+                "phase_mode": str(item.get("phase_mode") or "unknown"),
+                "seen_count": int(item.get("seen_count", 0) or 0),
+                "quality_score_avg": round(self._safe_float(item.get("quality_score_avg"), 0.0), 4),
+                "avg_power_w": round(self._safe_float(item.get("avg_power_w"), 0.0), 3),
+                "peak_power_w": round(self._safe_float(item.get("peak_power_w"), 0.0), 3),
+                "duration_s": round(self._safe_float(item.get("duration_s"), 0.0), 3),
+                "power_variance": round(self._safe_float(item.get("power_variance"), 0.0), 3),
+                "rise_rate_w_per_s": round(self._safe_float(item.get("rise_rate_w_per_s"), 0.0), 3),
+                "fall_rate_w_per_s": round(self._safe_float(item.get("fall_rate_w_per_s"), 0.0), 3),
+                "duty_cycle": round(self._safe_float(item.get("duty_cycle"), 0.0), 4),
+                "peak_to_avg_ratio": round(self._safe_float(item.get("peak_to_avg_ratio"), 0.0), 4),
+                "num_substates": int(item.get("num_substates", 0) or 0),
+                "step_count": int(item.get("step_count", 0) or 0),
+                "has_heating_pattern": bool(item.get("has_heating_pattern", False)),
+                "has_motor_pattern": bool(item.get("has_motor_pattern", False)),
+                "shape_signature": self._shape_signature_from_cycle(item),
+            }
+            for item in patterns
+        ]
+
+        return {
+            "exported_at": datetime.now(timezone.utc).isoformat(),
+            "format": "ha_nilm_llm_review_bundle_v1",
+            "usage": "Share for offline analysis or LLM-assisted classifier review. Avoid posting publicly without reviewing labels.",
+            "prompt_hint": {
+                "goal": "Review misclassifications, suggest better heuristic rules, and identify missing device subclasses.",
+                "focus": [
+                    "feature separation",
+                    "ambiguous labels",
+                    "rule precision vs recall",
+                    "shape/profile differences",
+                    "unknown bucket refinement",
+                ],
+            },
+            "patterns": compact_patterns,
+            "events": event_rows,
+            "classification_log": classification_logs,
+            "training_log": training_log,
+        }
+
     def list_devices(self, limit: int = 500) -> List[Dict[str, Any]]:
         if not self._patterns_conn or not self._table_exists(self._patterns_conn, "devices"):
             return []
@@ -2915,6 +3063,95 @@ class SQLiteStore:
         if avg_power <= 60.0:
             return "unknown_low_power_cycle"
         return "unknown_electronics"
+
+    @classmethod
+    def _sanitize_public_label(cls, label: object) -> str:
+        raw = str(label or "").strip().lower().replace(" ", "_")
+        if not raw:
+            return "unknown"
+
+        allowed = {
+            "fridge",
+            "freezer",
+            "kettle",
+            "microwave",
+            "washing_machine",
+            "dishwasher",
+            "oven",
+            "toaster",
+            "clothes_dryer",
+            "space_heater",
+            "immersion_heater",
+            "hot_water_tank",
+            "ac_unit",
+            "induction_cooktop",
+            "electric_stove",
+            "tv",
+            "pump",
+            "heater",
+            "motor",
+            "electronics",
+            "long_running",
+            "unknown",
+            "unknown_motor_like",
+            "unknown_heater_like",
+            "unknown_short_pulse",
+            "unknown_long_running",
+            "unknown_low_power_cycle",
+            "unknown_electronics",
+        }
+        if raw in allowed:
+            return raw
+        normalized = cls._normalize_pattern_name(raw)
+        if normalized.startswith("unknown"):
+            return normalized
+        return "custom_user_label"
+
+    @classmethod
+    def _public_pattern_label(cls, pattern: Dict[str, Any]) -> str:
+        user_label = cls._sanitize_public_label(pattern.get("user_label"))
+        if user_label not in {"custom_user_label", "unknown"}:
+            return user_label
+
+        suggestion = cls._sanitize_public_label(pattern.get("suggestion_type"))
+        if suggestion != "custom_user_label":
+            return suggestion
+
+        candidate = cls._sanitize_public_label(pattern.get("candidate_name"))
+        if candidate != "custom_user_label":
+            return candidate
+
+        return "unknown"
+
+    @classmethod
+    def _shared_pattern_id(cls, pattern: Dict[str, Any], public_label: str) -> str:
+        payload = {
+            "label": public_label,
+            "phase": str(pattern.get("phase") or "L1"),
+            "phase_mode": str(pattern.get("phase_mode") or "unknown"),
+            "prototype_hash": str(pattern.get("prototype_hash") or cls._prototype_hash_from_cycle(pattern)),
+            "curve_hash": str(pattern.get("curve_hash") or cls._curve_hash_from_cycle(pattern)),
+        }
+        raw = json.dumps(payload, sort_keys=True, separators=(",", ":"))
+        return hashlib.sha1(raw.encode("utf-8")).hexdigest()
+
+    @classmethod
+    def _llm_event_summary_from_row(cls, row: Any) -> Dict[str, Any]:
+        points = cls._normalize_profile_points(json.loads(str(row[11] or "[]")))
+        return {
+            "event_id": int(row[0] or 0),
+            "created_at": row[1],
+            "phase": row[2],
+            "duration_s": round(cls._safe_float(row[3], 0.0), 3),
+            "avg_power_w": round(cls._safe_float(row[4], 0.0), 3),
+            "peak_power_w": round(cls._safe_float(row[5], 0.0), 3),
+            "energy_wh": round(cls._safe_float(row[6], 0.0), 4),
+            "pattern_id": int(row[7] or 0),
+            "device_id": int(row[8] or 0),
+            "label": cls._sanitize_public_label(row[9]),
+            "confidence": round(cls._safe_float(row[10], 0.0), 4),
+            "resampled_points": [round(cls._safe_float(item.get("power_w"), 0.0), 4) for item in points],
+        }
 
     def _get_or_create_device(self, label: str, phase: str, confidence: float, confirmed: bool = False) -> int | None:
         """Return device_id for label/phase pair, creating it if needed."""

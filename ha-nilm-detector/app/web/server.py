@@ -337,7 +337,6 @@ def _html_page(default_language: str = "de", build_info: Optional[Dict[str, str]
     <div class=\"head\">
       <h1 id=\"pageTitle\">HA NILM Live-Statistik</h1>
       <div class=\"head-meta\">
-        <div id=\"versionBadge\" class=\"version-badge\" data-version=\"-\">Version -</div>
         <div id=\"versionBadge\" class=\"version-badge\" data-version=\"__INITIAL_VERSION_BADGE__\">Version __INITIAL_VERSION_BADGE__</div>
         <div id=\"ts\" class=\"muted\">Lädt...</div>
       </div>
@@ -348,6 +347,8 @@ def _html_page(default_language: str = "de", build_info: Optional[Dict[str, str]
       <button id=\"clearPatternsBtn\" title=\"Nur gelernte Muster löschen\">🗑️ Muster löschen</button>
       <button id=\"importHistoryBtn\" title=\"Verlauf aus Home Assistant importieren\">HA Verlauf importieren</button>
       <button id=\"exportDataBtn\" title=\"Muster + Messwerte als JSON exportieren\">📥 Daten exportieren</button>
+      <button id=\"exportSharedBtn\" title=\"Datensparsamen Community-Pattern-Pack exportieren\">📦 Shared Pack</button>
+      <button id=\"exportLlmBtn\" title=\"Kompaktes Analyse-Bundle für ChatGPT/LLM exportieren\">🧠 LLM Review</button>
       <button id=\"importDataBtn\" title=\"JSON-Datei mit Mustern/Messwerten importieren\">📤 Daten importieren</button>
       <input type=\"file\" id=\"importDataFile\" accept=\".json\" style=\"display: none;\" />
       <button id=\"darkModeToggle\" title=\"Hell/Dunkel umschalten\">🌙 Nachtmodus</button>
@@ -707,6 +708,8 @@ const I18N = {
     clearPatternsBtn: 'Muster löschen',
     importHistoryBtn: 'HA Verlauf importieren',
     exportDataBtn: '📥 Daten exportieren',
+    exportSharedBtn: '📦 Shared Pack',
+    exportLlmBtn: '🧠 LLM Review',
     importDataBtn: '📤 Daten importieren',
     darkModeOn: '☀️ Tagmodus',
     darkModeOff: '🌙 Nachtmodus',
@@ -814,6 +817,10 @@ const I18N = {
     importStatus: 'Importiere Verlauf aus HA...',
     importSuccess: 'Import abgeschlossen. Messwerte importiert: {imported}, übersprungen (<=0W): {skipped}',
     importFailed: 'Import fehlgeschlagen: {err}',
+    exportSharedSuccess: 'Shared Pack exportiert: {patterns} Muster',
+    exportSharedFailed: 'Shared-Pack-Export fehlgeschlagen: {err}',
+    exportLlmSuccess: 'LLM-Review exportiert: {patterns} Muster, {events} Events',
+    exportLlmFailed: 'LLM-Review-Export fehlgeschlagen: {err}',
     invalidRange: 'Ungültiger Zeitbereich ausgewählt.',
     patternModalTitle: 'Muster-Profil: {name} (ID: {id})',
     unknownPattern: 'Unbekannt',
@@ -854,6 +861,8 @@ const I18N = {
     ,titleClearReadings: 'Nur Live-Daten (Readings) löschen'
     ,titleClearPatterns: 'Nur gelernte Muster löschen'
     ,titleImportHistory: 'Verlauf aus Home Assistant importieren'
+    ,titleExportShared: 'Datensparsamen Community-Pattern-Pack exportieren'
+    ,titleExportLlm: 'Kompaktes Analyse-Bundle fuer ChatGPT/LLM exportieren'
     ,titleDarkMode: 'Hell/Dunkel umschalten'
     ,titleOlder: 'Ältere Messpunkte anzeigen'
     ,titleNewer: 'Neuere Messpunkte anzeigen'
@@ -870,6 +879,8 @@ const I18N = {
     clearPatternsBtn: 'Clear patterns',
     importHistoryBtn: 'Import HA history',
     exportDataBtn: '📥 Export data',
+    exportSharedBtn: '📦 Shared pack',
+    exportLlmBtn: '🧠 LLM review',
     importDataBtn: '📤 Import data',
     darkModeOn: '☀️ Light mode',
     darkModeOff: '🌙 Dark mode',
@@ -977,6 +988,10 @@ const I18N = {
     importStatus: 'Importing history from HA...',
     importSuccess: 'Import completed. Imported points: {imported}, skipped (<=0W): {skipped}',
     importFailed: 'Import failed: {err}',
+    exportSharedSuccess: 'Shared pack exported: {patterns} patterns',
+    exportSharedFailed: 'Shared pack export failed: {err}',
+    exportLlmSuccess: 'LLM review exported: {patterns} patterns, {events} events',
+    exportLlmFailed: 'LLM review export failed: {err}',
     invalidRange: 'Invalid time range selected.',
     patternModalTitle: 'Pattern profile: {name} (ID: {id})',
     unknownPattern: 'Unknown',
@@ -1017,6 +1032,8 @@ const I18N = {
     ,titleClearReadings: 'Delete live readings only'
     ,titleClearPatterns: 'Delete learned patterns only'
     ,titleImportHistory: 'Import history from Home Assistant'
+    ,titleExportShared: 'Export privacy-safe community pattern pack'
+    ,titleExportLlm: 'Export compact ChatGPT/LLM review bundle'
     ,titleDarkMode: 'Toggle light/dark mode'
     ,titleOlder: 'Show older measurement points'
     ,titleNewer: 'Show newer measurement points'
@@ -1061,6 +1078,9 @@ function applyLanguage() {
   assignText('clearReadingsBtn', 'clearReadingsBtn');
   assignText('clearPatternsBtn', 'clearPatternsBtn');
   assignText('importHistoryBtn', 'importHistoryBtn');
+  assignText('exportDataBtn', 'exportDataBtn');
+  assignText('exportSharedBtn', 'exportSharedBtn');
+  assignText('exportLlmBtn', 'exportLlmBtn');
   assignText('devicesHeading', 'devicesHeading');
   assignText('cyclesHeading', 'cyclesHeading');
   assignText('eventPhasesHeading', 'eventPhasesHeading');
@@ -1138,6 +1158,8 @@ function applyLanguage() {
   assignTitle('clearReadingsBtn', 'titleClearReadings');
   assignTitle('clearPatternsBtn', 'titleClearPatterns');
   assignTitle('importHistoryBtn', 'titleImportHistory');
+  assignTitle('exportSharedBtn', 'titleExportShared');
+  assignTitle('exportLlmBtn', 'titleExportLlm');
   assignTitle('darkModeToggle', 'titleDarkMode');
   assignTitle('olderBtn', 'titleOlder');
   assignTitle('newerBtn', 'titleNewer');
@@ -1374,23 +1396,57 @@ async function exportData() {
       throw new Error(`HTTP ${response.status}`);
     }
     const data = await response.json();
-    
-    const filename = `nilm-export-${new Date().toISOString().slice(0,10)}.json`;
-    const blob = new Blob([JSON.stringify(data, null, 2)], { type: 'application/json' });
-    const url = URL.createObjectURL(blob);
-    const link = document.createElement('a');
-    link.href = url;
-    link.download = filename;
-    document.body.appendChild(link);
-    link.click();
-    document.body.removeChild(link);
-    URL.revokeObjectURL(url);
+    downloadJsonFile(data, `nilm-export-${new Date().toISOString().slice(0,10)}.json`);
     
     alert(currentLanguage === 'en' 
       ? `Exported: ${data.patterns?.length || 0} patterns, ${data.readings?.length || 0} readings`
       : `Exportiert: ${data.patterns?.length || 0} Muster, ${data.readings?.length || 0} Messwerte`);
   } catch (err) {
     alert(currentLanguage === 'en' ? `Export failed: ${err}` : `Export fehlgeschlagen: ${err}`);
+  }
+}
+
+function downloadJsonFile(data, filename) {
+  const blob = new Blob([JSON.stringify(data, null, 2)], { type: 'application/json' });
+  const url = URL.createObjectURL(blob);
+  const link = document.createElement('a');
+  link.href = url;
+  link.download = filename;
+  document.body.appendChild(link);
+  link.click();
+  document.body.removeChild(link);
+  URL.revokeObjectURL(url);
+}
+
+async function exportSharedPatternPack() {
+  try {
+    setTransientStatus(t('exportSharedBtn'));
+    const response = await fetch(apiPath('api/debug/export-shared-pattern-pack?confirmed_only=1'));
+    if (!response.ok) {
+      throw new Error(`HTTP ${response.status}`);
+    }
+    const data = await response.json();
+    downloadJsonFile(data, `nilm-shared-pattern-pack-${new Date().toISOString().slice(0,10)}.json`);
+    alert(t('exportSharedSuccess', { patterns: data.counts?.patterns || data.patterns?.length || 0 }));
+  } catch (err) {
+    alert(t('exportSharedFailed', { err }));
+    setStatus(t('exportSharedFailed', { err }));
+  }
+}
+
+async function exportLlmReviewBundle() {
+  try {
+    setTransientStatus(t('exportLlmBtn'));
+    const response = await fetch(apiPath('api/debug/export-llm-review-bundle?pattern_limit=200&event_limit=300'));
+    if (!response.ok) {
+      throw new Error(`HTTP ${response.status}`);
+    }
+    const data = await response.json();
+    downloadJsonFile(data, `nilm-llm-review-${new Date().toISOString().slice(0,10)}.json`);
+    alert(t('exportLlmSuccess', { patterns: data.patterns?.length || 0, events: data.events?.length || 0 }));
+  } catch (err) {
+    alert(t('exportLlmFailed', { err }));
+    setStatus(t('exportLlmFailed', { err }));
   }
 }
 
@@ -2698,6 +2754,8 @@ document.getElementById('clearReadingsBtn').addEventListener('click', clearReadi
 document.getElementById('clearPatternsBtn').addEventListener('click', clearPatternsOnly);
 document.getElementById('importHistoryBtn').addEventListener('click', importHistoryFromHA);
 document.getElementById('exportDataBtn').addEventListener('click', exportData);
+document.getElementById('exportSharedBtn').addEventListener('click', exportSharedPatternPack);
+document.getElementById('exportLlmBtn').addEventListener('click', exportLlmReviewBundle);
 document.getElementById('importDataBtn').addEventListener('click', importData);
 document.getElementById('importDataFile').addEventListener('change', handleImportDataFile);
 document.getElementById('darkModeToggle').addEventListener('click', toggleDarkMode);
@@ -3296,7 +3354,7 @@ class StatsWebServer:
 
     def _build_handler(self):
         parent = self
-        html = _html_page(parent.language)
+        html = _html_page(parent.language, parent.build_info)
 
         class Handler(BaseHTTPRequestHandler):
             def _send_json(self, payload: Dict | List, status: int = 200) -> None:
@@ -3487,6 +3545,39 @@ class StatsWebServer:
                   self.send_header("Content-Length", str(len(data)))
                   self.end_headers()
                   self.wfile.write(data)
+                  return
+
+                if parsed.path == "/api/debug/export-shared-pattern-pack":
+                  if not parent.storage or not hasattr(parent.storage, "export_shared_pattern_pack"):
+                    self._send_json({"error": "storage not enabled"}, status=400)
+                    return
+                  query = parse_qs(parsed.query or "")
+                  limit_raw = (query.get("limit") or ["1000"])[0]
+                  confirmed_raw = (query.get("confirmed_only") or ["1"])[0]
+                  try:
+                    limit = max(10, min(int(limit_raw), 10000))
+                  except ValueError:
+                    limit = 1000
+                  confirmed_only = str(confirmed_raw).strip().lower() not in {"0", "false", "no"}
+                  self._send_json(parent.storage.export_shared_pattern_pack(limit=limit, confirmed_only=confirmed_only))
+                  return
+
+                if parsed.path == "/api/debug/export-llm-review-bundle":
+                  if not parent.storage or not hasattr(parent.storage, "export_llm_review_bundle"):
+                    self._send_json({"error": "storage not enabled"}, status=400)
+                    return
+                  query = parse_qs(parsed.query or "")
+                  pattern_limit_raw = (query.get("pattern_limit") or ["100"])[0]
+                  event_limit_raw = (query.get("event_limit") or ["200"])[0]
+                  try:
+                    pattern_limit = max(10, min(int(pattern_limit_raw), 1000))
+                  except ValueError:
+                    pattern_limit = 100
+                  try:
+                    event_limit = max(10, min(int(event_limit_raw), 1000))
+                  except ValueError:
+                    event_limit = 200
+                  self._send_json(parent.storage.export_llm_review_bundle(pattern_limit=pattern_limit, event_limit=event_limit))
                   return
 
                 if parsed.path == "/api/debug/export-features-csv":
