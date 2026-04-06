@@ -2,6 +2,27 @@
 
 > ⚠️ **Hinweis**: Dieses Projekt ist experimentell (BETA) - Breaking Changes und Bugs können auftreten.
 
+## 0.6.37 (BETA)
+
+**NILM-Lernpfad deutlich erweitert: bessere Segmentierung, feinere Unknown-Klassen und reichhaltigere Review-Daten fuer den HA-Test**
+
+- Event-Segmentierung verbessert:
+  - Rolling-Baseline fuer stabileren Start
+  - konfigurierbare End-Hold-Logik und Stabilization-Grace
+  - Pre-Roll/Post-Roll-Erfassung inkl. Truncation-Flags
+- Klassifikation in Stufen ausgebaut:
+  - neue Derived Features wie `inrush_ratio`, `plateau_stability`, `startup_sharpness`, `shape_tail_slope`
+  - `shape_signature` wird jetzt aktiv fuer Shape-Matching genutzt
+  - feinere Unknown-Labels statt pauschalem `unknown_electronics`
+- Persistenz und Review erweitert:
+  - Events und Learned Patterns speichern jetzt Kandidaten, Confidence-Aufteilung, Segmentierungsinfos und Waveform-Kontext
+  - Exporte/Kontextansichten enthalten mehr Debug- und Review-Daten
+- Dedup robuster gemacht:
+  - explizite Duplicate-Toleranzen fuer Power, Dauer, Inrush und Shape
+- Neue Regressionstests:
+  - `test_event_segmentation_refactor.py`
+  - `test_learning_refactor_classification.py`
+
 ## 0.6.36 (BETA)
 
 **Kollaborative Musterfreigabe testweise aktiviert: Shared Pack + LLM-Review + UI-Exportflaechen**

@@ -5,7 +5,7 @@ from __future__ import annotations
 from collections import deque
 from dataclasses import dataclass, field
 from datetime import datetime
-from typing import Deque, Dict, List, Optional
+from typing import Deque, Dict, List, Optional, Tuple
 
 from app.learning.event_detection import AdaptiveEventDetector, EventDetectionConfig
 from app.learning.features import CycleFeatures
@@ -42,6 +42,17 @@ class LearnedCycle:
     # Compact profile used for UI visualization (real learned curve).
     profile_points: List[Dict[str, float]] = field(default_factory=list)
 
+    # Segmentation context kept for review/debug and downstream labeling.
+    waveform_points: List[Dict[str, float]] = field(default_factory=list)
+    pre_roll_samples: List[PowerReading] = field(default_factory=list)
+    event_samples: List[PowerReading] = field(default_factory=list)
+    post_roll_samples: List[PowerReading] = field(default_factory=list)
+    segmentation_flags: Dict[str, object] = field(default_factory=dict)
+    truncated_start: bool = False
+    truncated_end: bool = False
+    pre_roll_duration_s: float = 0.0
+    post_roll_duration_s: float = 0.0
+
 
 class PatternLearner:
     """Detects repeated ON/OFF cycles and extracts stable signatures with adaptive thresholds."""
@@ -59,6 +70,10 @@ class PatternLearner:
         baseline_window_size: int = 60,        # Track last 60 idle samples
         noise_filter_window: int = 3,          # Median filter window for spike rejection (reduced from 5)
         max_gap_s: float = 6.0,                # Merge short OFF gaps inside one running cycle
+        end_hold_s: float = 6.0,
+        pre_roll_seconds: float = 2.0,
+        post_roll_seconds: float = 2.0,
+        stabilization_grace_s: float = 12.0,
     ):
         # Legacy fixed thresholds (fallback if adaptive disabled)
         self.on_threshold_w = float(on_threshold_w)
@@ -74,6 +89,10 @@ class PatternLearner:
         self.baseline_window_size = baseline_window_size
         self.noise_filter_window = noise_filter_window
         self.max_gap_s = max(1.0, float(max_gap_s))
+        self.end_hold_s = max(1.0, float(end_hold_s))
+        self.pre_roll_seconds = max(0.0, float(pre_roll_seconds))
+        self.post_roll_seconds = max(0.0, float(post_roll_seconds))
+        self.stabilization_grace_s = max(0.0, float(stabilization_grace_s))
         
         # Adaptive baseline tracking
         self._baseline_power_w: float = 0.0
@@ -90,11 +109,22 @@ class PatternLearner:
                 delta_off_w=self.adaptive_off_offset_w,
                 debounce_samples=self.debounce_samples,
                 max_gap_s=self.max_gap_s,
+                end_hold_s=self.end_hold_s,
+                stabilization_grace_s=self.stabilization_grace_s,
             )
         )
         self._last_ts: Optional[datetime] = None
         self._cycle_start: Optional[datetime] = None
         self._cycle_samples: List[PowerReading] = []
+        self._event_samples: List[PowerReading] = []
+        self._pre_event_buffer: Deque[PowerReading] = deque()
+        self._pre_roll_samples: List[PowerReading] = []
+        self._post_roll_samples: List[PowerReading] = []
+        self._pending_end_ts: Optional[datetime] = None
+        self._pending_finalize_at: Optional[datetime] = None
+        self._truncated_start = False
+        self._truncated_end = False
+        self._segmentation_flags: Dict[str, object] = {}
 
     def prime_baseline(self, power_values: List[float]) -> None:
         """Seed adaptive baseline from historical idle-ish samples before ingesting replay data."""
@@ -122,8 +152,10 @@ class PatternLearner:
 
     def ingest(self, reading: PowerReading) -> Optional[LearnedCycle]:
         """Ingest one reading. Returns a completed cycle when one is detected."""
+        completed_cycle: Optional[LearnedCycle] = None
         raw_power = float(reading.power_w)
         self._power_window.append(raw_power)
+        self._append_pre_event_sample(reading)
         
         # Apply noise filtering (median filter for spike rejection)
         power = self._get_filtered_power()
@@ -131,6 +163,10 @@ class PatternLearner:
         
         # Calculate dynamic thresholds
         if self.use_adaptive_thresholds:
+            # Prime the rolling baseline before start detection so initial idle
+            # samples do not appear as false ON events when baseline starts at 0 W.
+            if not self._event_detector.is_on and not self._pending_end_ts:
+                self._update_baseline(power)
             on_threshold = self._baseline_power_w + self.adaptive_on_offset_w
             off_threshold = self._baseline_power_w + self.adaptive_off_offset_w
         else:
@@ -144,37 +180,112 @@ class PatternLearner:
         )
 
         if transition.started:
+            if self._pending_end_ts:
+                completed_cycle = completed_cycle or self._build_cycle(self._pending_end_ts)
+                self._reset_cycle_buffers()
             self._cycle_start = reading.timestamp
+            self._pre_roll_samples = self._collect_pre_roll_samples(reading.timestamp)
+            self._event_samples = [reading]
             self._cycle_samples = [reading]
+            self._post_roll_samples = []
+            self._pending_end_ts = None
+            self._pending_finalize_at = None
+            self._truncated_start = self._pre_roll_duration(self._pre_roll_samples) < max(self.pre_roll_seconds * 0.8, 0.5)
+            self._truncated_end = False
+            self._segmentation_flags = {
+                "used_rolling_baseline": True,
+                "event_start_reason": "delta_crossed_start_threshold",
+                "event_end_reason": None,
+                "stabilization_grace_s": self.stabilization_grace_s,
+                "pre_roll_seconds": self.pre_roll_seconds,
+                "post_roll_seconds": self.post_roll_seconds,
+            }
             self._last_ts = reading.timestamp
             logger.debug(f"Cycle START: {power:.1f}W (threshold={on_threshold:.1f}W, baseline={self._baseline_power_w:.1f}W)")
-            return None
+            return completed_cycle
 
-        if not self._event_detector.is_on:
+        if transition.ended:
+            self._pending_end_ts = reading.timestamp
+            self._pending_finalize_at = reading.timestamp if self.post_roll_seconds <= 0.0 else None
+            if self.post_roll_seconds > 0.0:
+                self._pending_finalize_at = reading.timestamp
+                self._pending_finalize_at = reading.timestamp.replace() + (reading.timestamp - reading.timestamp)
+                self._pending_finalize_at = reading.timestamp
+                self._pending_finalize_at = reading.timestamp + (self._cycle_samples[-1].timestamp - self._cycle_samples[-1].timestamp)
+                self._pending_finalize_at = reading.timestamp
+                self._pending_finalize_at = reading.timestamp
+                from datetime import timedelta
+                self._pending_finalize_at = reading.timestamp + timedelta(seconds=self.post_roll_seconds)
+            self._segmentation_flags["event_end_reason"] = "held_near_baseline"
+            logger.debug(f"Cycle END: {power:.1f}W (threshold={off_threshold:.1f}W)")
+            if self.post_roll_seconds <= 0.0:
+                completed_cycle = completed_cycle or self._build_cycle(reading.timestamp)
+                self._reset_cycle_buffers()
+            return completed_cycle
+
+        if not self._event_detector.is_on and not self._pending_end_ts:
             self._update_baseline(power)
-            return None
+            return completed_cycle
+
+        if self._pending_end_ts and not self._event_detector.is_on:
+            self._post_roll_samples.append(reading)
+            self._cycle_samples.append(reading)
+            self._update_baseline(power)
+            if self._pending_finalize_at and reading.timestamp >= self._pending_finalize_at:
+                completed_cycle = completed_cycle or self._build_cycle(self._pending_end_ts)
+                self._reset_cycle_buffers()
+            return completed_cycle
 
         # ON state: keep collecting samples.
         self._cycle_samples.append(reading)
+        self._event_samples.append(reading)
         self._last_ts = reading.timestamp
-
-        if transition.ended:
-            cycle = self._build_cycle(reading.timestamp)
-            self._cycle_start = None
-            self._cycle_samples = []
-            logger.debug(f"Cycle END: {power:.1f}W (threshold={off_threshold:.1f}W)")
-            return cycle
 
         # Failsafe for very long runs that never drop below threshold.
         if self._cycle_start:
             runtime = (reading.timestamp - self._cycle_start).total_seconds()
             if runtime > self.max_cycle_seconds:
                 logger.debug(f"Cycle exceeded max duration ({self.max_cycle_seconds}s); resetting")
+                self._truncated_end = True
                 self._event_detector.reset()
-                self._cycle_start = None
-                self._cycle_samples = []
+                self._reset_cycle_buffers()
 
-        return None
+        return completed_cycle
+
+    def _append_pre_event_sample(self, reading: PowerReading) -> None:
+        self._pre_event_buffer.append(reading)
+        while len(self._pre_event_buffer) >= 2:
+            oldest = self._pre_event_buffer[0]
+            newest = self._pre_event_buffer[-1]
+            try:
+                age_s = (newest.timestamp - oldest.timestamp).total_seconds()
+            except Exception:
+                break
+            if age_s <= max(self.pre_roll_seconds + 5.0, 10.0):
+                break
+            self._pre_event_buffer.popleft()
+
+    def _collect_pre_roll_samples(self, start_ts: datetime) -> List[PowerReading]:
+        out = [sample for sample in self._pre_event_buffer if (start_ts - sample.timestamp).total_seconds() <= max(self.pre_roll_seconds, 0.0)]
+        return list(out)
+
+    @staticmethod
+    def _pre_roll_duration(samples: List[PowerReading]) -> float:
+        if len(samples) < 2:
+            return 0.0
+        return max((samples[-1].timestamp - samples[0].timestamp).total_seconds(), 0.0)
+
+    def _reset_cycle_buffers(self) -> None:
+        self._cycle_start = None
+        self._cycle_samples = []
+        self._event_samples = []
+        self._pre_roll_samples = []
+        self._post_roll_samples = []
+        self._pending_end_ts = None
+        self._pending_finalize_at = None
+        self._segmentation_flags = {}
+        self._truncated_start = False
+        self._truncated_end = False
     
     def _get_filtered_power(self) -> float:
         """Get median-filtered power to reject transient spikes."""
@@ -193,6 +304,13 @@ class PatternLearner:
         if not self.use_adaptive_thresholds:
             return
         
+        if len(self._baseline_history) < 5:
+            self._baseline_history.append(power)
+            sorted_samples = sorted(self._baseline_history)
+            median_idx = len(sorted_samples) // 2
+            self._baseline_power_w = sorted_samples[median_idx]
+            return
+
         # Only update baseline with low-power samples (likely idle)
         # Avoid pollution from device activity
         if power < (self._baseline_power_w + self.adaptive_on_offset_w * 0.5):
@@ -258,29 +376,29 @@ class PatternLearner:
             return False
 
     def _build_cycle(self, end_ts: datetime) -> Optional[LearnedCycle]:
-        if not self._cycle_start or len(self._cycle_samples) < 2:
+        if not self._cycle_start or len(self._event_samples) < 2:
             return None
 
         duration_s = (end_ts - self._cycle_start).total_seconds()
         if duration_s < self.min_cycle_seconds or duration_s > self.max_cycle_seconds:
             return None
 
-        values = [float(r.power_w) for r in self._cycle_samples]
+        values = [float(r.power_w) for r in self._event_samples]
         avg_power = sum(values) / len(values)
         peak_power = max(values)
 
         # Trapezoid integration with simple step fallback for uneven timestamps.
         energy_ws = 0.0
-        for idx in range(1, len(self._cycle_samples)):
-            prev = self._cycle_samples[idx - 1]
-            curr = self._cycle_samples[idx]
+        for idx in range(1, len(self._event_samples)):
+            prev = self._event_samples[idx - 1]
+            curr = self._event_samples[idx]
             dt = max((curr.timestamp - prev.timestamp).total_seconds(), 0.0)
             energy_ws += (float(prev.power_w) + float(curr.power_w)) * 0.5 * dt
 
         energy_wh = energy_ws / 3600.0
 
         # Extract advanced features for better pattern recognition
-        features = CycleFeatures.extract(self._cycle_samples)
+        features = CycleFeatures.extract(self._event_samples)
         
         # Analyze for multiple operating modes (intelligent learning!)
         operating_modes = []
@@ -288,7 +406,7 @@ class PatternLearner:
         if features:
             try:
                 mode_list = ModeAnalyzer.analyze_cycle_for_modes(
-                    features, self._cycle_samples
+                    features, self._event_samples
                 )
                 # Filter out very short segments and convert to dict format
                 for avg_mode, duration_mode, mode_type in mode_list:
@@ -304,13 +422,13 @@ class PatternLearner:
                 logger.debug(f"Mode analysis failed: {e}")
         
         # Detect phase mode from samples with synchronization check
-        phases_set = set(r.phase for r in self._cycle_samples if r.phase)
+        phases_set = set(r.phase for r in self._event_samples if r.phase)
         
         # Check if multiple phases rise synchronously (true 3-phase device)
         # vs. just happening to have multiple phases in samples (separate 1-phase devices)
         is_synchronized_3phase = False
         if len(phases_set) > 1:
-            is_synchronized_3phase = self._check_synchronized_phase_rise(self._cycle_samples)
+            is_synchronized_3phase = self._check_synchronized_phase_rise(self._event_samples)
         
         if is_synchronized_3phase:
             phase_mode = "multi_phase"  # True 3-phase device (synchronized)
@@ -319,7 +437,8 @@ class PatternLearner:
         else:
             phase_mode = "single_phase"  # Single phase only
 
-        profile_points = self._build_profile_points(self._cycle_samples)
+        profile_points = self._build_profile_points(self._event_samples)
+        waveform_points = self._build_profile_points(self._pre_roll_samples + self._event_samples + self._post_roll_samples)
 
         return LearnedCycle(
             start_ts=self._cycle_start,
@@ -328,12 +447,21 @@ class PatternLearner:
             avg_power_w=avg_power,
             peak_power_w=peak_power,
             energy_wh=energy_wh,
-            sample_count=len(self._cycle_samples),
+            sample_count=len(self._event_samples),
             features=features,
             operating_modes=operating_modes,
             has_multiple_modes=has_multiple_modes,
             phase_mode=phase_mode,
             profile_points=profile_points,
+            waveform_points=waveform_points,
+            pre_roll_samples=list(self._pre_roll_samples),
+            event_samples=list(self._event_samples),
+            post_roll_samples=list(self._post_roll_samples),
+            segmentation_flags=dict(self._segmentation_flags),
+            truncated_start=self._truncated_start,
+            truncated_end=self._truncated_end,
+            pre_roll_duration_s=self._pre_roll_duration(self._pre_roll_samples),
+            post_roll_duration_s=self._pre_roll_duration(self._post_roll_samples),
         )
 
     @staticmethod

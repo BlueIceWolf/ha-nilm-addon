@@ -13,6 +13,7 @@ from typing import Any, Dict, List, Optional, TYPE_CHECKING
 
 from app.models import PowerReading
 from app.core.overlap import estimate_overlap_score, process_signal
+from app.learning.segmentation import build_segmentation_payload
 from app.utils.logging import get_logger
 
 if TYPE_CHECKING:
@@ -375,6 +376,7 @@ class NILMPipeline:
                 "profile_points": list(cycle.profile_points or []),
                 "active_phase_count": 1,
             }
+            cycle_payload.update(build_segmentation_payload(cycle))
 
             overlap_events = process_signal(cycle_payload.get("profile_points") or [])
             overlap_score = estimate_overlap_score(cycle_payload.get("profile_points") or [])

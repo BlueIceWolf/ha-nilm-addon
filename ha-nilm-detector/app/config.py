@@ -44,6 +44,10 @@ class Config:
         self.learning_delta_on_w = 30.0
         self.learning_delta_off_w = 12.0
         self.learning_max_gap_s = 6.0
+        self.learning_end_hold_s = 6.0
+        self.learning_stabilization_grace_s = 12.0
+        self.learning_pre_roll_s = 2.0
+        self.learning_post_roll_s = 2.0
         self.ai_enabled = True
         self.ml_enabled = True
         self.shape_matching_enabled = True
@@ -137,6 +141,18 @@ class Config:
         )
         self.learning_max_gap_s = float(
             learning_config.get('max_gap_s', self.learning_max_gap_s)
+        )
+        self.learning_end_hold_s = float(
+            learning_config.get('end_hold_s', self.learning_end_hold_s)
+        )
+        self.learning_stabilization_grace_s = float(
+            learning_config.get('stabilization_grace_s', self.learning_stabilization_grace_s)
+        )
+        self.learning_pre_roll_s = float(
+            learning_config.get('pre_roll_s', self.learning_pre_roll_s)
+        )
+        self.learning_post_roll_s = float(
+            learning_config.get('post_roll_s', self.learning_post_roll_s)
         )
         self.ai_enabled = bool(learning_config.get('ai_enabled', self.ai_enabled))
         self.ml_enabled = bool(learning_config.get('ml_enabled', self.ml_enabled))

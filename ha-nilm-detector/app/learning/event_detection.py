@@ -13,6 +13,8 @@ class EventDetectionConfig:
     delta_off_w: float = 12.0
     debounce_samples: int = 2
     max_gap_s: float = 6.0
+    end_hold_s: float = 6.0
+    stabilization_grace_s: float = 12.0
 
 
 @dataclass
@@ -29,11 +31,13 @@ class AdaptiveEventDetector:
         self._is_on = False
         self._stable_count = 0
         self._below_off_since: Optional[datetime] = None
+        self._on_since: Optional[datetime] = None
 
     def reset(self) -> None:
         self._is_on = False
         self._stable_count = 0
         self._below_off_since = None
+        self._on_since = None
 
     @property
     def is_on(self) -> bool:
@@ -52,6 +56,7 @@ class AdaptiveEventDetector:
                     self._is_on = True
                     self._stable_count = 0
                     self._below_off_since = None
+                    self._on_since = ts
                     transition.started = True
             else:
                 self._stable_count = 0
@@ -59,6 +64,13 @@ class AdaptiveEventDetector:
 
         # Currently ON
         if power_w <= off_threshold:
+            on_runtime_s = 0.0
+            if self._on_since is not None:
+                on_runtime_s = max((ts - self._on_since).total_seconds(), 0.0)
+            if on_runtime_s < max(0.0, float(self.config.stabilization_grace_s)):
+                self._stable_count = 0
+                self._below_off_since = None
+                return transition
             if self._below_off_since is None:
                 self._below_off_since = ts
             self._stable_count += 1
@@ -67,10 +79,12 @@ class AdaptiveEventDetector:
             if self._below_off_since is not None:
                 below_duration_s = max((ts - self._below_off_since).total_seconds(), 0.0)
 
-            if self._stable_count >= max(1, int(self.config.debounce_samples)) and below_duration_s >= max(1.0, float(self.config.max_gap_s)):
+            end_hold_s = max(1.0, float(self.config.end_hold_s or self.config.max_gap_s))
+            if self._stable_count >= max(1, int(self.config.debounce_samples)) and below_duration_s >= end_hold_s:
                 self._is_on = False
                 self._stable_count = 0
                 self._below_off_since = None
+                self._on_since = None
                 transition.ended = True
             return transition
 

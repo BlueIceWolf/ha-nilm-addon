@@ -14,6 +14,7 @@ from app.detectors import AdaptiveLoadDetector, FridgeDetector, InverterDeviceDe
 from app.ha_client import HomeAssistantAPIClient
 from app.learning.features import CycleFeatures
 from app.learning import PatternLearner
+from app.learning.segmentation import build_segmentation_payload
 from app.models import PowerReading
 from app.processing.pipeline import ProcessingPipeline
 from app.publishers.mqtt import MQTTPublisher
@@ -128,6 +129,10 @@ class NILMDetectionSystem:
                         adaptive_on_offset_w=self.config.learning_delta_on_w,
                         adaptive_off_offset_w=self.config.learning_delta_off_w,
                         max_gap_s=self.config.learning_max_gap_s,
+                        end_hold_s=self.config.learning_end_hold_s,
+                        pre_roll_seconds=self.config.learning_pre_roll_s,
+                        post_roll_seconds=self.config.learning_post_roll_s,
+                        stabilization_grace_s=self.config.learning_stabilization_grace_s,
                     )
                     self.phase_learners[phase_name] = learner
                     self.phase_pipelines[phase_name] = NILMPipeline(
@@ -625,6 +630,10 @@ class NILMDetectionSystem:
                     debounce_samples=1,
                     noise_filter_window=1,
                     max_gap_s=self.config.learning_max_gap_s,
+                    end_hold_s=self.config.learning_end_hold_s,
+                    pre_roll_seconds=self.config.learning_pre_roll_s,
+                    post_roll_seconds=self.config.learning_post_roll_s,
+                    stabilization_grace_s=self.config.learning_stabilization_grace_s,
                 )
             return learners
 
@@ -735,6 +744,7 @@ class NILMDetectionSystem:
                             "has_motor_pattern": bool(cycle_features.has_motor_pattern) if cycle_features else False,
                             "profile_points": list(cycle.profile_points or []),
                         }
+                        cycle_payload.update(build_segmentation_payload(cycle))
                         heuristic_suggestion = learner.suggest_device_type(cycle)
                         model_suggestion = self.storage.suggest_cycle_label(cycle_payload, fallback=heuristic_suggestion)
                         suggestion = str(model_suggestion.get("label") or heuristic_suggestion)
@@ -899,6 +909,14 @@ class NILMDetectionSystem:
                         "has_motor_pattern": bool(extracted.has_motor_pattern) if extracted else False,
                         "profile_points": _build_profile(seg),
                     }
+                    cycle_payload.setdefault("waveform_points", list(cycle_payload.get("profile_points") or []))
+                    cycle_payload.setdefault("pre_roll_samples", [])
+                    cycle_payload.setdefault("post_roll_samples", [])
+                    cycle_payload.setdefault("segmentation_flags", {"edge_fallback": True})
+                    cycle_payload.setdefault("truncated_start", False)
+                    cycle_payload.setdefault("truncated_end", False)
+                    cycle_payload.setdefault("pre_roll_duration_s", 0.0)
+                    cycle_payload.setdefault("post_roll_duration_s", 0.0)
                     model_suggestion = self.storage.suggest_cycle_label(cycle_payload, fallback="unknown")
                     suggestion = str(model_suggestion.get("label") or "unknown")
                     self.storage.learn_cycle_pattern(cycle=cycle_payload, suggestion_type=suggestion)

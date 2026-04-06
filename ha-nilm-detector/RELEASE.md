@@ -4,6 +4,31 @@
 
 ---
 
+# Release 0.6.37 (BETA)
+
+## Store Kurztext
+- **🔬 NILM-Lernpfad fuer Realtests geschaerft**: bessere Event-Segmentierung, feinere Unknown-Klassen und reichhaltigere Review-/Debug-Daten fuer Home Assistant.
+
+## Highlights
+- **Segmentierung stabilisiert**
+  - Rolling-Baseline reduziert False Starts bei Replay und Live-Learning
+  - Event-Ende nutzt jetzt Hold-Time und Stabilization-Grace statt zu fruehem Abschneiden
+  - Pre-Roll/Post-Roll werden mitgespeichert, inklusive `truncated_start` und `truncated_end`
+- **Klassifikation deutlich verfeinert**
+  - neue abgeleitete Merkmale fuer Inrush, Plateau, Varianz und Formverlauf
+  - `shape_signature` wird aktiv im Matching genutzt
+  - breit gefasste Unknown-Sammellabel werden durch spezifischere Unterklassen ersetzt
+- **Pattern- und Event-Review erweitert**
+  - Confidence-Split (`rule`, `shape`, `temporal`, `final`)
+  - Kandidatenlabels, Begruendungstexte und Segmentierungsflags in Persistenz und Exporten
+  - besseres Debugging fuer echte HA-Testzyklen
+- **Dedup/Pattern-Lernen robuster**
+  - fast identische Muster werden ueber explizite Toleranzen eher zusammengefuehrt statt doppelt gespeichert
+- **Verifikation**
+  - zielgerichtete Regressionstests fuer Segmentierung, Klassifikations-Refactor und Persistenz sind gruen
+
+---
+
 # Release 0.6.36 (BETA)
 
 ## Store Kurztext

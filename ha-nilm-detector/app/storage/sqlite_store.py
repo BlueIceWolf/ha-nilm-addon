@@ -13,6 +13,10 @@ from typing import Any, Dict, List, Optional, Tuple
 from app.learning.ml_classifier import LocalMLClassifier
 from app.learning.online_learning import build_pattern_dataset_rows
 from app.learning.pattern_matching import HybridPatternMatcher
+from app.learning.classification_pipeline import (
+    enrich_cycle_for_classification,
+    infer_unknown_subclass as classify_unknown_subclass,
+)
 from app.learning.pipeline_stages import (
     decide_dedup_action,
     find_best_pattern_match,
@@ -39,6 +43,10 @@ class SQLiteStore:
         "mode_merge_max_dist": 0.30,
         "dedup_update_similarity": 0.94,
         "dedup_merge_similarity": 0.88,
+        "shape_distance_max": 0.42,
+        "dedup_power_tolerance_ratio": 0.18,
+        "dedup_duration_tolerance_ratio": 0.25,
+        "dedup_inrush_tolerance_ratio": 0.35,
     }
 
     # Legacy DB paths checked during recovery/migration (order matters: most likely first)
@@ -1216,6 +1224,13 @@ class SQLiteStore:
                         "shape_signature": self._shape_signature_from_cycle(pattern),
                         "resampled_delta_profile": [round(self._safe_float(v, 0.0), 4) for v in resampled_shape],
                     },
+                    "derived_features": json.loads(str(pattern.get("derived_features_json") or "{}")),
+                    "confidence": {
+                        "rule_confidence": round(self._safe_float(pattern.get("rule_confidence"), 0.0), 4),
+                        "shape_confidence": round(self._safe_float(pattern.get("shape_confidence_db", pattern.get("shape_confidence")), 0.0), 4),
+                        "temporal_confidence": round(self._safe_float(pattern.get("temporal_confidence"), 0.0), 4),
+                        "final_confidence": round(self._safe_float(pattern.get("final_confidence"), 0.0), 4),
+                    },
                 }
             )
 
@@ -1249,7 +1264,10 @@ class SQLiteStore:
                     """
                     SELECT event_id, created_at, phase, duration_s, avg_power_w, peak_power_w,
                            energy_wh, assigned_pattern_id, assigned_device_id, final_label,
-                           final_confidence, resampled_points_json
+                              final_confidence, resampled_points_json,
+                              COALESCE(raw_label, final_label), COALESCE(refined_label, final_label),
+                              COALESCE(label_source, 'heuristic'), COALESCE(decision_reason, ''),
+                              COALESCE(derived_features_json, '{}'), COALESCE(candidate_labels_json, '[]')
                     FROM events
                     ORDER BY event_id DESC
                     LIMIT ?
@@ -1282,6 +1300,18 @@ class SQLiteStore:
                 "has_heating_pattern": bool(item.get("has_heating_pattern", False)),
                 "has_motor_pattern": bool(item.get("has_motor_pattern", False)),
                 "shape_signature": self._shape_signature_from_cycle(item),
+                "raw_label": str(item.get("raw_label") or item.get("suggestion_type") or "unknown"),
+                "refined_label": str(item.get("refined_label") or item.get("suggestion_type") or "unknown"),
+                "candidate_labels": json.loads(str(item.get("candidate_labels_json") or "[]")),
+                "derived_features": json.loads(str(item.get("derived_features_json") or "{}")),
+                "confidence": {
+                    "rule_confidence": round(self._safe_float(item.get("rule_confidence"), 0.0), 4),
+                    "shape_confidence": round(self._safe_float(item.get("shape_confidence_db", item.get("shape_confidence")), 0.0), 4),
+                    "temporal_confidence": round(self._safe_float(item.get("temporal_confidence"), 0.0), 4),
+                    "final_confidence": round(self._safe_float(item.get("final_confidence"), 0.0), 4),
+                },
+                "label_source": str(item.get("label_source") or "heuristic"),
+                "reason": str(item.get("reason_text") or ""),
             }
             for item in patterns
         ]
@@ -2074,6 +2104,26 @@ class SQLiteStore:
             self._ensure_column(self._patterns_conn, "learned_patterns", "occurrence_count", "INTEGER DEFAULT 1")
             self._ensure_column(self._patterns_conn, "learned_patterns", "device_group_id", "TEXT")
             self._ensure_column(self._patterns_conn, "learned_patterns", "mode_key", "TEXT")
+            self._ensure_column(self._patterns_conn, "learned_patterns", "raw_label", "TEXT DEFAULT 'unknown'")
+            self._ensure_column(self._patterns_conn, "learned_patterns", "refined_label", "TEXT DEFAULT 'unknown'")
+            self._ensure_column(self._patterns_conn, "learned_patterns", "candidate_labels_json", "TEXT DEFAULT '[]'")
+            self._ensure_column(self._patterns_conn, "learned_patterns", "waveform_points_json", "TEXT DEFAULT '[]'")
+            self._ensure_column(self._patterns_conn, "learned_patterns", "waveform_summary_json", "TEXT DEFAULT '{}' ")
+            self._ensure_column(self._patterns_conn, "learned_patterns", "pre_roll_samples_json", "TEXT DEFAULT '[]'")
+            self._ensure_column(self._patterns_conn, "learned_patterns", "post_roll_samples_json", "TEXT DEFAULT '[]'")
+            self._ensure_column(self._patterns_conn, "learned_patterns", "derived_features_json", "TEXT DEFAULT '{}' ")
+            self._ensure_column(self._patterns_conn, "learned_patterns", "rule_confidence", "REAL DEFAULT 0.0")
+            self._ensure_column(self._patterns_conn, "learned_patterns", "shape_confidence", "REAL DEFAULT 0.0")
+            self._ensure_column(self._patterns_conn, "learned_patterns", "temporal_confidence", "REAL DEFAULT 0.0")
+            self._ensure_column(self._patterns_conn, "learned_patterns", "final_confidence", "REAL DEFAULT 0.0")
+            self._ensure_column(self._patterns_conn, "learned_patterns", "label_source", "TEXT DEFAULT 'heuristic'")
+            self._ensure_column(self._patterns_conn, "learned_patterns", "cluster_id", "TEXT DEFAULT ''")
+            self._ensure_column(self._patterns_conn, "learned_patterns", "merged_from_pattern_ids", "TEXT DEFAULT '[]'")
+            self._ensure_column(self._patterns_conn, "learned_patterns", "segmentation_flags_json", "TEXT DEFAULT '{}' ")
+            self._ensure_column(self._patterns_conn, "learned_patterns", "truncated_start", "INTEGER DEFAULT 0")
+            self._ensure_column(self._patterns_conn, "learned_patterns", "truncated_end", "INTEGER DEFAULT 0")
+            self._ensure_column(self._patterns_conn, "learned_patterns", "temporal_features_json", "TEXT DEFAULT '{}' ")
+            self._ensure_column(self._patterns_conn, "learned_patterns", "reason_text", "TEXT DEFAULT ''")
             self._patterns_conn.execute(
                 "CREATE INDEX IF NOT EXISTS idx_learned_patterns_curve_hash ON learned_patterns(curve_hash)"
             )
@@ -2157,6 +2207,21 @@ class SQLiteStore:
             self._ensure_column(self._patterns_conn, "events", "dtw_score", "REAL")
             self._ensure_column(self._patterns_conn, "events", "hybrid_score", "REAL")
             self._ensure_column(self._patterns_conn, "events", "decision_reason", "TEXT")
+            self._ensure_column(self._patterns_conn, "events", "raw_label", "TEXT DEFAULT 'unknown'")
+            self._ensure_column(self._patterns_conn, "events", "refined_label", "TEXT DEFAULT 'unknown'")
+            self._ensure_column(self._patterns_conn, "events", "label_source", "TEXT DEFAULT 'heuristic'")
+            self._ensure_column(self._patterns_conn, "events", "candidate_labels_json", "TEXT DEFAULT '[]'")
+            self._ensure_column(self._patterns_conn, "events", "waveform_summary_json", "TEXT DEFAULT '{}' ")
+            self._ensure_column(self._patterns_conn, "events", "derived_features_json", "TEXT DEFAULT '{}' ")
+            self._ensure_column(self._patterns_conn, "events", "pre_roll_samples_json", "TEXT DEFAULT '[]'")
+            self._ensure_column(self._patterns_conn, "events", "post_roll_samples_json", "TEXT DEFAULT '[]'")
+            self._ensure_column(self._patterns_conn, "events", "segmentation_flags_json", "TEXT DEFAULT '{}' ")
+            self._ensure_column(self._patterns_conn, "events", "truncated_start", "INTEGER DEFAULT 0")
+            self._ensure_column(self._patterns_conn, "events", "truncated_end", "INTEGER DEFAULT 0")
+            self._ensure_column(self._patterns_conn, "events", "rule_confidence", "REAL DEFAULT 0.0")
+            self._ensure_column(self._patterns_conn, "events", "temporal_confidence", "REAL DEFAULT 0.0")
+            self._ensure_column(self._patterns_conn, "events", "cluster_id", "TEXT DEFAULT ''")
+            self._ensure_column(self._patterns_conn, "events", "temporal_features_json", "TEXT DEFAULT '{}' ")
 
             self._patterns_conn.execute(
                 """
@@ -2421,9 +2486,21 @@ class SQLiteStore:
         existing_points = SQLiteStore._normalize_profile_points(existing.get("delta_profile_points", []))
         if len(existing_points) < 2:
             existing_points = SQLiteStore._normalize_profile_points(existing.get("profile_points", []))
+        if len(existing_points) < 2:
+            existing_sig = json.loads(str(existing.get("shape_signature") or "[]")) if str(existing.get("shape_signature") or "").strip() else []
+            existing_points = [
+                {"t_s": float(idx), "t_norm": idx / max(len(existing_sig) - 1, 1), "power_w": float(val)}
+                for idx, val in enumerate(existing_sig)
+            ]
         candidate_points = SQLiteStore._normalize_profile_points(candidate.get("delta_profile_points", []))
         if len(candidate_points) < 2:
             candidate_points = SQLiteStore._normalize_profile_points(candidate.get("profile_points", []))
+        if len(candidate_points) < 2:
+            candidate_sig = json.loads(str(candidate.get("shape_signature") or "[]")) if str(candidate.get("shape_signature") or "").strip() else []
+            candidate_points = [
+                {"t_s": float(idx), "t_norm": idx / max(len(candidate_sig) - 1, 1), "power_w": float(val)}
+                for idx, val in enumerate(candidate_sig)
+            ]
         if len(existing_points) < 2 or len(candidate_points) < 2:
             return None
 
@@ -2707,6 +2784,80 @@ class SQLiteStore:
         )
         return enriched
 
+    def _enrich_cycle_for_learning(
+        self,
+        cycle: Dict[str, Any],
+        *,
+        fallback: str = "unknown",
+        patterns: Optional[List[Dict[str, Any]]] = None,
+    ) -> Dict[str, Any]:
+        enriched = self._augment_cycle_baseline_delta(cycle)
+        if not enriched.get("shape_signature"):
+            enriched["shape_signature"] = self._shape_signature_from_cycle(enriched)
+        if patterns is None:
+            patterns = self.list_patterns(limit=500)
+        enriched = enrich_cycle_for_classification(enriched, patterns or [], fallback=fallback)
+        enriched["waveform_points"] = self._normalize_profile_points(enriched.get("waveform_points", []))
+        enriched["pre_roll_samples"] = self._normalize_profile_points(enriched.get("pre_roll_samples", []))
+        enriched["post_roll_samples"] = self._normalize_profile_points(enriched.get("post_roll_samples", []))
+        return enriched
+
+    @staticmethod
+    def _confidence_payload(cycle: Dict[str, Any]) -> Dict[str, float]:
+        return {
+            "rule_confidence": float(cycle.get("rule_confidence", 0.0) or 0.0),
+            "shape_confidence": float(cycle.get("shape_confidence", 0.0) or 0.0),
+            "temporal_confidence": float(cycle.get("temporal_confidence", 0.0) or 0.0),
+            "final_confidence": float(cycle.get("final_confidence", 0.0) or 0.0),
+        }
+
+    @classmethod
+    def _cycle_storage_fields(cls, cycle: Dict[str, Any]) -> Dict[str, Any]:
+        return {
+            "raw_label": str(cycle.get("raw_label") or cycle.get("suggestion_type") or "unknown"),
+            "refined_label": str(cycle.get("refined_label") or cycle.get("suggestion_type") or "unknown"),
+            "candidate_labels_json": json.dumps(cycle.get("candidate_labels", [])),
+            "waveform_points_json": json.dumps(cls._normalize_profile_points(cycle.get("waveform_points", []))),
+            "waveform_summary_json": json.dumps(cycle.get("derived_features", {}).get("waveform_summary", {}), sort_keys=True),
+            "pre_roll_samples_json": json.dumps(cls._normalize_profile_points(cycle.get("pre_roll_samples", []))),
+            "post_roll_samples_json": json.dumps(cls._normalize_profile_points(cycle.get("post_roll_samples", []))),
+            "derived_features_json": json.dumps(cycle.get("derived_features", {}), sort_keys=True),
+            "label_source": str(cycle.get("label_source") or "heuristic"),
+            "cluster_id": str(cycle.get("cluster_id") or ""),
+            "merged_from_pattern_ids": json.dumps(cycle.get("merged_from_pattern_ids", [])),
+            "segmentation_flags_json": json.dumps(cycle.get("segmentation_flags", {}), sort_keys=True),
+            "truncated_start": 1 if bool(cycle.get("truncated_start", False)) else 0,
+            "truncated_end": 1 if bool(cycle.get("truncated_end", False)) else 0,
+            "temporal_features_json": json.dumps(cycle.get("temporal_features", {}), sort_keys=True),
+            "reason_text": str(cycle.get("reason") or ""),
+            **cls._confidence_payload(cycle),
+        }
+
+    @classmethod
+    def _is_duplicate_pattern_candidate(cls, existing: Dict[str, Any], candidate: Dict[str, Any]) -> bool:
+        def rel(a: float, b: float) -> float:
+            base = max(abs(a), abs(b), 1.0)
+            return abs(a - b) / base
+
+        if str(existing.get("phase") or "L1") != str(candidate.get("phase") or "L1"):
+            return False
+
+        power_close = rel(
+            cls._safe_float(existing.get("avg_power_w")),
+            cls._safe_float(candidate.get("avg_power_w")),
+        ) <= cls.LEARNING_PARAMS["dedup_power_tolerance_ratio"]
+        duration_close = rel(
+            cls._safe_float(existing.get("duration_s")),
+            cls._safe_float(candidate.get("duration_s")),
+        ) <= cls.LEARNING_PARAMS["dedup_duration_tolerance_ratio"]
+        inrush_close = rel(
+            cls._safe_float(existing.get("inrush_ratio", existing.get("peak_to_avg_ratio", 1.0))),
+            cls._safe_float(candidate.get("inrush_ratio", candidate.get("peak_to_avg_ratio", 1.0))),
+        ) <= cls.LEARNING_PARAMS["dedup_inrush_tolerance_ratio"]
+        shape_distance = cls._profile_shape_distance(existing, candidate)
+        shape_close = shape_distance is not None and shape_distance <= cls.LEARNING_PARAMS["shape_distance_max"]
+        return bool(power_close and duration_close and inrush_close and shape_close)
+
     @classmethod
     def _build_event_phase_rows(cls, cycle: Dict[str, Any], baseline_before_w: float, baseline_after_w: float) -> List[Dict[str, Any]]:
         enriched = cls._augment_cycle_baseline_delta(cycle)
@@ -2815,10 +2966,14 @@ class SQLiteStore:
 
         if "fridge" in label_key or "kühlschrank" in label_key:
             return "fridge_compressor"
+        if label_key in {"compressor_candidate", "compressor_small", "compressor_large"}:
+            return label_key
+        if label_key in {"small_pump_motor", "large_pump_motor"}:
+            return label_key
         if has_motor and inrush_ratio >= 1.35:
-            return "motor_high_inrush"
+            return "large_pump_motor" if float(cycle.get("avg_power_w", 0.0) or 0.0) >= 700.0 else "compressor_candidate"
         if has_motor:
-            return "pump_stable" if float(cycle.get("delta_avg_power_w", 0.0) or 0.0) < 800.0 else "motor_stable"
+            return "small_pump_motor" if float(cycle.get("delta_avg_power_w", 0.0) or 0.0) < 800.0 else "large_pump_motor"
         if has_heating:
             return "heater_resistive"
         if label_key.startswith("unknown"):
@@ -3050,19 +3205,8 @@ class SQLiteStore:
     @staticmethod
     def _infer_unknown_subclass(cycle: Dict) -> str:
         """Refine unknown classes for better internal diagnostics and future ML."""
-        avg_power = float(cycle.get("avg_power_w", 0.0) or 0.0)
-        duration_s = float(cycle.get("duration_s", 0.0) or 0.0)
-        if bool(cycle.get("has_motor_pattern", False)):
-            return "unknown_motor_like"
-        if bool(cycle.get("has_heating_pattern", False)):
-            return "unknown_heater_like"
-        if duration_s <= 12.0:
-            return "unknown_short_pulse"
-        if duration_s >= 1800.0:
-            return "unknown_long_running"
-        if avg_power <= 60.0:
-            return "unknown_low_power_cycle"
-        return "unknown_electronics"
+        label, _ = classify_unknown_subclass(cycle)
+        return str(label or "unknown_electronics")
 
     @classmethod
     def _sanitize_public_label(cls, label: object) -> str:
@@ -3088,11 +3232,22 @@ class SQLiteStore:
             "electric_stove",
             "tv",
             "pump",
+            "small_pump_motor",
+            "large_pump_motor",
+            "compressor_candidate",
+            "compressor_small",
+            "compressor_large",
             "heater",
             "motor",
             "electronics",
             "long_running",
             "unknown",
+            "unknown_motor",
+            "unknown_constant_load",
+            "unknown_variable_load",
+            "unknown_low_power_long",
+            "unknown_high_inrush",
+            "unknown_multistage",
             "unknown_motor_like",
             "unknown_heater_like",
             "unknown_short_pulse",
@@ -3102,6 +3257,23 @@ class SQLiteStore:
         }
         if raw in allowed:
             return raw
+        keyword_map = {
+            "fridge": "fridge",
+            "kühlschrank": "fridge",
+            "freezer": "freezer",
+            "gefrier": "freezer",
+            "pump": "pump",
+            "pumpe": "pump",
+            "washer": "washing_machine",
+            "washing": "washing_machine",
+            "dishwasher": "dishwasher",
+            "oven": "oven",
+            "microwave": "microwave",
+            "kettle": "kettle",
+        }
+        for keyword, normalized_label in keyword_map.items():
+            if keyword in raw:
+                return normalized_label
         normalized = cls._normalize_pattern_name(raw)
         if normalized.startswith("unknown"):
             return normalized
@@ -3151,6 +3323,12 @@ class SQLiteStore:
             "label": cls._sanitize_public_label(row[9]),
             "confidence": round(cls._safe_float(row[10], 0.0), 4),
             "resampled_points": [round(cls._safe_float(item.get("power_w"), 0.0), 4) for item in points],
+            "raw_label": str(row[12] or row[9] or "unknown") if len(row) > 12 else str(row[9] or "unknown"),
+            "refined_label": str(row[13] or row[9] or "unknown") if len(row) > 13 else str(row[9] or "unknown"),
+            "label_source": str(row[14] or "heuristic") if len(row) > 14 else "heuristic",
+            "reason": str(row[15] or "") if len(row) > 15 else "",
+            "derived_features": json.loads(str(row[16] or "{}")) if len(row) > 16 else {},
+            "candidate_labels": json.loads(str(row[17] or "[]")) if len(row) > 17 else [],
         }
 
     def _get_or_create_device(self, label: str, phase: str, confidence: float, confirmed: bool = False) -> int | None:
@@ -3233,6 +3411,7 @@ class SQLiteStore:
         now = datetime.now().isoformat()
         try:
             enriched = self._augment_cycle_baseline_delta(cycle)
+            enriched.update({key: value for key, value in cycle.items() if key not in enriched})
             explain = dict(self._last_hybrid_decision.get("explain") or {})
             fusion = dict(explain.get("fusion") or {})
             prototype_score = float(explain.get("prototype_confidence", 0.0) or 0.0)
@@ -3240,6 +3419,7 @@ class SQLiteStore:
             ml_score = float((dict(explain.get("ml") or {}).get("confidence", 0.0)) or 0.0)
             decision_reason = str(explain.get("decision_reason") or "")
             hybrid_score = float(fusion.get("final_score", final_confidence) or final_confidence or 0.0)
+            storage_fields = self._cycle_storage_fields(enriched)
             start_ts_iso = str(enriched.get("start_ts", ""))
             end_ts_iso = str(enriched.get("end_ts", ""))
             profile_points = self._normalize_profile_points(enriched.get("profile_points", []))
@@ -3285,6 +3465,21 @@ class SQLiteStore:
                 shape_score,
                 hybrid_score,
                 decision_reason,
+                storage_fields["raw_label"],
+                storage_fields["refined_label"],
+                storage_fields["label_source"],
+                storage_fields["candidate_labels_json"],
+                storage_fields["waveform_summary_json"],
+                storage_fields["derived_features_json"],
+                storage_fields["pre_roll_samples_json"],
+                storage_fields["post_roll_samples_json"],
+                storage_fields["segmentation_flags_json"],
+                storage_fields["truncated_start"],
+                storage_fields["truncated_end"],
+                storage_fields["rule_confidence"],
+                storage_fields["temporal_confidence"],
+                storage_fields["cluster_id"],
+                storage_fields["temporal_features_json"],
             )
             placeholders = ", ".join(["?"] * len(params))
             with self._patterns_conn:
@@ -3302,7 +3497,12 @@ class SQLiteStore:
                         match_score, shape_score, ml_score,
                         final_label, final_confidence, rejected_reason,
                         dedup_result, matched_pattern_id, similarity_score, dedup_reason,
-                        prototype_score, dtw_score, hybrid_score, decision_reason
+                        prototype_score, dtw_score, hybrid_score, decision_reason,
+                        raw_label, refined_label, label_source, candidate_labels_json,
+                        waveform_summary_json, derived_features_json,
+                        pre_roll_samples_json, post_roll_samples_json, segmentation_flags_json,
+                        truncated_start, truncated_end, rule_confidence, temporal_confidence,
+                        cluster_id, temporal_features_json
                     ) VALUES ({placeholders})
                     """,
                     params,
@@ -3351,7 +3551,15 @@ class SQLiteStore:
                 """
                 SELECT id, COALESCE(user_label, ''), COALESCE(suggestion_type, 'unknown'),
                        COALESCE(phase, 'L1'), COALESCE(avg_power_w, 0.0),
-                       COALESCE(peak_power_w, 0.0), COALESCE(duration_s, 0.0)
+                      COALESCE(peak_power_w, 0.0), COALESCE(duration_s, 0.0),
+                      COALESCE(raw_label, COALESCE(suggestion_type, 'unknown')),
+                      COALESCE(refined_label, COALESCE(suggestion_type, 'unknown')),
+                      COALESCE(candidate_labels_json, '[]'),
+                      COALESCE(derived_features_json, '{}'),
+                      COALESCE(rule_confidence, 0.0), COALESCE(shape_confidence, 0.0),
+                      COALESCE(temporal_confidence, 0.0), COALESCE(final_confidence, 0.0),
+                      COALESCE(label_source, 'heuristic'), COALESCE(reason_text, ''),
+                      COALESCE(pre_roll_samples_json, '[]'), COALESCE(post_roll_samples_json, '[]')
                 FROM learned_patterns
                 WHERE id = ?
                 LIMIT 1
@@ -3371,7 +3579,15 @@ class SQLiteStore:
                        COALESCE(baseline_before_w, 0.0), COALESCE(baseline_after_w, 0.0),
                        COALESCE(delta_avg_power_w, 0.0), COALESCE(delta_peak_power_w, 0.0),
                        COALESCE(raw_points_json, '[]'),
-                       sample_start_index, sample_end_index, COALESCE(raw_trace_id, '')
+                      sample_start_index, sample_end_index, COALESCE(raw_trace_id, ''),
+                      COALESCE(raw_label, 'unknown'), COALESCE(refined_label, COALESCE(final_label, 'unknown')),
+                      COALESCE(label_source, 'heuristic'), COALESCE(candidate_labels_json, '[]'),
+                      COALESCE(waveform_summary_json, '{}'), COALESCE(derived_features_json, '{}'),
+                      COALESCE(pre_roll_samples_json, '[]'), COALESCE(post_roll_samples_json, '[]'),
+                      COALESCE(segmentation_flags_json, '{}'), COALESCE(truncated_start, 0), COALESCE(truncated_end, 0),
+                      COALESCE(rule_confidence, 0.0), COALESCE(shape_score, 0.0), COALESCE(temporal_confidence, 0.0),
+                      COALESCE(final_confidence, 0.0), COALESCE(cluster_id, ''), COALESCE(temporal_features_json, '{}'),
+                      COALESCE(decision_reason, '')
                 FROM events
                 WHERE assigned_pattern_id = ?
                 ORDER BY event_id DESC
@@ -3529,10 +3745,24 @@ class SQLiteStore:
                     "id": int(pattern_row[0]),
                     "label": str(pattern_row[1] or pattern_row[2] or "unknown"),
                     "suggestion_type": str(pattern_row[2] or "unknown"),
+                    "raw_label": str(pattern_row[7] or pattern_row[2] or "unknown"),
+                    "refined_label": str(pattern_row[8] or pattern_row[2] or "unknown"),
                     "phase": str(pattern_row[3] or event_phase),
                     "avg_power_w": self._safe_float(pattern_row[4], 0.0),
                     "peak_power_w": self._safe_float(pattern_row[5], 0.0),
                     "duration_s": self._safe_float(pattern_row[6], 0.0),
+                    "candidate_labels": json.loads(str(pattern_row[9] or "[]")),
+                    "derived_features": json.loads(str(pattern_row[10] or "{}")),
+                    "confidence": {
+                        "rule_confidence": self._safe_float(pattern_row[11], 0.0),
+                        "shape_confidence": self._safe_float(pattern_row[12], 0.0),
+                        "temporal_confidence": self._safe_float(pattern_row[13], 0.0),
+                        "final_confidence": self._safe_float(pattern_row[14], 0.0),
+                    },
+                    "label_source": str(pattern_row[15] or "heuristic"),
+                    "reason": str(pattern_row[16] or ""),
+                    "pre_roll_samples": json.loads(str(pattern_row[17] or "[]")),
+                    "post_roll_samples": json.loads(str(pattern_row[18] or "[]")),
                 },
                 "event_id": int(event_row[0] or 0),
                 "phase": event_phase,
@@ -3556,6 +3786,26 @@ class SQLiteStore:
                     "sample_start_index": int(event_row[15]) if event_row[15] is not None else None,
                     "sample_end_index": int(event_row[16]) if event_row[16] is not None else None,
                     "raw_trace_id": str(event_row[17] or "") or None,
+                    "raw_label": str(event_row[18] or "unknown"),
+                    "refined_label": str(event_row[19] or event_row[18] or "unknown"),
+                    "label_source": str(event_row[20] or "heuristic"),
+                    "candidate_labels": json.loads(str(event_row[21] or "[]")),
+                    "waveform_summary": json.loads(str(event_row[22] or "{}")),
+                    "derived_features": json.loads(str(event_row[23] or "{}")),
+                    "pre_roll_samples": json.loads(str(event_row[24] or "[]")),
+                    "post_roll_samples": json.loads(str(event_row[25] or "[]")),
+                    "segmentation_flags": json.loads(str(event_row[26] or "{}")),
+                    "truncated_start": bool(int(event_row[27] or 0)),
+                    "truncated_end": bool(int(event_row[28] or 0)),
+                    "confidence": {
+                        "rule_confidence": self._safe_float(event_row[29], 0.0),
+                        "shape_confidence": self._safe_float(event_row[30], 0.0),
+                        "temporal_confidence": self._safe_float(event_row[31], 0.0),
+                        "final_confidence": self._safe_float(event_row[32], 0.0),
+                    },
+                    "cluster_id": str(event_row[33] or ""),
+                    "temporal_features": json.loads(str(event_row[34] or "{}")),
+                    "reason": str(event_row[35] or ""),
                 },
                 "samples": samples,
                 "baseline": [
@@ -4672,7 +4922,28 @@ class SQLiteStore:
 
         patterns = self.list_patterns(limit=500)
         if not patterns:
-            return _remember({"label": fallback, "confidence": 0.0, "source": "fallback"})
+            enriched_empty = self._enrich_cycle_for_learning(cycle, fallback=fallback, patterns=[])
+            return _remember({
+                "label": enriched_empty.get("refined_label", fallback),
+                "confidence": float(enriched_empty.get("final_confidence", 0.0) or 0.0),
+                "source": str(enriched_empty.get("label_source", "heuristic")),
+                "decision_path": [
+                    "stage_1_segmentation",
+                    "stage_2_raw_feature_extraction",
+                    "stage_3_derived_feature_extraction",
+                    "stage_4_heuristic_candidate_generation",
+                    "stage_7_final_label_resolution",
+                ],
+                "explain": {
+                    "decision_reason": str(enriched_empty.get("reason", "no_pattern_history")),
+                    "candidate_labels": list(enriched_empty.get("candidate_labels", [])),
+                    "derived_features": dict(enriched_empty.get("derived_features", {})),
+                    "temporal_features": dict(enriched_empty.get("temporal_features", {})),
+                    **self._confidence_payload(enriched_empty),
+                },
+            })
+
+        cycle = self._enrich_cycle_for_learning(cycle, fallback=fallback, patterns=patterns)
 
         cycle_phase = str(cycle.get("phase") or "L1")
         phase_locks = self.get_label_phase_locks()
@@ -4713,7 +4984,27 @@ class SQLiteStore:
             group_key_fn=self._device_group_key,
         )
         if matcher_result is None:
-            return _remember({"label": fallback, "confidence": 0.0, "source": "fallback"})
+            return _remember({
+                "label": str(cycle.get("refined_label") or fallback),
+                "confidence": float(cycle.get("final_confidence", 0.0) or 0.0),
+                "source": str(cycle.get("label_source", "heuristic")),
+                "decision_path": [
+                    "stage_1_segmentation",
+                    "stage_2_raw_feature_extraction",
+                    "stage_3_derived_feature_extraction",
+                    "stage_4_heuristic_candidate_generation",
+                    "stage_5_shape_similarity_scoring",
+                    "stage_6_temporal_context_scoring",
+                    "stage_7_final_label_resolution",
+                ],
+                "explain": {
+                    "decision_reason": str(cycle.get("reason", "no_pattern_match")),
+                    "candidate_labels": list(cycle.get("candidate_labels", [])),
+                    "derived_features": dict(cycle.get("derived_features", {})),
+                    "temporal_features": dict(cycle.get("temporal_features", {})),
+                    **self._confidence_payload(cycle),
+                },
+            })
 
         best_group = matcher_result.best_group
         best_label = matcher_result.best_label
@@ -4721,6 +5012,9 @@ class SQLiteStore:
         shape_confidence = matcher_result.shape_confidence
         heuristic_confidence = matcher_result.confidence
         best_distance_overall = matcher_result.best_distance
+        staged_label = str(cycle.get("refined_label") or fallback)
+        staged_confidence = float(cycle.get("final_confidence", 0.0) or 0.0)
+        staged_source = str(cycle.get("label_source", "heuristic"))
 
         ml_result = None
         if self.ml_enabled:
@@ -4738,6 +5032,12 @@ class SQLiteStore:
         final_confidence = heuristic_confidence
         source = "hybrid_phase1_shape_proto"
         decision_reason = "shape_prototype_only"
+
+        if staged_confidence >= max(heuristic_confidence, 0.48) and staged_label not in {"unknown", "unbekannt", "unknown_electronics"}:
+            final_label = staged_label
+            final_confidence = max(final_confidence, staged_confidence)
+            source = staged_source if staged_source in {"heuristic", "temporal_match", "shape_match", "hybrid"} else "hybrid"
+            decision_reason = str(cycle.get("reason", "staged_rule_selected"))
 
         ml_label = "unknown"
         ml_conf = 0.0
@@ -4793,13 +5093,26 @@ class SQLiteStore:
         if normalized_label in {"", "unknown", "unbekannt"}:
             capped_unknown_conf = min(confidence, 0.35)
             return _remember({
-                "label": fallback,
+                "label": str(cycle.get("refined_label") or fallback),
                 "confidence": capped_unknown_conf,
                 "source": "fallback_unknown_label",
+                "decision_path": [
+                    "stage_1_segmentation",
+                    "stage_2_raw_feature_extraction",
+                    "stage_3_derived_feature_extraction",
+                    "stage_4_heuristic_candidate_generation",
+                    "stage_5_shape_similarity_scoring",
+                    "stage_6_temporal_context_scoring",
+                    "stage_7_final_label_resolution",
+                ],
                 "explain": {
                     **dict(matcher_result.explain),
                     "decision_reason": "unknown_label_blocked",
                     "unknown_label_capped": True,
+                    "candidate_labels": list(cycle.get("candidate_labels", [])),
+                    "derived_features": dict(cycle.get("derived_features", {})),
+                    "temporal_features": dict(cycle.get("temporal_features", {})),
+                    **self._confidence_payload(cycle),
                     "ml": (
                         {
                             "label": ml_result.label,
@@ -4818,24 +5131,50 @@ class SQLiteStore:
         match_threshold = max(0.10, min(float(self.pattern_match_threshold), 0.95))
         if best_distance_overall is None or best_distance_overall > match_threshold:
             return _remember({
-                "label": fallback,
-                "confidence": confidence,
-                "source": "fallback_distance_gate",
+                "label": staged_label if staged_confidence >= 0.4 else fallback,
+                "confidence": max(confidence, staged_confidence),
+                "source": "fallback_distance_gate" if staged_confidence < 0.4 else staged_source,
+                "decision_path": [
+                    "stage_1_segmentation",
+                    "stage_2_raw_feature_extraction",
+                    "stage_3_derived_feature_extraction",
+                    "stage_4_heuristic_candidate_generation",
+                    "stage_5_shape_similarity_scoring",
+                    "stage_6_temporal_context_scoring",
+                    "stage_7_final_label_resolution",
+                ],
                 "explain": {
                     **dict(matcher_result.explain),
                     "decision_reason": "distance_gate_reject",
+                    "candidate_labels": list(cycle.get("candidate_labels", [])),
+                    "derived_features": dict(cycle.get("derived_features", {})),
+                    "temporal_features": dict(cycle.get("temporal_features", {})),
+                    **self._confidence_payload(cycle),
                 },
             })
 
         # Keep fallback if confidence is too low.
         if confidence < 0.45:
             return _remember({
-                "label": fallback,
-                "confidence": confidence,
-                "source": "fallback_low_confidence",
+                "label": staged_label if staged_confidence > confidence else fallback,
+                "confidence": max(confidence, staged_confidence),
+                "source": "fallback_low_confidence" if staged_confidence <= confidence else staged_source,
+                "decision_path": [
+                    "stage_1_segmentation",
+                    "stage_2_raw_feature_extraction",
+                    "stage_3_derived_feature_extraction",
+                    "stage_4_heuristic_candidate_generation",
+                    "stage_5_shape_similarity_scoring",
+                    "stage_6_temporal_context_scoring",
+                    "stage_7_final_label_resolution",
+                ],
                 "explain": {
                     **dict(matcher_result.explain),
                     "decision_reason": "low_confidence_reject",
+                    "candidate_labels": list(cycle.get("candidate_labels", [])),
+                    "derived_features": dict(cycle.get("derived_features", {})),
+                    "temporal_features": dict(cycle.get("temporal_features", {})),
+                    **self._confidence_payload(cycle),
                 },
             })
 
@@ -4843,9 +5182,27 @@ class SQLiteStore:
             "label": final_label,
             "confidence": confidence,
             "source": source,
+            "decision_path": [
+                "stage_1_segmentation",
+                "stage_2_raw_feature_extraction",
+                "stage_3_derived_feature_extraction",
+                "stage_4_heuristic_candidate_generation",
+                "stage_5_shape_similarity_scoring",
+                "stage_6_temporal_context_scoring",
+                "stage_7_final_label_resolution",
+            ],
             "explain": {
                 **dict(matcher_result.explain),
                 "decision_reason": decision_reason,
+                "candidate_labels": list(cycle.get("candidate_labels", [])),
+                "derived_features": dict(cycle.get("derived_features", {})),
+                "temporal_features": dict(cycle.get("temporal_features", {})),
+                "raw_label": str(cycle.get("raw_label", fallback)),
+                "refined_label": str(cycle.get("refined_label", final_label)),
+                "label_source": staged_source,
+                "cluster_id": str(cycle.get("cluster_id", "")),
+                "reason_text": str(cycle.get("reason", "")),
+                **self._confidence_payload(cycle),
                 "fusion": {
                     "phase": "phase1",
                     "weights": {
@@ -5081,7 +5438,27 @@ class SQLiteStore:
                                                 COALESCE(avg_inrush_duration_s, 0.0),
                                                 COALESCE(occurrence_count, seen_count),
                                                 COALESCE(device_group_id, ''),
-                                                COALESCE(mode_key, '')
+                                                COALESCE(mode_key, ''),
+                                                COALESCE(raw_label, COALESCE(suggestion_type, 'unknown')),
+                                                COALESCE(refined_label, COALESCE(suggestion_type, 'unknown')),
+                                                COALESCE(candidate_labels_json, '[]'),
+                                                COALESCE(waveform_points_json, '[]'),
+                                                COALESCE(waveform_summary_json, '{}'),
+                                                COALESCE(pre_roll_samples_json, '[]'),
+                                                COALESCE(post_roll_samples_json, '[]'),
+                                                COALESCE(derived_features_json, '{}'),
+                                                COALESCE(rule_confidence, 0.0),
+                                                COALESCE(shape_confidence, 0.0),
+                                                COALESCE(temporal_confidence, 0.0),
+                                                COALESCE(final_confidence, 0.0),
+                                                COALESCE(label_source, 'heuristic'),
+                                                COALESCE(cluster_id, ''),
+                                                COALESCE(merged_from_pattern_ids, '[]'),
+                                                COALESCE(segmentation_flags_json, '{}'),
+                                                COALESCE(temporal_features_json, '{}'),
+                                                COALESCE(truncated_start, 0),
+                                                COALESCE(truncated_end, 0),
+                                                COALESCE(reason_text, '')
                 FROM learned_patterns
                 ORDER BY seen_count DESC, last_seen DESC
                 LIMIT ?
@@ -5226,6 +5603,26 @@ class SQLiteStore:
                         "occurrence_count": int(row[54] or seen_count),
                         "device_group_id": str(row[55] or ""),
                         "mode_key": str(row[56] or ""),
+                        "raw_label": str(row[-20] or row[10] or "unknown"),
+                        "refined_label": str(row[-19] or row[10] or "unknown"),
+                        "candidate_labels_json": str(row[-18] or "[]"),
+                        "waveform_points": self._normalize_profile_points(json.loads(str(row[-17] or "[]"))) if str(row[-17] or "").strip() else [],
+                        "waveform_summary_json": str(row[-16] or "{}"),
+                        "pre_roll_samples": self._normalize_profile_points(json.loads(str(row[-15] or "[]"))) if str(row[-15] or "").strip() else [],
+                        "post_roll_samples": self._normalize_profile_points(json.loads(str(row[-14] or "[]"))) if str(row[-14] or "").strip() else [],
+                        "derived_features_json": str(row[-13] or "{}"),
+                        "rule_confidence": float(row[-12] or 0.0),
+                        "shape_confidence_db": float(row[-11] or 0.0),
+                        "temporal_confidence": float(row[-10] or 0.0),
+                        "final_confidence": float(row[-9] or 0.0),
+                        "label_source": str(row[-8] or "heuristic"),
+                        "cluster_id": str(row[-7] or ""),
+                        "merged_from_pattern_ids": str(row[-6] or "[]"),
+                        "segmentation_flags_json": str(row[-5] or "{}"),
+                        "temporal_features_json": str(row[-4] or "{}"),
+                        "truncated_start": bool(int(row[-3] or 0)),
+                        "truncated_end": bool(int(row[-2] or 0)),
+                        "reason_text": str(row[-1] or ""),
                     }
                 )
 
@@ -5320,6 +5717,8 @@ class SQLiteStore:
 
         now = datetime.now().isoformat()
         patterns = self.list_patterns(limit=500)
+        cycle = self._enrich_cycle_for_learning(cycle, fallback=suggestion_seed, patterns=patterns)
+        suggestion_seed = str(cycle.get("refined_label") or suggestion_seed or "unknown")
 
         # Get phase from cycle (default to L1 if not specified)
         cycle_phase = str(cycle.get("phase", "L1"))
@@ -5347,6 +5746,10 @@ class SQLiteStore:
         dedup_result = dedup_decision.result
         dedup_reason = dedup_decision.reason
         force_match = bool(dedup_decision.force_match)
+        if best and self._is_duplicate_pattern_candidate(best, cycle):
+            dedup_result = "update_existing"
+            dedup_reason = "explicit_duplicate_tolerance_match"
+            force_match = True
         logger.debug(
             "learn_cycle_pattern dedup decision: result=%s reason=%s similarity=%.4f best_id=%s",
             dedup_result,
@@ -5462,7 +5865,7 @@ class SQLiteStore:
                     fallback_end=str(cycle.get("end_ts") or now),
                 )
 
-                base_label = str(best.get("suggestion_type") or suggestion_type or "unknown")
+                base_label = str(cycle.get("raw_label") or best.get("suggestion_type") or suggestion_type or "unknown")
                 frequency_per_day = self._frequency_per_day(
                     seen_count=seen_count,
                     first_seen_iso=first_seen_norm,
@@ -5484,6 +5887,7 @@ class SQLiteStore:
                 )
                 device_subclass = self._derive_device_subclass(final_label, cycle)
                 device_group_id = str(cycle.get("device_group_id") or self._device_group_id(final_label, cycle))
+                storage_fields = self._cycle_storage_fields(cycle)
 
                 with self._patterns_conn:
                     self._patterns_conn.execute(
@@ -5514,7 +5918,14 @@ class SQLiteStore:
                             operating_modes = ?,
                             has_multiple_modes = ?,
                             typical_interval_s = ?, avg_hour_of_day = ?,
-                            last_intervals_json = ?, hour_distribution_json = ?
+                            last_intervals_json = ?, hour_distribution_json = ?,
+                            raw_label = ?, refined_label = ?, candidate_labels_json = ?,
+                            waveform_points_json = ?, waveform_summary_json = ?,
+                            pre_roll_samples_json = ?, post_roll_samples_json = ?, derived_features_json = ?,
+                            rule_confidence = ?, shape_confidence = ?, temporal_confidence = ?, final_confidence = ?,
+                            label_source = ?, cluster_id = ?, merged_from_pattern_ids = ?,
+                            segmentation_flags_json = ?, truncated_start = ?, truncated_end = ?,
+                            temporal_features_json = ?, reason_text = ?
                         WHERE id = ?
                         """,
                         (
@@ -5571,6 +5982,26 @@ class SQLiteStore:
                             avg_hour_of_day,
                             last_intervals_json,
                             hour_distribution_json,
+                            storage_fields["raw_label"],
+                            final_label,
+                            storage_fields["candidate_labels_json"],
+                            storage_fields["waveform_points_json"],
+                            storage_fields["waveform_summary_json"],
+                            storage_fields["pre_roll_samples_json"],
+                            storage_fields["post_roll_samples_json"],
+                            storage_fields["derived_features_json"],
+                            storage_fields["rule_confidence"],
+                            storage_fields["shape_confidence"],
+                            storage_fields["temporal_confidence"],
+                            max(float(storage_fields["final_confidence"]), confidence_score_norm),
+                            storage_fields["label_source"],
+                            storage_fields["cluster_id"],
+                            storage_fields["merged_from_pattern_ids"],
+                            storage_fields["segmentation_flags_json"],
+                            storage_fields["truncated_start"],
+                            storage_fields["truncated_end"],
+                            storage_fields["temporal_features_json"],
+                            storage_fields["reason_text"],
                             int(best["id"]),
                         ),
                     )
@@ -5659,6 +6090,26 @@ class SQLiteStore:
                         "prototype_hash": prototype_hash,
                         "operating_modes": merged_modes,
                         "has_multiple_modes": bool(has_multiple_modes),
+                        "raw_label": storage_fields["raw_label"],
+                        "refined_label": final_label,
+                        "candidate_labels_json": storage_fields["candidate_labels_json"],
+                        "waveform_points_json": storage_fields["waveform_points_json"],
+                        "waveform_summary_json": storage_fields["waveform_summary_json"],
+                        "pre_roll_samples_json": storage_fields["pre_roll_samples_json"],
+                        "post_roll_samples_json": storage_fields["post_roll_samples_json"],
+                        "derived_features_json": storage_fields["derived_features_json"],
+                        "rule_confidence": storage_fields["rule_confidence"],
+                        "shape_confidence": storage_fields["shape_confidence"],
+                        "temporal_confidence": storage_fields["temporal_confidence"],
+                        "final_confidence": max(float(storage_fields["final_confidence"]), confidence_score_norm),
+                        "label_source": storage_fields["label_source"],
+                        "cluster_id": storage_fields["cluster_id"],
+                        "merged_from_pattern_ids": storage_fields["merged_from_pattern_ids"],
+                        "segmentation_flags_json": storage_fields["segmentation_flags_json"],
+                        "truncated_start": bool(storage_fields["truncated_start"]),
+                        "truncated_end": bool(storage_fields["truncated_end"]),
+                        "temporal_features_json": storage_fields["temporal_features_json"],
+                        "reason_text": storage_fields["reason_text"],
                     }
                 )
                 self._record_pattern_features(int(best["id"]), cycle)
@@ -5771,89 +6222,118 @@ class SQLiteStore:
                     confirmed=False,
                 )
                 device_subclass = self._derive_device_subclass(suggestion_seed, cycle)
+                storage_fields = self._cycle_storage_fields(cycle)
                 
+                insert_columns = [
+                    "created_at", "updated_at", "first_seen", "last_seen", "seen_count",
+                    "avg_power_w", "peak_power_w", "duration_s", "energy_wh",
+                    "suggestion_type", "user_label", "status",
+                    "avg_active_phases", "phase_mode", "phase",
+                    "power_variance", "rise_rate_w_per_s", "fall_rate_w_per_s",
+                    "duty_cycle", "peak_to_avg_ratio", "num_substates", "step_count",
+                    "has_heating_pattern", "has_motor_pattern",
+                    "profile_points_json",
+                    "baseline_before_w_avg", "baseline_after_w_avg",
+                    "delta_avg_power_w", "delta_peak_power_w", "delta_energy_wh",
+                    "delta_profile_points_json", "delta_shape_vector_json", "plateau_count",
+                    "curve_hash", "shape_signature",
+                    "avg_delta_power_w", "avg_duration_s", "avg_peak_power_w", "avg_inrush_duration_s",
+                    "occurrence_count", "device_group_id", "mode_key",
+                    "quality_score_avg",
+                    "device_id", "confidence_score", "frequency_per_day",
+                    "candidate_name", "is_confirmed", "shape_vector_json", "prototype_hash",
+                    "operating_modes", "has_multiple_modes",
+                    "typical_interval_s", "avg_hour_of_day", "last_intervals_json", "hour_distribution_json",
+                    "raw_label", "refined_label", "candidate_labels_json",
+                    "waveform_points_json", "waveform_summary_json",
+                    "pre_roll_samples_json", "post_roll_samples_json", "derived_features_json",
+                    "rule_confidence", "shape_confidence", "temporal_confidence", "final_confidence",
+                    "label_source", "cluster_id", "merged_from_pattern_ids",
+                    "segmentation_flags_json", "truncated_start", "truncated_end",
+                    "temporal_features_json", "reason_text",
+                ]
+                insert_values = (
+                    now,
+                    now,
+                    cycle["start_ts"],
+                    cycle["end_ts"],
+                    1,
+                    float(cycle["avg_power_w"]),
+                    float(cycle["peak_power_w"]),
+                    float(cycle["duration_s"]),
+                    float(cycle["energy_wh"]),
+                    suggestion_seed,
+                    None,
+                    "active",
+                    float(cycle.get("active_phase_count", 1.0)),
+                    str(cycle.get("phase_mode", "unknown")),
+                    str(cycle.get("phase", "L1")),
+                    power_variance,
+                    rise_rate,
+                    fall_rate,
+                    duty_cycle,
+                    peak_to_avg,
+                    num_substates,
+                    step_count,
+                    has_heating,
+                    has_motor,
+                    profile_points_json,
+                    baseline_before_w_avg,
+                    baseline_after_w_avg,
+                    delta_avg_power_w,
+                    delta_peak_power_w,
+                    delta_energy_wh,
+                    delta_profile_points_json,
+                    delta_shape_vector_json,
+                    plateau_count,
+                    curve_hash,
+                    shape_signature,
+                    avg_delta_power_w,
+                    avg_duration_s,
+                    avg_peak_power_w,
+                    avg_inrush_duration_s,
+                    occurrence_count,
+                    device_group_id,
+                    mode_key,
+                    quality_score,
+                    int(device_id) if device_id else None,
+                    confidence_score_norm,
+                    frequency_per_day_seed,
+                    candidate_name,
+                    0,
+                    shape_vector_json,
+                    prototype_hash,
+                    operating_modes_json,
+                    has_multiple_modes,
+                    0.0,
+                    initial_hour_of_day,
+                    "[]",
+                    initial_hour_dist_json,
+                    storage_fields["raw_label"],
+                    suggestion_seed,
+                    storage_fields["candidate_labels_json"],
+                    storage_fields["waveform_points_json"],
+                    storage_fields["waveform_summary_json"],
+                    storage_fields["pre_roll_samples_json"],
+                    storage_fields["post_roll_samples_json"],
+                    storage_fields["derived_features_json"],
+                    storage_fields["rule_confidence"],
+                    storage_fields["shape_confidence"],
+                    storage_fields["temporal_confidence"],
+                    max(float(storage_fields["final_confidence"]), confidence_score_norm),
+                    storage_fields["label_source"],
+                    storage_fields["cluster_id"],
+                    storage_fields["merged_from_pattern_ids"],
+                    storage_fields["segmentation_flags_json"],
+                    storage_fields["truncated_start"],
+                    storage_fields["truncated_end"],
+                    storage_fields["temporal_features_json"],
+                    storage_fields["reason_text"],
+                )
+                placeholders = ", ".join(["?"] * len(insert_columns))
                 cur = self._patterns_conn.execute(
-                    """
-                    INSERT INTO learned_patterns (
-                        created_at, updated_at, first_seen, last_seen, seen_count,
-                        avg_power_w, peak_power_w, duration_s, energy_wh,
-                        suggestion_type, user_label, status,
-                        avg_active_phases, phase_mode, phase,
-                        power_variance, rise_rate_w_per_s, fall_rate_w_per_s,
-                        duty_cycle, peak_to_avg_ratio, num_substates, step_count,
-                        has_heating_pattern, has_motor_pattern,
-                        profile_points_json,
-                        baseline_before_w_avg, baseline_after_w_avg,
-                        delta_avg_power_w, delta_peak_power_w, delta_energy_wh,
-                        delta_profile_points_json, delta_shape_vector_json, plateau_count,
-                        curve_hash, shape_signature,
-                        avg_delta_power_w, avg_duration_s, avg_peak_power_w, avg_inrush_duration_s,
-                        occurrence_count, device_group_id, mode_key,
-                        quality_score_avg,
-                        device_id, confidence_score, frequency_per_day,
-                        candidate_name, is_confirmed, shape_vector_json, prototype_hash,
-                        operating_modes, has_multiple_modes,
-                        typical_interval_s, avg_hour_of_day, last_intervals_json, hour_distribution_json
-                    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-                    """,
-                    (
-                        now,
-                        now,
-                        cycle["start_ts"],
-                        cycle["end_ts"],
-                        1,
-                        float(cycle["avg_power_w"]),
-                        float(cycle["peak_power_w"]),
-                        float(cycle["duration_s"]),
-                        float(cycle["energy_wh"]),
-                        suggestion_seed,
-                        None,
-                        "active",
-                        float(cycle.get("active_phase_count", 1.0)),
-                        str(cycle.get("phase_mode", "unknown")),
-                        str(cycle.get("phase", "L1")),  # Explicit phase
-                        power_variance,
-                        rise_rate,
-                        fall_rate,
-                        duty_cycle,
-                        peak_to_avg,
-                        num_substates,
-                        step_count,
-                        has_heating,
-                        has_motor,
-                        profile_points_json,
-                        baseline_before_w_avg,
-                        baseline_after_w_avg,
-                        delta_avg_power_w,
-                        delta_peak_power_w,
-                        delta_energy_wh,
-                        delta_profile_points_json,
-                        delta_shape_vector_json,
-                        plateau_count,
-                        curve_hash,
-                        shape_signature,
-                        avg_delta_power_w,
-                        avg_duration_s,
-                        avg_peak_power_w,
-                        avg_inrush_duration_s,
-                        occurrence_count,
-                        device_group_id,
-                        mode_key,
-                        quality_score,
-                        int(device_id) if device_id else None,
-                        confidence_score_norm,
-                        frequency_per_day_seed,
-                        candidate_name,
-                        0,
-                        shape_vector_json,
-                        prototype_hash,
-                        operating_modes_json,
-                        has_multiple_modes,
-                        0.0,  # typical_interval_s - no interval yet for new pattern
-                        initial_hour_of_day,  # avg_hour_of_day
-                        "[]",  # last_intervals_json - empty for new pattern
-                        initial_hour_dist_json,  # hour_distribution_json
-                    ),
+                    f"INSERT INTO learned_patterns ({', '.join(insert_columns)}) VALUES ({placeholders})",
+                    insert_values,
                 )
                 row_id = cur.lastrowid if cur.lastrowid is not None else 0
                 new_id = int(row_id)
@@ -5925,6 +6405,26 @@ class SQLiteStore:
                 "is_confirmed": False,
                 "shape_vector_json": shape_vector_json,
                 "prototype_hash": prototype_hash,
+                "raw_label": storage_fields["raw_label"],
+                "refined_label": suggestion_seed,
+                "candidate_labels_json": storage_fields["candidate_labels_json"],
+                "waveform_points_json": storage_fields["waveform_points_json"],
+                "waveform_summary_json": storage_fields["waveform_summary_json"],
+                "pre_roll_samples_json": storage_fields["pre_roll_samples_json"],
+                "post_roll_samples_json": storage_fields["post_roll_samples_json"],
+                "derived_features_json": storage_fields["derived_features_json"],
+                "rule_confidence": storage_fields["rule_confidence"],
+                "shape_confidence": storage_fields["shape_confidence"],
+                "temporal_confidence": storage_fields["temporal_confidence"],
+                "final_confidence": max(float(storage_fields["final_confidence"]), confidence_score_norm),
+                "label_source": storage_fields["label_source"],
+                "cluster_id": storage_fields["cluster_id"],
+                "merged_from_pattern_ids": storage_fields["merged_from_pattern_ids"],
+                "segmentation_flags_json": storage_fields["segmentation_flags_json"],
+                "truncated_start": bool(storage_fields["truncated_start"]),
+                "truncated_end": bool(storage_fields["truncated_end"]),
+                "temporal_features_json": storage_fields["temporal_features_json"],
+                "reason_text": storage_fields["reason_text"],
             }
             logger.info(
                 "Pattern classify/create: id=%s label=%s rule=%s features[var=%.2f substates=%s steps=%s rise=%.2f fall=%.2f]",

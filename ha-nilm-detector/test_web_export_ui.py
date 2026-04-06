@@ -46,7 +46,7 @@ def test_web_ui_exposes_new_export_buttons_and_endpoints():
         get_patterns_data=lambda _limit=500: [],
         storage=_FakeStorage(),
         language="de",
-        build_info={"version": "0.6.36", "git_short_commit": "deadbeef"},
+        build_info={"version": "0.6.37", "git_short_commit": "deadbeef"},
     )
     try:
         assert server.start() is True
@@ -57,7 +57,7 @@ def test_web_ui_exposes_new_export_buttons_and_endpoints():
             html = response.read().decode("utf-8")
         assert "exportSharedBtn" in html
         assert "exportLlmBtn" in html
-        assert "0.6.36" in html
+        assert "0.6.37" in html
 
         with urlopen(f"http://127.0.0.1:{port}/api/debug/export-shared-pattern-pack") as response:
             shared_payload = json.loads(response.read().decode("utf-8"))
