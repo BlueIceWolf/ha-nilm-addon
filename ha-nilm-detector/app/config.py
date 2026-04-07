@@ -44,6 +44,7 @@ class Config:
         self.learning_delta_on_w = 30.0
         self.learning_delta_off_w = 12.0
         self.learning_max_gap_s = 6.0
+        self.learning_baseline_window_s = 5.0
         self.learning_end_hold_s = 6.0
         self.learning_derivative_threshold_w_per_s = 120.0
         self.learning_stabilization_grace_s = 12.0
@@ -142,6 +143,9 @@ class Config:
         )
         self.learning_max_gap_s = float(
             learning_config.get('max_gap_s', self.learning_max_gap_s)
+        )
+        self.learning_baseline_window_s = float(
+            learning_config.get('baseline_window_s', self.learning_baseline_window_s)
         )
         self.learning_end_hold_s = float(
             learning_config.get('hold_time_s', learning_config.get('end_hold_s', self.learning_end_hold_s))

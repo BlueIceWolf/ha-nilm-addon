@@ -14,9 +14,11 @@ from datetime import datetime
 from typing import Any, Dict, List, Sequence, Tuple
 
 from app.learning.shape_similarity import dtw_similarity, euclidean_similarity, normalize_profile_points
+from app.utils.logging import get_logger
 
 
 EPSILON = 1e-6
+logger = get_logger(__name__)
 
 
 @dataclass
@@ -29,6 +31,7 @@ class ShapeMatchScore:
     pattern_id: int | None
     cluster_id: str
     reasons: List[str]
+    valid: bool = True
 
 
 @dataclass
@@ -145,9 +148,66 @@ def _plateau_stability(points: Sequence[Dict[str, float]]) -> float:
     return math.sqrt(max(variance, 0.0))
 
 
+def _point_powers(points: Sequence[Dict[str, Any]]) -> List[float]:
+    return [safe_float(point.get("power_w")) for point in points if isinstance(point, dict)]
+
+
+def _baseline_visible(points: Sequence[Dict[str, Any]], baseline_w: float) -> bool:
+    values = _point_powers(points)
+    if len(values) < 2:
+        return False
+    tolerance = max(abs(baseline_w) * 0.15, 12.0)
+    median_like = sorted(values)[len(values) // 2]
+    return abs(median_like - baseline_w) <= tolerance
+
+
+def _baseline_edge_visible(points: Sequence[Dict[str, Any]], baseline_w: float, *, from_start: bool) -> bool:
+    values = _point_powers(points[:2] if from_start else points[-2:])
+    if not values:
+        return False
+    tolerance = max(abs(baseline_w) * 0.15, 12.0)
+    return min(abs(value - baseline_w) for value in values) <= tolerance
+
+
+def _shape_signature_meta(cycle: Dict[str, Any]) -> Dict[str, Any]:
+    signature = str(cycle.get("shape_signature") or "").strip()
+    waveform_points = list(cycle.get("waveform_points") or [])
+    sample_count = len(waveform_points)
+    if signature:
+        parsed = parse_shape_signature(signature)
+        if len(parsed) >= 8:
+            return {
+                "shape_signature_status": "valid",
+                "shape_signature_reason": "waveform_signature_ready",
+                "shape_signature_sample_count": len(parsed),
+            }
+        return {
+            "shape_signature_status": "missing",
+            "shape_signature_reason": "invalid_shape_signature_payload",
+            "shape_signature_sample_count": len(parsed),
+        }
+    if sample_count >= 8:
+        return {
+            "shape_signature_status": "missing",
+            "shape_signature_reason": "waveform_present_but_signature_missing",
+            "shape_signature_sample_count": sample_count,
+        }
+    return {
+        "shape_signature_status": "missing",
+        "shape_signature_reason": "waveform_insufficient_samples",
+        "shape_signature_sample_count": sample_count,
+    }
+
+
 def build_waveform_summary(cycle: Dict[str, Any]) -> Dict[str, Any]:
     waveform = list(cycle.get("waveform_points") or cycle.get("profile_points") or [])
     delta_points = list(cycle.get("delta_profile_points") or waveform)
+    pre_roll = list(cycle.get("pre_roll_samples") or [])
+    post_roll = list(cycle.get("post_roll_samples") or [])
+    explicit_waveform = list(cycle.get("waveform_points") or [])
+    profile_only_cycle = bool(waveform) and not explicit_waveform and not pre_roll and not post_roll
+    baseline_before = safe_float(cycle.get("baseline_before_w", cycle.get("baseline_start_w", 0.0)))
+    baseline_after = safe_float(cycle.get("baseline_after_w", cycle.get("baseline_end_w", baseline_before)))
     avg_power = max(safe_float(cycle.get("avg_power_w")), EPSILON)
     peak_power = safe_float(cycle.get("peak_power_w"), avg_power)
     variance = safe_float(cycle.get("power_variance"))
@@ -163,6 +223,40 @@ def build_waveform_summary(cycle: Dict[str, Any]) -> Dict[str, Any]:
     has_flat_plateau = plateau_stability <= max(avg_power * 0.08, 15.0)
     has_inrush_spike = inrush_ratio >= 1.35
     has_multi_stage_shape = int(cycle.get("num_substates", 0) or 0) >= 2 or int(cycle.get("step_count", 0) or 0) >= 2
+    baseline_visible_before = _baseline_visible(pre_roll, baseline_before)
+    baseline_visible_after = _baseline_visible(post_roll, baseline_after)
+    if profile_only_cycle:
+        baseline_visible_before = baseline_visible_before or _baseline_edge_visible(waveform, baseline_before, from_start=True)
+        baseline_visible_after = baseline_visible_after or _baseline_edge_visible(waveform, baseline_after, from_start=False)
+    startup_visible = baseline_visible_before and not bool(cycle.get("truncated_start", False))
+    shutdown_visible = baseline_visible_after and not bool(cycle.get("truncated_end", False))
+    sample_quality = clamp(len(waveform) / 24.0)
+    waveform_completeness_score = clamp(
+        (0.20 * (1.0 if baseline_visible_before else 0.0))
+        + (0.20 * (1.0 if baseline_visible_after else 0.0))
+        + (0.20 * (1.0 if startup_visible else 0.0))
+        + (0.20 * (1.0 if shutdown_visible else 0.0))
+        + (0.20 * sample_quality)
+    )
+    segmentation_confidence = clamp(
+        (0.20 * (1.0 if safe_float(cycle.get("pre_roll_duration_s")) > 0.0 else 0.0))
+        + (0.20 * (1.0 if safe_float(cycle.get("post_roll_duration_s")) > 0.0 else 0.0))
+        + (0.20 * (0.0 if bool(cycle.get("truncated_start", False)) else 1.0))
+        + (0.20 * (0.0 if bool(cycle.get("truncated_end", False)) else 1.0))
+        + (0.20 * waveform_completeness_score)
+    )
+    penalties: List[str] = []
+    if not baseline_visible_before:
+        penalties.append("missing_pre_roll_penalty")
+    if not baseline_visible_after:
+        penalties.append("missing_post_roll_penalty")
+    if bool(cycle.get("truncated_start", False)) or bool(cycle.get("truncated_end", False)):
+        penalties.append("segmentation_truncated_confidence_penalty")
+    if safe_float(cycle.get("duration_s")) < 45.0 and not startup_visible:
+        penalties.append("short_cycle_without_temporal_support_penalty")
+    shape_meta = _shape_signature_meta(cycle)
+    if str(shape_meta.get("shape_signature_status")) != "valid":
+        penalties.append("missing_shape_signature_penalty")
     waveform_summary = {
         "sample_count": len(waveform),
         "delta_sample_count": len(delta_points),
@@ -172,6 +266,15 @@ def build_waveform_summary(cycle: Dict[str, Any]) -> Dict[str, Any]:
         "post_roll_seconds": safe_float(cycle.get("post_roll_duration_s")),
         "truncated_start": bool(cycle.get("truncated_start", False)),
         "truncated_end": bool(cycle.get("truncated_end", False)),
+        "event_start_reason": str(cycle.get("segmentation_flags", {}).get("event_start_reason") or cycle.get("event_start_reason") or ""),
+        "event_end_reason": str(cycle.get("segmentation_flags", {}).get("event_end_reason") or cycle.get("event_end_reason") or ""),
+        "baseline_at_start": round(baseline_before, 4),
+        "baseline_at_end": round(baseline_after, 4),
+        "baseline_visible_before": baseline_visible_before,
+        "baseline_visible_after": baseline_visible_after,
+        "startup_visible": startup_visible,
+        "shutdown_visible": shutdown_visible,
+        "waveform_completeness_score": round(waveform_completeness_score, 4),
     }
     return {
         "inrush_ratio": round(inrush_ratio, 4),
@@ -186,6 +289,19 @@ def build_waveform_summary(cycle: Dict[str, Any]) -> Dict[str, Any]:
         "has_multi_stage_shape": has_multi_stage_shape,
         "shape_peak_position": round(shape_peak_position, 4),
         "shape_tail_slope": round(shape_tail_slope, 4),
+        "baseline_visible_before": baseline_visible_before,
+        "baseline_visible_after": baseline_visible_after,
+        "startup_visible": startup_visible,
+        "shutdown_visible": shutdown_visible,
+        "event_start_reason": str(cycle.get("segmentation_flags", {}).get("event_start_reason") or cycle.get("event_start_reason") or ""),
+        "event_end_reason": str(cycle.get("segmentation_flags", {}).get("event_end_reason") or cycle.get("event_end_reason") or ""),
+        "baseline_at_start": round(baseline_before, 4),
+        "baseline_at_end": round(baseline_after, 4),
+        "waveform_completeness_score": round(waveform_completeness_score, 4),
+        "segmentation_confidence": round(segmentation_confidence, 4),
+        "confidence_penalties": penalties,
+        "learning_allowed": segmentation_confidence >= 0.55 and waveform_completeness_score >= 0.45,
+        **shape_meta,
         "waveform_summary": waveform_summary,
     }
 
@@ -226,8 +342,25 @@ def infer_unknown_subclass(cycle: Dict[str, Any]) -> Tuple[str, List[str]]:
 def score_shape_match(cycle: Dict[str, Any], patterns: Sequence[Dict[str, Any]]) -> ShapeMatchScore:
     cycle_label = "unknown"
     cycle_phase = str(cycle.get("phase") or "L1")
+    cycle_shape_status = str(cycle.get("shape_signature_status") or cycle.get("derived_features", {}).get("shape_signature_status") or "")
+    cycle_signature = str(cycle.get("shape_signature") or "").strip()
+    explicit_signature = parse_shape_signature(cycle_signature)
+    signature_usable = len(explicit_signature) >= 4
+    if cycle_shape_status != "valid" and not signature_usable:
+        logger.debug("shape scoring skipped because shape_signature missing")
+        return ShapeMatchScore(
+            label=cycle_label,
+            score=0.0,
+            distance=1.0,
+            euclidean=0.0,
+            dtw=0.0,
+            pattern_id=None,
+            cluster_id=str(cycle.get("cluster_id") or ""),
+            reasons=["shape scoring skipped because shape_signature missing"],
+            valid=False,
+        )
     cycle_vector = _resample_profile(
-        cycle.get("delta_profile_points") or cycle.get("profile_points") or cycle.get("waveform_points"),
+        cycle_signature,
         fallback_shape_signature=cycle.get("shape_signature"),
     )
     if not cycle_vector:
@@ -240,14 +373,18 @@ def score_shape_match(cycle: Dict[str, Any], patterns: Sequence[Dict[str, Any]])
             pattern_id=None,
             cluster_id=str(cycle.get("cluster_id") or ""),
             reasons=["no_cycle_shape_vector"],
+            valid=False,
         )
 
     best: ShapeMatchScore | None = None
     for pattern in patterns:
         if str(pattern.get("phase") or cycle_phase) != cycle_phase:
             continue
+        pattern_signature = str(pattern.get("shape_signature") or "").strip()
+        if not pattern_signature:
+            continue
         candidate_vector = _resample_profile(
-            pattern.get("delta_profile_points") or pattern.get("profile_points"),
+            pattern_signature,
             fallback_shape_signature=pattern.get("shape_signature"),
         )
         if not candidate_vector:
@@ -280,6 +417,7 @@ def score_shape_match(cycle: Dict[str, Any], patterns: Sequence[Dict[str, Any]])
                 f"duration_delta={duration_delta:.3f}",
                 f"power_delta={power_delta:.3f}",
             ],
+            valid=True,
         )
         if best is None or candidate.score > best.score:
             best = candidate
@@ -295,6 +433,7 @@ def score_shape_match(cycle: Dict[str, Any], patterns: Sequence[Dict[str, Any]])
         pattern_id=None,
         cluster_id=str(cycle.get("cluster_id") or ""),
         reasons=["no_pattern_shape_match"],
+        valid=False,
     )
 
 
@@ -364,8 +503,26 @@ def generate_heuristic_candidates(cycle: Dict[str, Any], temporal: TemporalConte
     plateau_stability = safe_float(features.get("plateau_stability"))
     has_flat_plateau = bool(features.get("has_flat_plateau", False))
     truncated = bool(cycle.get("truncated_start", False) or cycle.get("truncated_end", False))
+    segmentation_confidence = safe_float(cycle.get("segmentation_confidence", features.get("segmentation_confidence", 0.0)))
+    waveform_completeness = safe_float(cycle.get("waveform_completeness_score", features.get("waveform_completeness_score", 0.0)))
     has_motor = bool(cycle.get("has_motor_pattern", False)) or inrush_ratio >= 1.25
     candidates: List[Dict[str, Any]] = []
+
+    if truncated and has_motor and duration_s <= 90.0:
+        candidates.append({
+            "label": "compressor_candidate" if avg_power <= 700.0 else "motor_candidate",
+            "score": 0.66,
+            "source": "heuristic",
+            "reasons": ["startup-only event", "full-cycle evidence missing", "segmentation incomplete"],
+        })
+
+    if segmentation_confidence < 0.55 and has_motor and avg_power <= 900.0:
+        candidates.append({
+            "label": "pump_candidate" if has_flat_plateau else "motor_candidate",
+            "score": 0.58,
+            "source": "heuristic",
+            "reasons": ["segmentation quality gate", f"segmentation_confidence={segmentation_confidence:.2f}"],
+        })
 
     if has_motor and duration_s <= 45.0 and not has_flat_plateau:
         candidates.append({
@@ -375,7 +532,7 @@ def generate_heuristic_candidates(cycle: Dict[str, Any], temporal: TemporalConte
             "reasons": ["short_high_inrush_startup_without_plateau"],
         })
 
-    if has_motor and has_flat_plateau and duration_s >= 90.0:
+    if has_motor and has_flat_plateau and duration_s >= 90.0 and segmentation_confidence >= 0.55 and waveform_completeness >= 0.50:
         if avg_power <= 550.0:
             label = "compressor_small" if temporal.occurrence_count >= 4 else "small_pump_motor"
         else:
@@ -396,12 +553,28 @@ def generate_heuristic_candidates(cycle: Dict[str, Any], temporal: TemporalConte
         and temporal.occurrence_count >= 5
         and temporal.score >= 0.55
         and not truncated
+        and segmentation_confidence >= 0.7
     ):
         candidates.append({
             "label": "fridge",
             "score": 0.72,
             "source": "temporal_match",
             "reasons": ["recurring_compressor_plateau", f"occurrence_count={temporal.occurrence_count}"],
+        })
+
+    if (
+        avg_power >= 80.0
+        and avg_power <= 420.0
+        and has_flat_plateau
+        and temporal.occurrence_count >= 3
+        and temporal.score >= 0.45
+        and segmentation_confidence < 0.7
+    ):
+        candidates.append({
+            "label": "fridge_candidate",
+            "score": 0.60,
+            "source": "temporal_match",
+            "reasons": ["full-cycle evidence missing", "segmentation incomplete"],
         })
 
     if truncated and any(item["label"] == "fridge" for item in candidates):
@@ -431,7 +604,12 @@ def resolve_final_decision(
     fallback: str = "unknown",
 ) -> Dict[str, Any]:
     candidates = list(heuristic_candidates or [])
-    if shape_match.score >= 0.55 and shape_match.label not in {"", "unknown", "unbekannt"}:
+    segmentation_confidence = safe_float(cycle.get("segmentation_confidence", cycle.get("derived_features", {}).get("segmentation_confidence", 0.0)))
+    waveform_completeness = safe_float(cycle.get("waveform_completeness_score", cycle.get("derived_features", {}).get("waveform_completeness_score", 0.0)))
+    penalties = list(cycle.get("confidence_penalties") or cycle.get("derived_features", {}).get("confidence_penalties", []))
+    learning_allowed = bool(cycle.get("learning_allowed", cycle.get("derived_features", {}).get("learning_allowed", False)))
+
+    if shape_match.valid and shape_match.score >= 0.55 and shape_match.label not in {"", "unknown", "unbekannt"}:
         candidates.append(
             {
                 "label": shape_match.label,
@@ -448,12 +626,29 @@ def resolve_final_decision(
         "reasons": ["no_candidates"],
     }
     rule_confidence = clamp(safe_float(best.get("score"), 0.0))
-    shape_confidence = clamp(shape_match.score)
+    shape_confidence = clamp(shape_match.score if shape_match.valid else 0.0)
     temporal_confidence = clamp(temporal.score)
-    final_confidence = clamp((0.45 * rule_confidence) + (0.30 * shape_confidence) + (0.25 * temporal_confidence))
+    final_confidence = clamp(
+        (0.30 * rule_confidence)
+        + (0.20 * shape_confidence)
+        + (0.20 * temporal_confidence)
+        + (0.30 * clamp((segmentation_confidence + waveform_completeness) / 2.0))
+    )
     label = str(best.get("label") or fallback)
     reasons = list(best.get("reasons") or [])
     label_source = str(best.get("source") or "heuristic")
+
+    if segmentation_confidence < 0.55 or waveform_completeness < 0.5:
+        label_source = "heuristic"
+        if label in {"fridge", "compressor_small", "compressor_large", "small_pump_motor", "large_pump_motor"}:
+            if "fridge" in label:
+                label = "fridge_candidate"
+            elif "pump" in label:
+                label = "pump_candidate"
+            else:
+                label = "compressor_candidate"
+            reasons.append("full-cycle evidence missing")
+            reasons.append("segmentation incomplete")
 
     if label == "fridge" and temporal.occurrence_count < 5:
         label = "compressor_candidate"
@@ -463,7 +658,20 @@ def resolve_final_decision(
 
     if bool(cycle.get("truncated_start", False) or cycle.get("truncated_end", False)):
         final_confidence = max(0.2, final_confidence * 0.78)
+        if "segmentation_truncated_confidence_penalty" not in penalties:
+            penalties.append("segmentation_truncated_confidence_penalty")
         reasons.append("segmentation_truncated_confidence_penalty")
+
+    if not shape_match.valid:
+        shape_confidence = 0.0
+        if "missing_shape_signature_penalty" not in penalties:
+            penalties.append("missing_shape_signature_penalty")
+        if label_source == "shape_match":
+            label_source = "heuristic"
+
+    if not learning_allowed:
+        final_confidence = min(final_confidence, 0.64)
+        reasons.append("learning_blocked_due_to_segmentation_quality")
 
     if label not in {"unknown", "unbekannt", "unknown_electronics"}:
         final_confidence = max(final_confidence, 0.35)
@@ -489,8 +697,14 @@ def resolve_final_decision(
         "rule_confidence": round(rule_confidence, 4),
         "shape_confidence": round(shape_confidence, 4),
         "temporal_confidence": round(temporal_confidence, 4),
+        "segmentation_confidence": round(segmentation_confidence, 4),
+        "waveform_completeness_score": round(waveform_completeness, 4),
         "final_confidence": round(final_confidence, 4),
         "label_source": label_source,
+        "learning_allowed": learning_allowed,
+        "confidence_penalties": penalties,
+        "shape_signature_status": str(cycle.get("shape_signature_status") or cycle.get("derived_features", {}).get("shape_signature_status") or "missing"),
+        "shape_signature_reason": str(cycle.get("shape_signature_reason") or cycle.get("derived_features", {}).get("shape_signature_reason") or "unknown"),
         "cluster_id": shape_match.cluster_id or f"{label}:{cycle.get('phase', 'L1')}:{cycle.get('derived_features', {}).get('duration_bucket', 'na')}",
         "reason": "; ".join(reasons[:4]) if reasons else "no_reason_recorded",
         "shape_match": {
@@ -501,6 +715,7 @@ def resolve_final_decision(
             "dtw": round(shape_match.dtw, 4),
             "pattern_id": shape_match.pattern_id,
             "reasons": list(shape_match.reasons),
+            "valid": bool(shape_match.valid),
         },
         "temporal_features": {
             "recurrence_interval_s": round(temporal.recurrence_interval_s, 4),
@@ -517,6 +732,12 @@ def enrich_cycle_for_classification(cycle: Dict[str, Any], patterns: Sequence[Di
     enriched = dict(cycle)
     derived = build_waveform_summary(enriched)
     enriched["derived_features"] = derived
+    enriched["segmentation_confidence"] = safe_float(derived.get("segmentation_confidence"))
+    enriched["waveform_completeness_score"] = safe_float(derived.get("waveform_completeness_score"))
+    enriched["learning_allowed"] = bool(derived.get("learning_allowed", False))
+    enriched["confidence_penalties"] = list(derived.get("confidence_penalties", []))
+    enriched["shape_signature_status"] = str(derived.get("shape_signature_status", "missing"))
+    enriched["shape_signature_reason"] = str(derived.get("shape_signature_reason", "unknown"))
     shape_match = score_shape_match(enriched, patterns)
     temporal = score_temporal_context(enriched, patterns, preferred_label=shape_match.label if shape_match.score >= 0.55 else "")
     heuristic_candidates = generate_heuristic_candidates(enriched, temporal)

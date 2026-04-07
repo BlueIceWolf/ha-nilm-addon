@@ -10,7 +10,7 @@ def _reading(ts: datetime, power: float) -> PowerReading:
     return PowerReading(timestamp=ts, power_w=power, phase="L1")
 
 
-def _run_sequence(powers, *, start=None, learner=None):
+def _run_sequence(powers, *, start=None, learner=None, baseline_seed=None):
     learner = learner or PatternLearner(
         min_cycle_seconds=5.0,
         adaptive_on_offset_w=35.0,
@@ -24,6 +24,8 @@ def _run_sequence(powers, *, start=None, learner=None):
         noise_filter_window=1,
     )
     start = start or datetime(2026, 4, 6, 12, 0, 0)
+    if baseline_seed:
+        learner.prime_baseline(list(baseline_seed))
     completed = []
     for idx, power in enumerate(powers):
         maybe = learner.ingest(_reading(start + timedelta(seconds=idx), power))
@@ -102,3 +104,12 @@ def test_multi_stage_load_is_not_split_into_multiple_events():
     assert cycle.peak_power_w >= 420.0
     assert cycle.truncated_start is False
     assert cycle.truncated_end is False
+
+
+def test_event_starting_mid_cycle_sets_truncated_start_true():
+    powers = [190.0] * 8 + [140.0] * 4 + [45.0, 44.0, 44.0, 44.0, 44.0]
+    completed = _run_sequence(powers, baseline_seed=[45.0] * 12)
+
+    assert len(completed) == 1
+    cycle = completed[0]
+    assert cycle.truncated_start is True

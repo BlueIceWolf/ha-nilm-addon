@@ -2799,6 +2799,8 @@ class SQLiteStore:
         enriched = self._augment_cycle_baseline_delta(cycle)
         if not enriched.get("shape_signature"):
             enriched["shape_signature"] = self._shape_signature_from_cycle(enriched)
+        enriched["shape_signature_status"] = self._shape_signature_status(enriched)
+        enriched["shape_signature_reason"] = self._shape_signature_reason(enriched)
         if patterns is None:
             patterns = self.list_patterns(limit=500)
         enriched = enrich_cycle_for_classification(enriched, patterns or [], fallback=fallback)
@@ -2813,6 +2815,7 @@ class SQLiteStore:
             "rule_confidence": float(cycle.get("rule_confidence", 0.0) or 0.0),
             "shape_confidence": float(cycle.get("shape_confidence", 0.0) or 0.0),
             "temporal_confidence": float(cycle.get("temporal_confidence", 0.0) or 0.0),
+            "segmentation_confidence": float(cycle.get("segmentation_confidence", 0.0) or 0.0),
             "final_confidence": float(cycle.get("final_confidence", 0.0) or 0.0),
         }
 
@@ -2837,6 +2840,38 @@ class SQLiteStore:
             "reason_text": str(cycle.get("reason") or ""),
             **cls._confidence_payload(cycle),
         }
+
+    @classmethod
+    def _shape_signature_status(cls, cycle: Dict[str, Any]) -> str:
+        waveform_points = cls._normalize_profile_points(cycle.get("waveform_points", []))
+        signature = str(cycle.get("shape_signature") or "").strip()
+        if signature:
+            try:
+                parsed = json.loads(signature)
+                if isinstance(parsed, list) and len(parsed) >= 8:
+                    return "valid"
+            except Exception:
+                pass
+            return "missing"
+        if len(waveform_points) >= 8:
+            return "missing"
+        return "missing"
+
+    @classmethod
+    def _shape_signature_reason(cls, cycle: Dict[str, Any]) -> str:
+        waveform_points = cls._normalize_profile_points(cycle.get("waveform_points", []))
+        signature = str(cycle.get("shape_signature") or "").strip()
+        if signature:
+            try:
+                parsed = json.loads(signature)
+                if isinstance(parsed, list) and len(parsed) >= 8:
+                    return "waveform_signature_ready"
+            except Exception:
+                return "invalid_shape_signature_payload"
+            return "invalid_shape_signature_payload"
+        if len(waveform_points) >= 8:
+            return "waveform_present_but_signature_missing"
+        return "waveform_insufficient_samples"
 
     @classmethod
     def _is_duplicate_pattern_candidate(cls, existing: Dict[str, Any], candidate: Dict[str, Any]) -> bool:
@@ -3053,12 +3088,12 @@ class SQLiteStore:
 
     @classmethod
     def _shape_signature_from_cycle(cls, cycle: Dict[str, Any]) -> str:
-        if bool(cycle.get("truncated_start", False) or cycle.get("truncated_end", False)):
+        waveform_points = cls._normalize_profile_points(cycle.get("waveform_points", []))
+        if len(waveform_points) < 8:
+            waveform_points = cls._normalize_profile_points(cycle.get("pre_roll_samples", [])) + cls._normalize_profile_points(cycle.get("profile_points", [])) + cls._normalize_profile_points(cycle.get("post_roll_samples", []))
+        if len(waveform_points) < 8:
             return ""
-        profile_points = cls._normalize_profile_points(cycle.get("delta_profile_points", []))
-        if not profile_points:
-            profile_points = cls._normalize_profile_points(cycle.get("profile_points", []))
-        vec = cls._resample_profile_points(profile_points, sample_count=16)
+        vec = cls._resample_profile_points(waveform_points, sample_count=32)
         if not vec:
             return ""
         vec_max = max((abs(float(v)) for v in vec), default=1.0)
@@ -3239,8 +3274,11 @@ class SQLiteStore:
             "electric_stove",
             "tv",
             "pump",
+            "pump_candidate",
             "small_pump_motor",
             "large_pump_motor",
+            "motor_candidate",
+            "fridge_candidate",
             "compressor_candidate",
             "compressor_small",
             "compressor_large",
@@ -4952,6 +4990,28 @@ class SQLiteStore:
 
         cycle = self._enrich_cycle_for_learning(cycle, fallback=fallback, patterns=patterns)
 
+        if float(cycle.get("segmentation_confidence", 0.0) or 0.0) < 0.55 or not bool(cycle.get("learning_allowed", True)):
+            return _remember({
+                "label": str(cycle.get("refined_label") or fallback),
+                "confidence": float(cycle.get("final_confidence", 0.0) or 0.0),
+                "source": str(cycle.get("label_source", "heuristic")),
+                "decision_path": [
+                    "stage_1_segmentation",
+                    "stage_2_waveform_completeness_gate",
+                    "stage_3_heuristic_candidate_generation",
+                    "stage_4_temporal_support",
+                    "stage_5_final_label_resolution",
+                ],
+                "explain": {
+                    "decision_reason": str(cycle.get("reason", "segmentation_quality_gate")),
+                    "candidate_labels": list(cycle.get("candidate_labels", [])),
+                    "derived_features": dict(cycle.get("derived_features", {})),
+                    "temporal_features": dict(cycle.get("temporal_features", {})),
+                    "shape_scoring_skipped": str(cycle.get("shape_signature_status", "missing")) != "valid",
+                    **self._confidence_payload(cycle),
+                },
+            })
+
         cycle_phase = str(cycle.get("phase") or "L1")
         phase_locks = self.get_label_phase_locks()
 
@@ -5726,6 +5786,27 @@ class SQLiteStore:
         patterns = self.list_patterns(limit=500)
         cycle = self._enrich_cycle_for_learning(cycle, fallback=suggestion_seed, patterns=patterns)
         suggestion_seed = str(cycle.get("refined_label") or suggestion_seed or "unknown")
+
+        if float(cycle.get("segmentation_confidence", 0.0) or 0.0) < 0.55 or not bool(cycle.get("learning_allowed", True)):
+            self.log_training_decision(
+                event_id=None,
+                accepted=False,
+                reason="segmentation_quality_gate",
+                label=suggestion_seed,
+                dedup_result="learning_blocked",
+                matched_pattern_id=None,
+                similarity_score=float(cycle.get("segmentation_confidence", 0.0) or 0.0),
+                dedup_reason=str(cycle.get("reason") or "segmentation incomplete"),
+            )
+            return {
+                "matched": False,
+                "pattern": None,
+                "skipped": True,
+                "reason": "segmentation_quality_gate",
+                "quality_score": quality_score,
+                "segmentation_confidence": float(cycle.get("segmentation_confidence", 0.0) or 0.0),
+                "learning_allowed": bool(cycle.get("learning_allowed", False)),
+            }
 
         # Get phase from cycle (default to L1 if not specified)
         cycle_phase = str(cycle.get("phase", "L1"))

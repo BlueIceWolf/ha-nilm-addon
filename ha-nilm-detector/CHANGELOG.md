@@ -4,6 +4,31 @@
 
 ## 0.6.38 (BETA)
 
+## 0.6.39 (BETA)
+
+**Segmentierungsqualitaet und Lern-Gating weiter gehaertet: weniger falsche Shape-Scores, sichere Kandidatenlabels bei Teilzyklen und sauberere Lernfreigabe**
+
+- Shape-Matching korrigiert:
+  - explizite `shape_signature` wird wieder genutzt, auch wenn Metadaten dazu noch fehlen
+  - fehlende/ungueltige Shape-Signaturen erzeugen keine kuenstlich positive Shape-Confidence mehr
+- Segmentierungsbewertung erweitert:
+  - `segmentation_confidence` und `waveform_completeness_score` fliessen jetzt explizit in Entscheidungen ein
+  - Baseline-Sichtbarkeit vor/nach dem Event wird bewertet und als Penalty/Meta gespeichert
+- Labeling fuer unvollstaendige Zyklen abgesichert:
+  - Teilzyklen werden konsequenter auf `compressor_candidate`, `motor_candidate`, `pump_candidate` oder `fridge_candidate` heruntergestuft
+  - schwache Segmentierung darf keine zu optimistischen Endlabels mehr erzeugen
+- Lernen/Persistenz gehaertet:
+  - schwache Segmentierung blockiert Pattern-Lernen gezielt statt verrauschte Daten in stabile Muster zu uebernehmen
+  - Profil-basierte Vollzyklen aus Tests/Imports bleiben trotzdem lernfaehig, wenn Start und Ende Baseline sichtbar zeigen
+- Segmentierungsabschluss verbessert:
+  - Mid-Cycle-Starts koennen nach Post-Roll sauber finalisiert werden
+  - reine Kurzspikes werden weiterhin als Rauschen verworfen
+- Neue/erweiterte Regressionen fuer:
+  - Mid-Cycle `truncated_start`
+  - fehlende `shape_signature`
+  - Startup-only-Kompressorzyklen
+  - vollständige Waveform-Signaturen und Lern-Gates
+
 **Segmentierungs-Hotfix fuer Vollzyklen: bessere Event-Grenzen, weniger Truncation und sauberere Lernsignaturen**
 
 - Event-Erkennung auf explizite Zustaende umgestellt: `IDLE -> PRE_EVENT -> ACTIVE -> ENDING`

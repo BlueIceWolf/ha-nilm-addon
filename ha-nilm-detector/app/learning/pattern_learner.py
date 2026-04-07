@@ -245,6 +245,7 @@ class PatternLearner:
         if transition.ended:
             self._pending_end_ts = reading.timestamp
             self._pending_finalize_at = reading.timestamp + timedelta(seconds=self.post_roll_seconds)
+            self._post_roll_samples = [reading]
             self._segmentation_flags["event_end_reason"] = str(transition.end_reason or "stable_near_baseline")
             self._segmentation_flags["baseline_end_w"] = round(float(self._baseline_power_w), 3)
             self._segmentation_flags["end_delta_w"] = round(float(transition.delta_w), 3)
@@ -256,10 +257,18 @@ class PatternLearner:
             return completed_cycle
 
         if self._pending_end_ts and self._event_detector.state == STATE_IDLE:
-            self._post_roll_samples.append(reading)
-            self._cycle_samples.append(reading)
+            if not self._post_roll_samples or self._post_roll_samples[-1].timestamp != reading.timestamp:
+                self._post_roll_samples.append(reading)
+                self._cycle_samples.append(reading)
             self._update_baseline(power, reading.timestamp)
-            if self._pending_finalize_at and reading.timestamp >= self._pending_finalize_at:
+            post_roll_duration_s = self._pre_roll_duration(self._post_roll_samples)
+            if (
+                self._pending_finalize_at
+                and (
+                    reading.timestamp >= self._pending_finalize_at
+                    or post_roll_duration_s >= max(self.post_roll_seconds, 0.0)
+                )
+            ):
                 completed_cycle = completed_cycle or self._build_cycle(self._pending_end_ts)
                 if completed_cycle:
                     logger.debug(
@@ -490,6 +499,11 @@ class PatternLearner:
         values = [float(r.power_w) for r in self._event_samples]
         avg_power = sum(values) / len(values)
         peak_power = max(values)
+        baseline_start_w = float(self._segmentation_flags.get("baseline_start_w", self._baseline_power_w) or self._baseline_power_w)
+        sustained_threshold_w = baseline_start_w + max(self.adaptive_off_offset_w, (self.adaptive_on_offset_w * 0.35), 10.0)
+        sustained_samples = sum(1 for value in values if value > sustained_threshold_w)
+        if sustained_samples < 2:
+            return None
 
         # Trapezoid integration with simple step fallback for uneven timestamps.
         energy_ws = 0.0
@@ -546,7 +560,7 @@ class PatternLearner:
         truncated_start = self._detect_truncated_start(
             pre_roll_samples=self._pre_roll_samples,
             event_samples=self._event_samples,
-            baseline_w=float(self._segmentation_flags.get("baseline_start_w", self._baseline_power_w) or self._baseline_power_w),
+            baseline_w=baseline_start_w,
         )
         truncated_end = self._detect_truncated_end(
             event_samples=self._event_samples,

@@ -4,6 +4,32 @@
 
 ---
 
+# Release 0.6.39 (BETA)
+
+## Store Kurztext
+- **🧭 Segmentierungs-Qualitaet weiter gehaertet**: ehrlichere Shape-Scores, sichere Kandidatenlabels bei Teilzyklen und strengeres Learning-Gating ohne Test-/Import-Roundtrips zu brechen.
+
+## Highlights
+- **Shape-Scoring ehrlicher gemacht**
+  - explizite `shape_signature` wird wieder sauber ausgewertet, auch wenn Status-Metadaten fehlen
+  - fehlende oder ungueltige Signaturen erzeugen keine falsche Shape-Confidence mehr
+- **Segmentierungsqualitaet sichtbar in der Entscheidung**
+  - `segmentation_confidence` und `waveform_completeness_score` werden im Klassifikationspfad und in der Persistenz mitgefuehrt
+  - Baseline-Sichtbarkeit vor und nach dem Event wird explizit bewertet
+- **Sicherere Labels fuer Teilzyklen**
+  - unvollstaendige Motor-/Kompressor-Ereignisse bleiben bei Kandidatenlabels wie `compressor_candidate`, `motor_candidate`, `pump_candidate` oder `fridge_candidate`
+  - optimistische Endlabels werden bei schwacher Segmentierung aktiv heruntergestuft
+- **Learning-Gate gehaertet ohne Kollateralschaeden**
+  - schlechte Segmentierung blockiert Pattern-Lernen gezielt
+  - synthetische Vollzyklen aus Persistenz-/Roundtrip-Tests bleiben mit sichtbarer Start-/End-Baseline lernbar
+- **Segmentierungsabschluss robuster**
+  - Mid-Cycle-Starts finalisieren nach gesammeltm Post-Roll sauber
+  - reine Kurzspikes werden weiterhin verworfen und nicht als gueltige Zyklen gelernt
+- **Verifikation**
+  - fokussierte NILM-Suite komplett gruen: 28 Tests bestanden
+
+---
+
 # Release 0.6.38 (BETA)
 
 ## Store Kurztext
