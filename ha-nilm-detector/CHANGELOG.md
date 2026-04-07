@@ -4,6 +4,18 @@
 
 ## 0.6.38 (BETA)
 
+## 0.6.40 (BETA)
+
+**LLM-Review-Export erweitert: externe Analyse jetzt optional mit echten Messpunkten moeglich**
+
+- `export_llm_review_bundle()` kann jetzt auf Wunsch rohe Messpunkte (`power_readings`) mitsamt Zeitstempeln exportieren
+- Web-UI exportiert den LLM-Review-Bundle jetzt direkt mit Messpunkten fuer externe Analyse
+- Export bleibt begrenzbar ueber `readings_limit`, damit Dateien nicht unkontrolliert zu gross werden
+- Bundle enthaelt jetzt zusaetzliche Meta-Infos:
+  - `counts.power_readings`
+  - Privacy-Hinweis, dass exakte Zeitstempel und Rohmesswerte enthalten sein koennen
+- Neue Regressionstests fuer Storage-Export und Web-Endpoint mit Messpunkten
+
 ## 0.6.39 (BETA)
 
 **Segmentierungsqualitaet und Lern-Gating weiter gehaertet: weniger falsche Shape-Scores, sichere Kandidatenlabels bei Teilzyklen und sauberere Lernfreigabe**

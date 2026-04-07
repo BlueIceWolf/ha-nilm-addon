@@ -4,6 +4,26 @@
 
 ---
 
+# Release 0.6.40 (BETA)
+
+## Store Kurztext
+- **🧾 LLM-Review jetzt mit Messpunkten exportierbar**: externe Analyse von Lernlogik und Segmentierung kann direkt mit echten Power-Readings erfolgen.
+
+## Highlights
+- **Externer LLM-Review mit echten Messdaten**
+  - der LLM-Review-Bundle kann jetzt rohe `power_readings` mitsamt Zeitstempeln enthalten
+  - dadurch laesst sich Segmentierung, Start-/End-Erkennung und Lernlogik deutlich besser extern bewerten
+- **Web-UI direkt nutzbar**
+  - der bestehende LLM-Exportbutton liefert jetzt nicht nur Pattern-/Event-Zusammenfassungen, sondern auch Messpunkte
+  - die Exportgroesse bleibt ueber ein Limit kontrollierbar
+- **Mehr Transparenz im Bundle**
+  - `counts.power_readings` zeigt sofort, wie viele Messpunkte enthalten sind
+  - Privacy-Metadaten weisen darauf hin, dass genaue Zeitstempel und Rohmesswerte enthalten sein koennen
+- **Verifikation**
+  - gezielte Tests fuer Storage-Export und Web-Endpoint mit Messpunkten sind gruen
+
+---
+
 # Release 0.6.39 (BETA)
 
 ## Store Kurztext

@@ -75,14 +75,25 @@ def test_llm_review_bundle_contains_compact_review_data():
         try:
             assert store.connect() is True
             t0 = datetime(2026, 4, 6, 15, 0, 0)
+            with store._conn:
+                store._conn.execute(
+                    "INSERT INTO power_readings (ts, power_w, phase, metadata) VALUES (?, ?, ?, ?)",
+                    ((t0 - timedelta(seconds=5)).isoformat(), 95.0, "L1", "{}"),
+                )
+                store._conn.execute(
+                    "INSERT INTO power_readings (ts, power_w, phase, metadata) VALUES (?, ?, ?, ?)",
+                    (t0.isoformat(), 280.0, "L1", "{}"),
+                )
             store.learn_cycle_pattern(_build_cycle(t0), suggestion_type="fridge")
 
-            bundle = store.export_llm_review_bundle(pattern_limit=20, event_limit=20)
+            bundle = store.export_llm_review_bundle(pattern_limit=20, event_limit=20, readings_limit=500)
             assert bundle.get("format") == "ha_nilm_llm_review_bundle_v1"
             assert isinstance(bundle.get("patterns"), list)
             assert isinstance(bundle.get("events"), list)
             assert isinstance(bundle.get("classification_log"), list)
             assert isinstance(bundle.get("training_log"), list)
+            assert isinstance(bundle.get("power_readings"), list)
+            assert int(bundle.get("counts", {}).get("power_readings", 0) or 0) >= 1
             if bundle["patterns"]:
                 assert "shape_signature" in bundle["patterns"][0]
         finally:

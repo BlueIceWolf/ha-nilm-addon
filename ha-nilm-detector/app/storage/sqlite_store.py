@@ -1251,11 +1251,26 @@ class SQLiteStore:
             "patterns": shared_patterns,
         }
 
-    def export_llm_review_bundle(self, pattern_limit: int = 100, event_limit: int = 200) -> Dict[str, Any]:
+    def export_llm_review_bundle(
+        self,
+        pattern_limit: int = 100,
+        event_limit: int = 200,
+        readings_limit: int = 5000,
+        include_readings: bool = True,
+    ) -> Dict[str, Any]:
         """Export a compact bundle for offline or LLM-assisted review."""
         patterns = self.list_patterns(limit=max(1, min(int(pattern_limit), 1000)))
         classification_logs = self.list_classification_logs(limit=max(1, min(int(event_limit), 1000)))
         training_log = self.get_training_log(limit=max(1, min(int(event_limit), 1000)))
+        reading_rows: List[Dict[str, Any]] = []
+        safe_readings_limit = max(100, min(int(readings_limit), 20000))
+
+        if include_readings:
+            try:
+                reading_rows = self.get_power_series(limit=safe_readings_limit, max_limit=safe_readings_limit)
+            except Exception as e:
+                logger.warning("Failed to export LLM review readings: %s", e)
+                reading_rows = []
 
         event_rows: List[Dict[str, Any]] = []
         if self._patterns_conn and self._table_exists(self._patterns_conn, "events"):
@@ -1319,7 +1334,20 @@ class SQLiteStore:
         return {
             "exported_at": datetime.now(timezone.utc).isoformat(),
             "format": "ha_nilm_llm_review_bundle_v1",
-            "usage": "Share for offline analysis or LLM-assisted classifier review. Avoid posting publicly without reviewing labels.",
+            "usage": "Share for offline analysis or LLM-assisted classifier review. Contains exact timestamps and optional raw readings, so review before sharing externally.",
+            "privacy": {
+                "contains_exact_timestamps": bool(include_readings),
+                "contains_raw_readings": bool(include_readings),
+                "contains_pattern_labels": True,
+                "contains_training_diagnostics": True,
+            },
+            "counts": {
+                "patterns": len(compact_patterns),
+                "events": len(event_rows),
+                "classification_log": len(classification_logs),
+                "training_log": len(training_log),
+                "power_readings": len(reading_rows),
+            },
             "prompt_hint": {
                 "goal": "Review misclassifications, suggest better heuristic rules, and identify missing device subclasses.",
                 "focus": [
@@ -1328,12 +1356,14 @@ class SQLiteStore:
                     "rule precision vs recall",
                     "shape/profile differences",
                     "unknown bucket refinement",
+                    "segmentation quality vs label certainty",
                 ],
             },
             "patterns": compact_patterns,
             "events": event_rows,
             "classification_log": classification_logs,
             "training_log": training_log,
+            "power_readings": reading_rows,
         }
 
     def list_devices(self, limit: int = 500) -> List[Dict[str, Any]]:

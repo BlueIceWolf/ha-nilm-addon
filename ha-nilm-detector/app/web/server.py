@@ -1437,13 +1437,13 @@ async function exportSharedPatternPack() {
 async function exportLlmReviewBundle() {
   try {
     setTransientStatus(t('exportLlmBtn'));
-    const response = await fetch(apiPath('api/debug/export-llm-review-bundle?pattern_limit=200&event_limit=300'));
+    const response = await fetch(apiPath('api/debug/export-llm-review-bundle?pattern_limit=200&event_limit=300&readings_limit=5000&include_readings=1'));
     if (!response.ok) {
       throw new Error(`HTTP ${response.status}`);
     }
     const data = await response.json();
     downloadJsonFile(data, `nilm-llm-review-${new Date().toISOString().slice(0,10)}.json`);
-    alert(t('exportLlmSuccess', { patterns: data.patterns?.length || 0, events: data.events?.length || 0 }));
+    alert(t('exportLlmSuccess', { patterns: data.patterns?.length || 0, events: data.events?.length || 0 }) + `, ${currentLanguage === 'en' ? 'readings' : 'Messpunkte'}: ${data.power_readings?.length || 0}`);
   } catch (err) {
     alert(t('exportLlmFailed', { err }));
     setStatus(t('exportLlmFailed', { err }));
@@ -3569,6 +3569,8 @@ class StatsWebServer:
                   query = parse_qs(parsed.query or "")
                   pattern_limit_raw = (query.get("pattern_limit") or ["100"])[0]
                   event_limit_raw = (query.get("event_limit") or ["200"])[0]
+                  readings_limit_raw = (query.get("readings_limit") or ["5000"])[0]
+                  include_readings_raw = (query.get("include_readings") or ["1"])[0]
                   try:
                     pattern_limit = max(10, min(int(pattern_limit_raw), 1000))
                   except ValueError:
@@ -3577,7 +3579,17 @@ class StatsWebServer:
                     event_limit = max(10, min(int(event_limit_raw), 1000))
                   except ValueError:
                     event_limit = 200
-                  self._send_json(parent.storage.export_llm_review_bundle(pattern_limit=pattern_limit, event_limit=event_limit))
+                  try:
+                    readings_limit = max(100, min(int(readings_limit_raw), 20000))
+                  except ValueError:
+                    readings_limit = 5000
+                  include_readings = str(include_readings_raw).strip().lower() not in {"0", "false", "no"}
+                  self._send_json(parent.storage.export_llm_review_bundle(
+                    pattern_limit=pattern_limit,
+                    event_limit=event_limit,
+                    readings_limit=readings_limit,
+                    include_readings=include_readings,
+                  ))
                   return
 
                 if parsed.path == "/api/debug/export-features-csv":
