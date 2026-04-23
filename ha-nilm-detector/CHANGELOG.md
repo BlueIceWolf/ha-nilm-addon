@@ -2,6 +2,17 @@
 
 > ⚠️ **Hinweis**: Dieses Projekt ist experimentell (BETA) - Breaking Changes und Bugs können auftreten.
 
+## 0.6.43 (BETA)
+
+### Fixes
+- **Pattern-Speicherung**: Provisorische Patterns werden jetzt sofort in `learned_patterns` eingefügt (status="provisional") – `counts.patterns` bleibt nicht mehr dauerhaft 0
+- **SQL column count**: `_record_pattern_features` (23→26 Platzhalter) und `_upsert_patterns_mirror` (34→37 Platzhalter) korrigiert – kein stiller Fehlschlag mehr beim Feature-Speichern
+
+### Improvements
+- **Learning-Statistiken**: Neues 13-Metrik-Tracking-Dictionary (`_learning_stats`) mit Zählern für Events, Patterns und alle 4 Rejection-Typen (quality, baseline, session_dup, segmentation)
+- **Learning Summary Log**: Umfassendes `[STATS] LEARNING SUMMARY`-Log alle ~60 s mit Lernrate, Pattern-Zählern und Rejection-Breakdown
+- **Verbesserte Diagnose**: `_record_pattern_features` loggt bei Fehler explizit "non-critical" und zählt `db_insert_failures` – Pattern-Erstellung wird nicht mehr blockiert
+
 ## 0.6.38 (BETA)
 
 ## 0.6.42 (BETA)

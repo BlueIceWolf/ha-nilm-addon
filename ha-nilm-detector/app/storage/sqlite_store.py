@@ -98,6 +98,22 @@ class SQLiteStore:
         }
         self._learning_session_keys: Dict[str, str] = {}
         self._learning_session_windows: List[Dict[str, Any]] = []
+        
+        # Learning statistics tracking - monitors patterns, rejections, errors
+        self._learning_stats: Dict[str, float] = {
+            "events_seen_total": 0.0,
+            "events_learned_total": 0.0,
+            "provisional_patterns_created": 0.0,
+            "final_patterns_created": 0.0,
+            "patterns_merged": 0.0,
+            "patterns_promoted": 0.0,
+            "rejected_quality": 0.0,
+            "rejected_baseline": 0.0,
+            "rejected_session_dup": 0.0,
+            "rejected_segmentation": 0.0,
+            "db_insert_failures": 0.0,
+            "last_learning_run_ts": None,
+        }
         self.learning_segmentation_threshold = 0.40
         self.learning_stable_segmentation_threshold = 0.70
         self.learning_provisional_promotion_count = 3
@@ -530,7 +546,7 @@ class SQLiteStore:
                         profile_points_json, delta_profile_points_json, shape_vector_json, delta_shape_vector_json, prototype_hash,
                         num_substates, step_count, plateau_count,
                         shape_similarity_score, cluster_similarity_score
-                    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                     """,
                     (
                         int(pattern.get("id", 0) or 0),
@@ -2960,12 +2976,36 @@ class SQLiteStore:
             if elapsed < self._learning_summary_interval_s:
                 return
         self._last_learning_summary_ts = now
+        
+        # Comprehensive learning statistics summary
+        events_seen = int(self._learning_stats.get("events_seen_total", 0.0) or 0)
+        events_learned = int(self._learning_debug_counters.get("events_learned", 0) or 0)
+        provisional_created = int(self._learning_stats.get("provisional_patterns_created", 0.0) or 0)
+        final_created = int(self._learning_stats.get("final_patterns_created", 0.0) or 0)
+        merged = int(self._learning_stats.get("patterns_merged", 0.0) or 0)
+        promoted = int(self._learning_stats.get("patterns_promoted", 0.0) or 0)
+        rej_quality = int(self._learning_stats.get("rejected_quality", 0.0) or 0)
+        rej_baseline = int(self._learning_stats.get("rejected_baseline", 0.0) or 0)
+        rej_session = int(self._learning_stats.get("rejected_session_dup", 0.0) or 0)
+        rej_segmentation = int(self._learning_stats.get("rejected_segmentation", 0.0) or 0)
+        total_rejected = rej_quality + rej_baseline + rej_session + rej_segmentation
+        
         logger.info(
-            "Learning summary: events: %s detected, %s blocked, %s learned, provisional_patterns=%s",
-            int(self._learning_debug_counters.get("events_detected_total", 0) or 0),
-            int(self._learning_debug_counters.get("events_blocked_by_segmentation", 0) or 0),
-            int(self._learning_debug_counters.get("events_learned", 0) or 0),
-            self._count_provisional_patterns(),
+            "[STATS] LEARNING SUMMARY - Events: %d seen, %d learned (%.0f%%) | "
+            "Patterns: %d provisional, %d final, %d merged, %d promoted | "
+            "Rejected: %d total (quality=%d, baseline=%d, session_dup=%d, segmentation=%d)",
+            events_seen,
+            events_learned,
+            (100.0 * events_learned / max(events_seen, 1)),
+            provisional_created,
+            final_created,
+            merged,
+            promoted,
+            total_rejected,
+            rej_quality,
+            rej_baseline,
+            rej_session,
+            rej_segmentation,
         )
 
     def _learning_starved(self) -> bool:
@@ -5082,7 +5122,7 @@ class SQLiteStore:
                         rise_rate_w_per_s, fall_rate_w_per_s,
                         inrush_peak_w, inrush_ratio, settling_time_s,
                         shape_embedding_json, delta_shape_embedding_json, created_at
-                    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                     """,
                     (
                         int(pattern_id),
@@ -5113,8 +5153,18 @@ class SQLiteStore:
                         datetime.now().isoformat(),
                     ),
                 )
+                logger.debug(
+                    "Pattern features recorded: pattern_id=%d version=%s substates=%d steps=%d",
+                    pattern_id, feature_version,
+                    int(enriched.get("num_substates", 0) or 0),
+                    step_count,
+                )
         except Exception as e:
-            logger.debug("_record_pattern_features failed: %s", e)
+            logger.debug(
+                "Pattern feature recording skipped (non-critical): pattern_id=%d error=%s",
+                pattern_id, str(e)
+            )
+            self._learning_stats["db_insert_failures"] = self._learning_stats.get("db_insert_failures", 0.0) + 1.0
 
     def _record_pattern_history_snapshot(self, pattern: Dict) -> None:
         """Persist lightweight history snapshots for drift tracking."""
@@ -6521,6 +6571,228 @@ class SQLiteStore:
             logger.error(f"Failed to list learned patterns: {e}", exc_info=True)
             return []
 
+    def _insert_provisional_learned_pattern(
+        self,
+        cycle: Dict[str, Any],
+        learning_label: str,
+        quality_score: float,
+        event_id: Optional[int] = None,
+    ) -> Dict[str, Any]:
+        """Create and persist a provisional pattern directly in learned_patterns.
+        
+        This ensures provisional patterns are immediately visible in list_patterns(),
+        rather than being hidden in a separate provisional_patterns table.
+        Status is set to 'provisional' and will be upgraded to 'active' if the pattern
+        is confirmed through recurrence or promotion.
+        """
+        if not self._patterns_conn:
+            raise RuntimeError("patterns storage not connected")
+
+        now = datetime.now().isoformat()
+        
+        # Reuse the core insertion logic from _insert_learned_pattern_from_cycle
+        # but with status="provisional" and minimal seen_count=1
+        power_variance = float(cycle.get("power_variance", 0.0))
+        rise_rate = float(cycle.get("rise_rate_w_per_s", 0.0))
+        fall_rate = float(cycle.get("fall_rate_w_per_s", 0.0))
+        duty_cycle = float(cycle.get("duty_cycle", 0.0))
+        peak_to_avg = float(cycle.get("peak_to_avg_ratio", 1.0))
+        num_substates = int(cycle.get("num_substates", 0))
+        step_count = int(cycle.get("step_count", 0))
+        has_heating = 1 if cycle.get("has_heating_pattern", False) else 0
+        has_motor = 1 if cycle.get("has_motor_pattern", False) else 0
+        profile_points = self._normalize_profile_points(cycle.get("profile_points", []))
+        profile_points_json = json.dumps(profile_points)
+        delta_profile_points = self._normalize_profile_points(cycle.get("delta_profile_points", []))
+        delta_profile_points_json = json.dumps(delta_profile_points)
+        shape_vector_json = json.dumps(self._resample_profile_points(profile_points, sample_count=32))
+        delta_shape_vector_json = json.dumps(cycle.get("delta_shape_vector", [])) if cycle.get("delta_shape_vector") else "[]"
+        prototype_hash = self._prototype_hash_from_cycle(cycle)
+        curve_hash = str(cycle.get("curve_hash") or self._curve_hash_from_cycle(cycle))
+        shape_signature = str(cycle.get("shape_signature") or self._shape_signature_from_cycle(cycle))
+        device_group_id = str(cycle.get("device_group_id") or self._device_group_id(learning_label, cycle))
+        mode_key = str(cycle.get("mode_key") or self._mode_key_from_cycle(cycle))
+        
+        baseline_before_w = float(cycle.get("baseline_before_w", 0.0) or 0.0)
+        baseline_after_w = float(cycle.get("baseline_after_w", 0.0)) or baseline_before_w
+        baseline_before_w_avg = baseline_before_w
+        baseline_after_w_avg = baseline_after_w
+        delta_avg_power_w = float(cycle.get("delta_avg_power_w", 0.0) or 0.0)
+        delta_peak_power_w = float(cycle.get("delta_peak_power_w", 0.0) or 0.0)
+        delta_energy_wh = float(cycle.get("delta_energy_wh", 0.0) or 0.0)
+        avg_delta_power_w = delta_avg_power_w
+        avg_duration_s = float(cycle.get("duration_s", 0.0) or 0.0)
+        avg_peak_power_w = float(cycle.get("peak_power_w", 0.0) or 0.0)
+        avg_inrush_duration_s = float(cycle.get("settling_time_s", 0.0) or 0.0)
+        plateau_count = int(cycle.get("plateau_count", 0) or 0)
+        storage_fields = self._cycle_storage_fields(cycle)
+        
+        frequency_per_day_seed = 1.0
+        confidence_score_norm = quality_score * 0.6  # Lower confidence for provisional
+        candidate_name = self._normalize_pattern_name(learning_label)
+        initial_hour = self._parse_iso_timestamp(str(cycle.get("end_ts") or now))
+        initial_hour_of_day = float(initial_hour.hour) if initial_hour else 12.0
+        initial_hour_dist_json = json.dumps({str(int(initial_hour_of_day)): 1}) if initial_hour else "{}"
+        
+        device_id = self._get_or_create_device(
+            label=learning_label,
+            phase=str(cycle.get("phase", "L1")),
+            confidence=confidence_score_norm,
+            confirmed=False,
+        )
+        
+        device_subclass = self._derive_device_subclass(learning_label, cycle)
+        
+        insert_columns = [
+            "created_at", "updated_at", "first_seen", "last_seen", "seen_count",
+            "avg_power_w", "peak_power_w", "duration_s", "energy_wh",
+            "suggestion_type", "user_label", "status",
+            "avg_active_phases", "phase_mode", "phase",
+            "power_variance", "rise_rate_w_per_s", "fall_rate_w_per_s",
+            "duty_cycle", "peak_to_avg_ratio", "num_substates", "step_count",
+            "has_heating_pattern", "has_motor_pattern",
+            "profile_points_json",
+            "baseline_before_w_avg", "baseline_after_w_avg",
+            "delta_avg_power_w", "delta_peak_power_w", "delta_energy_wh",
+            "delta_profile_points_json", "delta_shape_vector_json", "plateau_count",
+            "curve_hash", "shape_signature",
+            "avg_delta_power_w", "avg_duration_s", "avg_peak_power_w", "avg_inrush_duration_s",
+            "occurrence_count", "device_group_id", "mode_key",
+            "quality_score_avg",
+            "device_id", "confidence_score", "frequency_per_day",
+            "candidate_name", "is_confirmed", "shape_vector_json", "prototype_hash",
+            "operating_modes", "has_multiple_modes",
+            "typical_interval_s", "avg_hour_of_day", "last_intervals_json", "hour_distribution_json",
+            "raw_label", "refined_label", "candidate_labels_json",
+            "waveform_points_json", "waveform_summary_json",
+            "pre_roll_samples_json", "post_roll_samples_json", "derived_features_json",
+            "rule_confidence", "shape_confidence", "temporal_confidence", "final_confidence",
+            "label_source", "cluster_id", "merged_from_pattern_ids",
+            "segmentation_flags_json", "truncated_start", "truncated_end",
+            "temporal_features_json", "reason_text",
+        ]
+        insert_values = (
+            now, now,
+            str(cycle.get("start_ts") or now),
+            str(cycle.get("end_ts") or now),
+            1,  # seen_count for new provisional pattern
+            float(cycle.get("avg_power_w", 0.0) or 0.0),
+            float(cycle.get("peak_power_w", 0.0) or 0.0),
+            float(cycle.get("duration_s", 0.0) or 0.0),
+            float(cycle.get("energy_wh", 0.0) or 0.0),
+            learning_label,
+            None,
+            "provisional",  # status="provisional" - critical difference!
+            float(cycle.get("active_phase_count", 1.0) or 1.0),
+            str(cycle.get("phase_mode") or "unknown"),
+            str(cycle.get("phase") or "L1"),
+            power_variance, rise_rate, fall_rate,
+            duty_cycle, peak_to_avg, num_substates, step_count,
+            has_heating, has_motor,
+            profile_points_json,
+            baseline_before_w_avg, baseline_after_w_avg,
+            delta_avg_power_w, delta_peak_power_w, delta_energy_wh,
+            delta_profile_points_json, delta_shape_vector_json, plateau_count,
+            curve_hash, shape_signature,
+            avg_delta_power_w, avg_duration_s, avg_peak_power_w, avg_inrush_duration_s,
+            1,  # occurrence_count
+            device_group_id, mode_key,
+            quality_score,
+            int(device_id) if device_id else None,
+            confidence_score_norm,
+            frequency_per_day_seed,
+            candidate_name,
+            0,
+            shape_vector_json,
+            prototype_hash,
+            "[]",
+            0,
+            0.0,
+            initial_hour_of_day,
+            "[]",
+            initial_hour_dist_json,
+            storage_fields["raw_label"],
+            learning_label,
+            storage_fields["candidate_labels_json"],
+            storage_fields["waveform_points_json"],
+            storage_fields["waveform_summary_json"],
+            storage_fields["pre_roll_samples_json"],
+            storage_fields["post_roll_samples_json"],
+            storage_fields["derived_features_json"],
+            storage_fields["rule_confidence"],
+            storage_fields["shape_confidence"],
+            storage_fields["temporal_confidence"],
+            storage_fields["final_confidence"],
+            storage_fields["label_source"],
+            storage_fields["cluster_id"],
+            storage_fields["merged_from_pattern_ids"],
+            storage_fields["segmentation_flags_json"],
+            storage_fields["truncated_start"],
+            storage_fields["truncated_end"],
+            storage_fields["temporal_features_json"],
+            storage_fields["reason_text"],
+        )
+        
+        placeholders = ", ".join(["?"] * len(insert_columns))
+        
+        with self._patterns_conn:
+            cur = self._patterns_conn.execute(
+                f"INSERT INTO learned_patterns ({', '.join(insert_columns)}) VALUES ({placeholders})",
+                insert_values,
+            )
+            row_id = cur.lastrowid if cur.lastrowid is not None else 0
+            new_id = int(row_id)
+            
+            if device_id:
+                self._patterns_conn.execute(
+                    """
+                    UPDATE devices
+                    SET device_subclass = ?, baseline_range_min_w = ?, baseline_range_max_w = ?, updated_at = ?
+                    WHERE device_id = ?
+                    """,
+                    (
+                        device_subclass,
+                        baseline_before_w_avg,
+                        baseline_after_w_avg,
+                        now,
+                        int(device_id),
+                    ),
+                )
+        
+        # Log the creation explicitly
+        logger.info(
+            "Created provisional pattern id=%d in learned_patterns: label=%s event_id=%d quality=%.2f status=provisional",
+            new_id,
+            learning_label,
+            int(event_id or 0),
+            quality_score,
+        )
+        
+        return {
+            "id": new_id,
+            "created_at": now,
+            "updated_at": now,
+            "first_seen": str(cycle.get("start_ts") or now),
+            "last_seen": str(cycle.get("end_ts") or now),
+            "seen_count": 1,
+            "avg_power_w": float(cycle.get("avg_power_w", 0.0) or 0.0),
+            "peak_power_w": float(cycle.get("peak_power_w", 0.0) or 0.0),
+            "duration_s": float(cycle.get("duration_s", 0.0) or 0.0),
+            "energy_wh": float(cycle.get("energy_wh", 0.0) or 0.0),
+            "suggestion_type": learning_label,
+            "user_label": None,
+            "status": "provisional",
+            "avg_active_phases": float(cycle.get("active_phase_count", 1.0) or 1.0),
+            "phase_mode": str(cycle.get("phase_mode") or "unknown"),
+            "phase": str(cycle.get("phase") or "L1"),
+            "power_variance": power_variance,
+            "rise_rate_w_per_s": rise_rate,
+            "fall_rate_w_per_s": fall_rate,
+            "duty_cycle": duty_cycle,
+            "quality_score_avg": quality_score,
+            "device_id": int(device_id) if device_id else 0,
+        }
+
     def learn_cycle_pattern(self, cycle: Dict, suggestion_type: str, tolerance: float = 0.38) -> Dict:
         """Upsert one cycle into learned_patterns and return the matched/created pattern."""
         if not self._patterns_conn:
@@ -6534,6 +6806,7 @@ class SQLiteStore:
             }
 
         self._increment_learning_counter("events_detected_total")
+        self._learning_stats["events_seen_total"] = self._learning_stats.get("events_seen_total", 0.0) + 1.0
 
         prepared = prepare_cycle_for_learning(
             cycle=cycle,
@@ -6562,6 +6835,7 @@ class SQLiteStore:
                 dedup_result="learning_blocked",
                 dedup_reason="cycle_quality_below_min_accept",
             )
+            self._learning_stats["rejected_quality"] = self._learning_stats.get("rejected_quality", 0.0) + 1.0
             return {
                 "matched": False,
                 "pattern": None,
@@ -6582,6 +6856,7 @@ class SQLiteStore:
                 dedup_result="learning_blocked",
                 dedup_reason="baseline_quality_below_min",
             )
+            self._learning_stats["rejected_baseline"] = self._learning_stats.get("rejected_baseline", 0.0) + 1.0
             return {
                 "matched": False,
                 "pattern": None,
@@ -6603,6 +6878,7 @@ class SQLiteStore:
                 dedup_result="session_skip",
                 dedup_reason="same_cycle_already_seen_in_runtime_session",
             )
+            self._learning_stats["rejected_session_dup"] = self._learning_stats.get("rejected_session_dup", 0.0) + 1.0
             self.log_training_decision(
                 event_id=event_id,
                 accepted=False,
@@ -6638,6 +6914,7 @@ class SQLiteStore:
 
         if learning_tier == "blocked":
             self._increment_learning_counter("events_blocked_by_segmentation")
+            self._learning_stats["rejected_segmentation"] = self._learning_stats.get("rejected_segmentation", 0.0) + 1.0
             event_id = self._record_cycle_event(
                 cycle=cycle,
                 assigned_pattern_id=None,
@@ -6692,12 +6969,26 @@ class SQLiteStore:
                 dedup_result="provisional_store",
                 dedup_reason=str(cycle.get("reason") or "medium_quality_learning"),
             )
+            
+            # CRITICAL FIX: Insert provisional pattern into learned_patterns immediately
+            # This ensures it shows up in list_patterns() and counts.patterns increments
+            # Status is "provisional" - can be promoted to "active" later when confirmed
+            learned_provisional = self._insert_provisional_learned_pattern(
+                cycle=cycle,
+                learning_label=learning_label,
+                quality_score=quality_score,
+                event_id=event_id,
+            )
+            self._learning_stats["provisional_patterns_created"] = self._learning_stats.get("provisional_patterns_created", 0.0) + 1.0
+            
+            # ALSO store in provisional_patterns for clustering/dedup with other provisionals
             provisional_result = self._store_provisional_pattern(
                 cycle=cycle,
                 learning_label=learning_label,
                 quality_score=quality_score,
                 event_id=event_id,
             )
+            
             self._increment_learning_counter("events_learned")
             provisional_status = str(provisional_result.get("status") or "provisional")
             accepted_reason = "provisional_promoted" if provisional_status == "promoted" else "provisional_learning"
@@ -6707,47 +6998,55 @@ class SQLiteStore:
                 reason=accepted_reason,
                 label=learning_label,
                 dedup_result=provisional_status,
-                matched_pattern_id=int((provisional_result.get("pattern") or {}).get("id", 0) or 0) or None,
+                matched_pattern_id=int(learned_provisional.get("id", 0) or 0),
                 similarity_score=float(provisional_result.get("similarity", 0.0) or 0.0),
                 dedup_reason=str(cycle.get("reason") or "medium_quality_learning"),
             )
             self._emit_learning_summary_if_due()
+            
             if provisional_status == "promoted":
                 promoted = dict(provisional_result.get("pattern") or {})
+                self._learning_stats["patterns_promoted"] = self._learning_stats.get("patterns_promoted", 0.0) + 1.0
                 self._record_pattern_features(int(promoted.get("id", 0) or 0), cycle)
                 self._record_pattern_history_snapshot(promoted)
                 self._upsert_patterns_mirror(promoted)
+                # Update the learned_patterns status from provisional to active
+                self._patterns_conn.execute(
+                    "UPDATE learned_patterns SET status = 'active', updated_at = ? WHERE id = ?",
+                    (now, int(learned_provisional.get("id", 0) or 0)),
+                )
                 logger.info(
-                    "Learning decision: event_id=%s tier=provisional->stable seg=%.3f wave=%.3f allowed=%s pattern_created=%s merged_into_pattern_id=%s rejection_reason=%s",
+                    "Learning decision: event_id=%s tier=provisional->active (promoted) seg=%.3f wave=%.3f allowed=%s pattern_created=%s learned_pattern_id=%s rejection_reason=%s",
                     int(event_id or 0),
                     float(cycle.get("segmentation_confidence", 0.0) or 0.0),
                     float(cycle.get("waveform_completeness_score", 0.0) or 0.0),
                     bool(cycle.get("learning_allowed", False)),
                     True,
-                    int(promoted.get("id", 0) or 0),
+                    int(learned_provisional.get("id", 0) or 0),
                     "",
                 )
                 return {
                     "matched": False,
                     "pattern": promoted,
-                    "provisional_pattern": provisional_result.get("provisional_pattern"),
+                    "provisional_pattern": learned_provisional,
                     "promoted": True,
                     "learning_tier": learning_tier,
                     "event_id": event_id,
                 }
+            
             logger.info(
-                "Learning decision: event_id=%s tier=provisional seg=%.3f wave=%.3f allowed=%s pattern_created=%s merged_into_pattern_id=%s rejection_reason=%s",
+                "Learning decision: event_id=%s tier=provisional seg=%.3f wave=%.3f allowed=%s pattern_created=%s learned_pattern_id=%s rejection_reason=%s",
                 int(event_id or 0),
                 float(cycle.get("segmentation_confidence", 0.0) or 0.0),
                 float(cycle.get("waveform_completeness_score", 0.0) or 0.0),
                 bool(cycle.get("learning_allowed", False)),
-                False,
-                None,
+                True,
+                int(learned_provisional.get("id", 0) or 0),
                 "",
             )
             return {
                 "matched": False,
-                "pattern": None,
+                "pattern": learned_provisional,
                 "provisional_pattern": provisional_result.get("provisional_pattern"),
                 "provisional": True,
                 "learning_tier": learning_tier,
@@ -6784,6 +7083,7 @@ class SQLiteStore:
             if best and dedup_decision.force_match:
                 seen_count = int(best.get("seen_count", 1) or 1) + 1
                 alpha = 1.0 / max(seen_count, 1)
+                self._learning_stats["patterns_merged"] = self._learning_stats.get("patterns_merged", 0.0) + 1.0
 
                 def blend(existing_key: str, cycle_key: str, default: float = 0.0) -> float:
                     old_value = float(best.get(existing_key, default) or default)
@@ -7238,6 +7538,7 @@ class SQLiteStore:
                 quality_score=quality_score,
                 now=now,
             )
+            self._learning_stats["final_patterns_created"] = self._learning_stats.get("final_patterns_created", 0.0) + 1.0
             logger.info(
                 "Pattern classify/create: id=%s label=%s rule=%s features[var=%.2f substates=%s steps=%s rise=%.2f fall=%.2f]",
                 int(created.get("id", 0) or 0),
