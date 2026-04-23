@@ -98,6 +98,12 @@ class NILMDetectionSystem:
                     pattern_match_threshold=self.config.pattern_match_threshold,
                     ml_confidence_threshold=self.config.ml_confidence_threshold,
                 )
+                self.storage.configure_learning_policy(
+                    segmentation_threshold=self.config.learning_segmentation_threshold,
+                    stable_segmentation_threshold=self.config.learning_stable_segmentation_threshold,
+                    provisional_promotion_count=self.config.learning_provisional_promotion_count,
+                    starvation_window=self.config.learning_starvation_window,
+                )
                 try:
                     patterns_loaded = len(self.storage.list_patterns(limit=1000))
                     summary = self.storage.get_summary(hours=24)

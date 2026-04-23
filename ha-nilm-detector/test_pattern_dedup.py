@@ -42,6 +42,42 @@ def _build_cycle(start: datetime, avg_power: float, peak_power: float, duration_
     }
 
 
+def _build_context_cycle(
+    start: datetime,
+    *,
+    avg_power: float = 180.0,
+    peak_power: float = 270.0,
+    duration_s: float = 90.0,
+    include_pre_roll: bool = True,
+    include_post_roll: bool = True,
+    truncated_start: bool = False,
+    truncated_end: bool = False,
+) -> dict:
+    waveform = [
+        {"t_s": 0.0, "t_norm": 0.0, "power_w": 35.0},
+        {"t_s": 5.0, "t_norm": 5.0 / duration_s, "power_w": peak_power},
+        {"t_s": 20.0, "t_norm": 20.0 / duration_s, "power_w": avg_power + 20.0},
+        {"t_s": 60.0, "t_norm": 60.0 / duration_s, "power_w": avg_power},
+        {"t_s": duration_s, "t_norm": 1.0, "power_w": 35.0},
+    ]
+    cycle = _build_cycle(start, avg_power=avg_power, peak_power=peak_power, duration_s=duration_s)
+    cycle.update(
+        {
+            "baseline_before_w": 35.0,
+            "baseline_after_w": 35.0,
+            "waveform_points": waveform,
+            "profile_points": waveform,
+            "pre_roll_samples": [{"t_s": -3.0, "t_norm": 0.0, "power_w": 35.0}, {"t_s": -1.0, "t_norm": 0.0, "power_w": 36.0}] if include_pre_roll else [],
+            "post_roll_samples": [{"t_s": duration_s + 1.0, "t_norm": 1.0, "power_w": 36.0}, {"t_s": duration_s + 3.0, "t_norm": 1.0, "power_w": 35.0}] if include_post_roll else [],
+            "pre_roll_duration_s": 3.0 if include_pre_roll else 0.0,
+            "post_roll_duration_s": 3.0 if include_post_roll else 0.0,
+            "truncated_start": truncated_start,
+            "truncated_end": truncated_end,
+        }
+    )
+    return cycle
+
+
 def test_dedup_updates_existing_pattern_for_high_similarity():
     with TemporaryDirectory() as tmpdir:
         live_db = os.path.join(tmpdir, "live.sqlite3")
@@ -203,5 +239,77 @@ def test_same_device_slightly_different_inrush_still_merges():
             assert store._patterns_conn is not None
             count_row = store._patterns_conn.execute("SELECT COUNT(*) FROM learned_patterns").fetchone()
             assert int((count_row or [0])[0]) == 1
+        finally:
+            store.close()
+
+
+def test_blocked_segmentation_still_records_event():
+    with TemporaryDirectory() as tmpdir:
+        live_db = os.path.join(tmpdir, "live.sqlite3")
+        patterns_db = os.path.join(tmpdir, "patterns.sqlite3")
+        store = SQLiteStore(db_path=live_db, patterns_db_path=patterns_db)
+        try:
+            assert store.connect() is True
+
+            blocked = _build_context_cycle(
+                datetime(2026, 4, 9, 6, 0, 0),
+                include_pre_roll=True,
+                include_post_roll=True,
+                truncated_start=True,
+                truncated_end=True,
+                duration_s=35.0,
+            )
+            blocked["pre_roll_duration_s"] = 0.0
+            blocked["post_roll_duration_s"] = 0.0
+            learned = store.learn_cycle_pattern(blocked, suggestion_type="fridge")
+
+            assert learned.get("skipped") is True
+            assert learned.get("reason") == "segmentation_quality_gate"
+            assert store._patterns_conn is not None
+            event_count = store._patterns_conn.execute("SELECT COUNT(*) FROM events").fetchone()
+            rejected = store._patterns_conn.execute(
+                "SELECT rejected_reason FROM events ORDER BY event_id DESC LIMIT 1"
+            ).fetchone()
+            pattern_count = store._patterns_conn.execute("SELECT COUNT(*) FROM learned_patterns").fetchone()
+
+            assert int((event_count or [0])[0]) == 1
+            assert str((rejected or [""])[0] or "") == "segmentation_quality_gate"
+            assert int((pattern_count or [0])[0]) == 0
+        finally:
+            store.close()
+
+
+def test_provisional_learning_stores_cluster_without_stable_pattern():
+    with TemporaryDirectory() as tmpdir:
+        live_db = os.path.join(tmpdir, "live.sqlite3")
+        patterns_db = os.path.join(tmpdir, "patterns.sqlite3")
+        store = SQLiteStore(db_path=live_db, patterns_db_path=patterns_db)
+        try:
+            assert store.connect() is True
+            store.configure_learning_policy(segmentation_threshold=0.4, stable_segmentation_threshold=0.8)
+
+            provisional = _build_context_cycle(
+                datetime(2026, 4, 9, 7, 0, 0),
+                include_pre_roll=True,
+                include_post_roll=True,
+                duration_s=60.0,
+            )
+            provisional["pre_roll_duration_s"] = 0.0
+            learned = store.learn_cycle_pattern(provisional, suggestion_type="fridge")
+
+            assert learned.get("provisional") is True
+            assert learned.get("pattern") is None
+            assert store._patterns_conn is not None
+            provisional_count = store._patterns_conn.execute(
+                "SELECT COUNT(*) FROM provisional_patterns WHERE status = 'weak_pattern'"
+            ).fetchone()
+            event_row = store._patterns_conn.execute(
+                "SELECT dedup_result FROM events ORDER BY event_id DESC LIMIT 1"
+            ).fetchone()
+            pattern_count = store._patterns_conn.execute("SELECT COUNT(*) FROM learned_patterns").fetchone()
+
+            assert int((provisional_count or [0])[0]) == 1
+            assert str((event_row or [""])[0] or "") == "provisional_store"
+            assert int((pattern_count or [0])[0]) == 0
         finally:
             store.close()

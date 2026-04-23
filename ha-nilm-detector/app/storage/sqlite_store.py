@@ -33,7 +33,7 @@ class SQLiteStore:
     """Persists readings/detections for diagnostics and future learning."""
 
     LIVE_SCHEMA_VERSION = 2
-    PATTERNS_SCHEMA_VERSION = 4
+    PATTERNS_SCHEMA_VERSION = 5
     LEARNING_PARAMS: Dict[str, float] = {
         "quality_min_accept": 0.28,
         "baseline_quality_min": 0.22,
@@ -98,6 +98,17 @@ class SQLiteStore:
         }
         self._learning_session_keys: Dict[str, str] = {}
         self._learning_session_windows: List[Dict[str, Any]] = []
+        self.learning_segmentation_threshold = 0.40
+        self.learning_stable_segmentation_threshold = 0.70
+        self.learning_provisional_promotion_count = 3
+        self.learning_starvation_window = 8
+        self._learning_debug_counters: Dict[str, int] = {
+            "events_detected_total": 0,
+            "events_blocked_by_segmentation": 0,
+            "events_learned": 0,
+        }
+        self._last_learning_summary_ts: Optional[datetime] = None
+        self._learning_summary_interval_s = 60.0
 
     def configure_hybrid_ai(
         self,
@@ -119,6 +130,22 @@ class SQLiteStore:
             match_threshold=self.pattern_match_threshold,
             shape_matching_enabled=self.shape_matching_enabled,
         )
+
+    def configure_learning_policy(
+        self,
+        segmentation_threshold: float = 0.40,
+        stable_segmentation_threshold: float = 0.70,
+        provisional_promotion_count: int = 3,
+        starvation_window: int = 8,
+    ) -> None:
+        """Configure thresholds for stable/provisional learning decisions."""
+        self.learning_segmentation_threshold = max(0.10, min(float(segmentation_threshold), 0.95))
+        self.learning_stable_segmentation_threshold = max(
+            self.learning_segmentation_threshold,
+            min(float(stable_segmentation_threshold), 0.99),
+        )
+        self.learning_provisional_promotion_count = max(2, min(int(provisional_promotion_count), 10))
+        self.learning_starvation_window = max(3, min(int(starvation_window), 50))
 
     def get_hybrid_debug_status(self) -> Dict[str, Any]:
         """Return latest hybrid AI decision snapshot for dashboard debug panel."""
@@ -2163,6 +2190,51 @@ class SQLiteStore:
 
             self._patterns_conn.execute(
                 """
+                CREATE TABLE IF NOT EXISTS provisional_patterns (
+                    id INTEGER PRIMARY KEY AUTOINCREMENT,
+                    created_at TEXT NOT NULL,
+                    updated_at TEXT NOT NULL,
+                    first_seen TEXT NOT NULL,
+                    last_seen TEXT NOT NULL,
+                    seen_count INTEGER NOT NULL DEFAULT 1,
+                    phase TEXT NOT NULL DEFAULT 'L1',
+                    suggestion_type TEXT NOT NULL,
+                    raw_label TEXT DEFAULT 'unknown',
+                    refined_label TEXT DEFAULT 'unknown',
+                    avg_power_w REAL NOT NULL,
+                    peak_power_w REAL NOT NULL,
+                    duration_s REAL NOT NULL,
+                    energy_wh REAL NOT NULL,
+                    segmentation_confidence_avg REAL DEFAULT 0.0,
+                    quality_score_avg REAL DEFAULT 0.0,
+                    profile_points_json TEXT DEFAULT '[]',
+                    waveform_points_json TEXT DEFAULT '[]',
+                    pre_roll_samples_json TEXT DEFAULT '[]',
+                    post_roll_samples_json TEXT DEFAULT '[]',
+                    derived_features_json TEXT DEFAULT '{}',
+                    candidate_labels_json TEXT DEFAULT '[]',
+                    segmentation_flags_json TEXT DEFAULT '{}',
+                    confidence_penalties_json TEXT DEFAULT '[]',
+                    reason_flags_json TEXT DEFAULT '[]',
+                    curve_hash TEXT DEFAULT '',
+                    shape_signature TEXT DEFAULT '',
+                    device_group_id TEXT DEFAULT '',
+                    mode_key TEXT DEFAULT '',
+                    status TEXT NOT NULL DEFAULT 'weak_pattern',
+                    promoted_pattern_id INTEGER,
+                    source_event_id INTEGER
+                )
+                """
+            )
+            self._patterns_conn.execute(
+                "CREATE INDEX IF NOT EXISTS idx_provisional_patterns_phase ON provisional_patterns(phase, status, last_seen)"
+            )
+            self._patterns_conn.execute(
+                "CREATE INDEX IF NOT EXISTS idx_provisional_patterns_group_mode ON provisional_patterns(device_group_id, mode_key, status)"
+            )
+
+            self._patterns_conn.execute(
+                """
                 CREATE TABLE IF NOT EXISTS devices (
                     device_id INTEGER PRIMARY KEY AUTOINCREMENT,
                     created_at TEXT NOT NULL,
@@ -2847,6 +2919,649 @@ class SQLiteStore:
             "temporal_confidence": float(cycle.get("temporal_confidence", 0.0) or 0.0),
             "segmentation_confidence": float(cycle.get("segmentation_confidence", 0.0) or 0.0),
             "final_confidence": float(cycle.get("final_confidence", 0.0) or 0.0),
+        }
+
+    def _count_provisional_patterns(self) -> int:
+        if not self._patterns_conn or not self._table_exists(self._patterns_conn, "provisional_patterns"):
+            return 0
+        try:
+            row = self._patterns_conn.execute(
+                "SELECT COUNT(*) FROM provisional_patterns WHERE status = 'weak_pattern'"
+            ).fetchone()
+            return int((row or [0])[0] or 0)
+        except Exception:
+            return 0
+
+    def _increment_learning_counter(self, key: str, amount: int = 1) -> None:
+        self._learning_debug_counters[key] = int(self._learning_debug_counters.get(key, 0) or 0) + int(amount)
+
+    def _emit_learning_summary_if_due(self) -> None:
+        now = datetime.now(timezone.utc)
+        if self._last_learning_summary_ts is not None:
+            elapsed = (now - self._last_learning_summary_ts).total_seconds()
+            if elapsed < self._learning_summary_interval_s:
+                return
+        self._last_learning_summary_ts = now
+        logger.info(
+            "Learning summary: events: %s detected, %s blocked, %s learned, provisional_patterns=%s",
+            int(self._learning_debug_counters.get("events_detected_total", 0) or 0),
+            int(self._learning_debug_counters.get("events_blocked_by_segmentation", 0) or 0),
+            int(self._learning_debug_counters.get("events_learned", 0) or 0),
+            self._count_provisional_patterns(),
+        )
+
+    def _learning_starved(self) -> bool:
+        if not self._patterns_conn or not self._table_exists(self._patterns_conn, "training_log"):
+            return False
+        try:
+            rows = self._patterns_conn.execute(
+                """
+                SELECT accepted, reason
+                FROM training_log
+                ORDER BY created_at DESC
+                LIMIT ?
+                """,
+                (int(self.learning_starvation_window),),
+            ).fetchall()
+            if len(rows) < int(self.learning_starvation_window):
+                return False
+            return all((not bool(row[0])) and str(row[1] or "") == "segmentation_quality_gate" for row in rows)
+        except Exception:
+            return False
+
+    def _effective_segmentation_threshold(self) -> float:
+        threshold = float(self.learning_segmentation_threshold)
+        if self._learning_starved():
+            threshold = max(0.30, threshold - 0.05)
+        return threshold
+
+    def _determine_learning_tier(self, cycle: Dict[str, Any]) -> str:
+        segmentation_confidence = float(cycle.get("segmentation_confidence", 0.0) or 0.0)
+        if segmentation_confidence >= float(self.learning_stable_segmentation_threshold):
+            return "stable"
+        if segmentation_confidence >= self._effective_segmentation_threshold():
+            return "provisional"
+        return "blocked"
+
+    @staticmethod
+    def _is_candidate_only_label(label: str) -> bool:
+        text = str(label or "").strip()
+        return text.endswith("_candidate") or text.startswith("unknown_") or text == "constant_load_pattern"
+
+    def _candidate_learning_label(self, cycle: Dict[str, Any], fallback_label: str) -> str:
+        preferred = str(cycle.get("refined_label") or fallback_label or "unknown").strip() or "unknown"
+        if preferred == "unknown_constant_load":
+            return "constant_load_pattern"
+        if self._is_candidate_only_label(preferred):
+            return preferred
+
+        candidate_labels = cycle.get("candidate_labels") or []
+        for item in candidate_labels:
+            if not isinstance(item, dict):
+                continue
+            label = str(item.get("label") or "").strip()
+            if self._is_candidate_only_label(label):
+                return label
+
+        if preferred in {"fridge", "fridge_like"}:
+            return "fridge_candidate"
+        if preferred in {"compressor_small", "compressor_large", "compressor"}:
+            return "compressor_candidate"
+        if preferred in {"small_pump_motor", "large_pump_motor", "pump"}:
+            return "pump_candidate"
+        if preferred in {"motor", "unknown_motor", "unknown_high_inrush"}:
+            return "motor_candidate"
+        return preferred or "unknown"
+
+    def _list_provisional_patterns(self, limit: int = 500) -> List[Dict[str, Any]]:
+        if not self._patterns_conn or not self._table_exists(self._patterns_conn, "provisional_patterns"):
+            return []
+        try:
+            rows = self._patterns_conn.execute(
+                """
+                SELECT id, created_at, updated_at, first_seen, last_seen, seen_count,
+                       phase, suggestion_type, raw_label, refined_label,
+                       avg_power_w, peak_power_w, duration_s, energy_wh,
+                       segmentation_confidence_avg, quality_score_avg,
+                       COALESCE(profile_points_json, '[]'), COALESCE(waveform_points_json, '[]'),
+                       COALESCE(pre_roll_samples_json, '[]'), COALESCE(post_roll_samples_json, '[]'),
+                       COALESCE(derived_features_json, '{}'), COALESCE(candidate_labels_json, '[]'),
+                       COALESCE(segmentation_flags_json, '{}'), COALESCE(confidence_penalties_json, '[]'),
+                       COALESCE(reason_flags_json, '[]'), COALESCE(curve_hash, ''), COALESCE(shape_signature, ''),
+                       COALESCE(device_group_id, ''), COALESCE(mode_key, ''), status, promoted_pattern_id, source_event_id
+                FROM provisional_patterns
+                WHERE status = 'weak_pattern'
+                ORDER BY last_seen DESC
+                LIMIT ?
+                """,
+                (int(max(1, min(limit, 5000))),),
+            ).fetchall()
+            return [
+                {
+                    "id": int(row[0] or 0),
+                    "created_at": row[1],
+                    "updated_at": row[2],
+                    "first_seen": row[3],
+                    "last_seen": row[4],
+                    "seen_count": int(row[5] or 0),
+                    "phase": str(row[6] or "L1"),
+                    "suggestion_type": str(row[7] or "unknown"),
+                    "raw_label": str(row[8] or "unknown"),
+                    "refined_label": str(row[9] or "unknown"),
+                    "avg_power_w": float(row[10] or 0.0),
+                    "peak_power_w": float(row[11] or 0.0),
+                    "duration_s": float(row[12] or 0.0),
+                    "energy_wh": float(row[13] or 0.0),
+                    "segmentation_confidence": float(row[14] or 0.0),
+                    "quality_score_avg": float(row[15] or 0.0),
+                    "profile_points": self._normalize_profile_points(json.loads(str(row[16] or "[]"))),
+                    "waveform_points": self._normalize_profile_points(json.loads(str(row[17] or "[]"))),
+                    "pre_roll_samples": self._normalize_profile_points(json.loads(str(row[18] or "[]"))),
+                    "post_roll_samples": self._normalize_profile_points(json.loads(str(row[19] or "[]"))),
+                    "derived_features": json.loads(str(row[20] or "{}")),
+                    "candidate_labels": json.loads(str(row[21] or "[]")),
+                    "segmentation_flags": json.loads(str(row[22] or "{}")),
+                    "confidence_penalties": json.loads(str(row[23] or "[]")),
+                    "reason_flags": json.loads(str(row[24] or "[]")),
+                    "curve_hash": str(row[25] or ""),
+                    "shape_signature": str(row[26] or ""),
+                    "device_group_id": str(row[27] or ""),
+                    "mode_key": str(row[28] or ""),
+                    "status": str(row[29] or "weak_pattern"),
+                    "promoted_pattern_id": int(row[30] or 0),
+                    "source_event_id": int(row[31] or 0),
+                }
+                for row in rows
+            ]
+        except Exception as e:
+            logger.warning("Failed to list provisional patterns: %s", e)
+            return []
+
+    def _insert_learned_pattern_from_cycle(
+        self,
+        cycle: Dict[str, Any],
+        suggestion_seed: str,
+        quality_score: float,
+        now: Optional[str] = None,
+    ) -> Dict[str, Any]:
+        if not self._patterns_conn:
+            raise RuntimeError("patterns storage not connected")
+
+        now = str(now or datetime.now().isoformat())
+        power_variance = float(cycle.get("power_variance", 0.0))
+        rise_rate = float(cycle.get("rise_rate_w_per_s", 0.0))
+        fall_rate = float(cycle.get("fall_rate_w_per_s", 0.0))
+        duty_cycle = float(cycle.get("duty_cycle", 0.0))
+        peak_to_avg = float(cycle.get("peak_to_avg_ratio", 1.0))
+        num_substates = int(cycle.get("num_substates", 0))
+        step_count = int(cycle.get("step_count", 0))
+        has_heating = 1 if cycle.get("has_heating_pattern", False) else 0
+        has_motor = 1 if cycle.get("has_motor_pattern", False) else 0
+        profile_points = self._normalize_profile_points(cycle.get("profile_points", []))
+        delta_profile_points = self._normalize_profile_points(cycle.get("delta_profile_points", []))
+        profile_points_json = json.dumps(profile_points)
+        shape_vector_json = json.dumps(self._resample_profile_points(profile_points, sample_count=32))
+        delta_profile_points_json = json.dumps(delta_profile_points)
+        delta_shape_vector_json = json.dumps(cycle.get("delta_shape_vector", []))
+        prototype_hash = self._prototype_hash_from_cycle(cycle)
+        curve_hash = str(cycle.get("curve_hash") or self._curve_hash_from_cycle(cycle))
+        shape_signature = str(cycle.get("shape_signature") or self._shape_signature_from_cycle(cycle))
+        baseline_before_w_avg = float(cycle.get("baseline_before_w", 0.0) or 0.0)
+        baseline_after_w_avg = float(cycle.get("baseline_after_w", 0.0) or 0.0)
+        delta_avg_power_w = float(cycle.get("delta_avg_power_w", 0.0) or 0.0)
+        delta_peak_power_w = float(cycle.get("delta_peak_power_w", 0.0) or 0.0)
+        delta_energy_wh = float(cycle.get("delta_energy_wh", 0.0) or 0.0)
+        plateau_count = int(cycle.get("plateau_count", 0) or 0)
+        avg_delta_power_w = delta_avg_power_w
+        avg_duration_s = float(cycle.get("duration_s", 0.0) or 0.0)
+        avg_peak_power_w = float(cycle.get("peak_power_w", 0.0) or 0.0)
+        avg_inrush_duration_s = float(cycle.get("settling_time_s", 0.0) or 0.0)
+        occurrence_count = int(cycle.get("occurrence_count", 1) or 1)
+        mode_key = str(cycle.get("mode_key") or self._mode_key_from_cycle(cycle))
+        initial_mode = self._build_mode_signature(cycle, str(cycle.get("end_ts", now)))
+        seed_modes = self._parse_operating_modes(cycle.get("operating_modes", []))
+        merged_seed_modes = self._merge_operating_modes(seed_modes, initial_mode)
+        operating_modes_json = json.dumps(merged_seed_modes)
+        has_multiple_modes = 1 if len(merged_seed_modes) >= 2 else 0
+
+        try:
+            cycle_end_dt = datetime.fromisoformat(str(cycle.get("end_ts") or now))
+            initial_hour_of_day = cycle_end_dt.hour + cycle_end_dt.minute / 60.0
+            initial_hour_bucket = str(cycle_end_dt.hour)
+            initial_hour_dist_json = json.dumps({initial_hour_bucket: 1})
+        except (ValueError, TypeError):
+            initial_hour_of_day = 12.0
+            initial_hour_dist_json = "{}"
+
+        confidence_score_norm = max(0.0, min(1.0, quality_score))
+        frequency_per_day_seed = self._frequency_per_day(
+            seen_count=occurrence_count,
+            first_seen_iso=str(cycle.get("start_ts") or now),
+            last_seen_iso=str(cycle.get("end_ts") or now),
+        )
+        candidate_name = self._normalize_pattern_name(suggestion_seed)
+        device_group_id = str(cycle.get("device_group_id") or self._device_group_id(suggestion_seed, cycle))
+        device_id = self._get_or_create_device(
+            label=suggestion_seed,
+            phase=str(cycle.get("phase", "L1")),
+            confidence=confidence_score_norm,
+            confirmed=False,
+        )
+        device_subclass = self._derive_device_subclass(suggestion_seed, cycle)
+        storage_fields = self._cycle_storage_fields(cycle)
+
+        insert_columns = [
+            "created_at", "updated_at", "first_seen", "last_seen", "seen_count",
+            "avg_power_w", "peak_power_w", "duration_s", "energy_wh",
+            "suggestion_type", "user_label", "status",
+            "avg_active_phases", "phase_mode", "phase",
+            "power_variance", "rise_rate_w_per_s", "fall_rate_w_per_s",
+            "duty_cycle", "peak_to_avg_ratio", "num_substates", "step_count",
+            "has_heating_pattern", "has_motor_pattern",
+            "profile_points_json",
+            "baseline_before_w_avg", "baseline_after_w_avg",
+            "delta_avg_power_w", "delta_peak_power_w", "delta_energy_wh",
+            "delta_profile_points_json", "delta_shape_vector_json", "plateau_count",
+            "curve_hash", "shape_signature",
+            "avg_delta_power_w", "avg_duration_s", "avg_peak_power_w", "avg_inrush_duration_s",
+            "occurrence_count", "device_group_id", "mode_key",
+            "quality_score_avg",
+            "device_id", "confidence_score", "frequency_per_day",
+            "candidate_name", "is_confirmed", "shape_vector_json", "prototype_hash",
+            "operating_modes", "has_multiple_modes",
+            "typical_interval_s", "avg_hour_of_day", "last_intervals_json", "hour_distribution_json",
+            "raw_label", "refined_label", "candidate_labels_json",
+            "waveform_points_json", "waveform_summary_json",
+            "pre_roll_samples_json", "post_roll_samples_json", "derived_features_json",
+            "rule_confidence", "shape_confidence", "temporal_confidence", "final_confidence",
+            "label_source", "cluster_id", "merged_from_pattern_ids",
+            "segmentation_flags_json", "truncated_start", "truncated_end",
+            "temporal_features_json", "reason_text",
+        ]
+        insert_values = (
+            now,
+            now,
+            str(cycle.get("start_ts") or now),
+            str(cycle.get("end_ts") or now),
+            occurrence_count,
+            float(cycle.get("avg_power_w", 0.0)),
+            float(cycle.get("peak_power_w", 0.0)),
+            float(cycle.get("duration_s", 0.0)),
+            float(cycle.get("energy_wh", 0.0)),
+            suggestion_seed,
+            None,
+            "active",
+            float(cycle.get("active_phase_count", 1.0)),
+            str(cycle.get("phase_mode", "unknown")),
+            str(cycle.get("phase", "L1")),
+            power_variance,
+            rise_rate,
+            fall_rate,
+            duty_cycle,
+            peak_to_avg,
+            num_substates,
+            step_count,
+            has_heating,
+            has_motor,
+            profile_points_json,
+            baseline_before_w_avg,
+            baseline_after_w_avg,
+            delta_avg_power_w,
+            delta_peak_power_w,
+            delta_energy_wh,
+            delta_profile_points_json,
+            delta_shape_vector_json,
+            plateau_count,
+            curve_hash,
+            shape_signature,
+            avg_delta_power_w,
+            avg_duration_s,
+            avg_peak_power_w,
+            avg_inrush_duration_s,
+            occurrence_count,
+            device_group_id,
+            mode_key,
+            quality_score,
+            int(device_id) if device_id else None,
+            confidence_score_norm,
+            frequency_per_day_seed,
+            candidate_name,
+            0,
+            shape_vector_json,
+            prototype_hash,
+            operating_modes_json,
+            has_multiple_modes,
+            0.0,
+            initial_hour_of_day,
+            "[]",
+            initial_hour_dist_json,
+            storage_fields["raw_label"],
+            suggestion_seed,
+            storage_fields["candidate_labels_json"],
+            storage_fields["waveform_points_json"],
+            storage_fields["waveform_summary_json"],
+            storage_fields["pre_roll_samples_json"],
+            storage_fields["post_roll_samples_json"],
+            storage_fields["derived_features_json"],
+            storage_fields["rule_confidence"],
+            storage_fields["shape_confidence"],
+            storage_fields["temporal_confidence"],
+            max(float(storage_fields["final_confidence"]), confidence_score_norm),
+            storage_fields["label_source"],
+            storage_fields["cluster_id"],
+            storage_fields["merged_from_pattern_ids"],
+            storage_fields["segmentation_flags_json"],
+            storage_fields["truncated_start"],
+            storage_fields["truncated_end"],
+            storage_fields["temporal_features_json"],
+            storage_fields["reason_text"],
+        )
+        placeholders = ", ".join(["?"] * len(insert_columns))
+        with self._patterns_conn:
+            cur = self._patterns_conn.execute(
+                f"INSERT INTO learned_patterns ({', '.join(insert_columns)}) VALUES ({placeholders})",
+                insert_values,
+            )
+            row_id = cur.lastrowid if cur.lastrowid is not None else 0
+            new_id = int(row_id)
+            if device_id:
+                self._patterns_conn.execute(
+                    """
+                    UPDATE devices
+                    SET device_subclass = ?, baseline_range_min_w = ?, baseline_range_max_w = ?, updated_at = ?
+                    WHERE device_id = ?
+                    """,
+                    (
+                        device_subclass,
+                        baseline_before_w_avg,
+                        baseline_after_w_avg,
+                        now,
+                        int(device_id),
+                    ),
+                )
+
+        return {
+            "id": new_id,
+            "created_at": now,
+            "updated_at": now,
+            "first_seen": str(cycle.get("start_ts") or now),
+            "last_seen": str(cycle.get("end_ts") or now),
+            "seen_count": occurrence_count,
+            "avg_power_w": float(cycle.get("avg_power_w", 0.0)),
+            "peak_power_w": float(cycle.get("peak_power_w", 0.0)),
+            "duration_s": float(cycle.get("duration_s", 0.0)),
+            "energy_wh": float(cycle.get("energy_wh", 0.0)),
+            "suggestion_type": suggestion_seed,
+            "user_label": None,
+            "status": "active",
+            "avg_active_phases": float(cycle.get("active_phase_count", 1.0)),
+            "phase_mode": str(cycle.get("phase_mode", "unknown")),
+            "phase": str(cycle.get("phase", "L1")),
+            "power_variance": power_variance,
+            "rise_rate_w_per_s": rise_rate,
+            "fall_rate_w_per_s": fall_rate,
+            "duty_cycle": duty_cycle,
+            "peak_to_avg_ratio": peak_to_avg,
+            "num_substates": num_substates,
+            "step_count": step_count,
+            "has_heating_pattern": has_heating,
+            "has_motor_pattern": has_motor,
+            "profile_points": profile_points,
+            "baseline_before_w_avg": baseline_before_w_avg,
+            "baseline_after_w_avg": baseline_after_w_avg,
+            "delta_avg_power_w": delta_avg_power_w,
+            "delta_peak_power_w": delta_peak_power_w,
+            "delta_energy_wh": delta_energy_wh,
+            "delta_profile_points": delta_profile_points,
+            "delta_shape_vector_json": delta_shape_vector_json,
+            "plateau_count": plateau_count,
+            "curve_hash": curve_hash,
+            "shape_signature": shape_signature,
+            "avg_delta_power_w": avg_delta_power_w,
+            "avg_duration_s": avg_duration_s,
+            "avg_peak_power_w": avg_peak_power_w,
+            "avg_inrush_duration_s": avg_inrush_duration_s,
+            "occurrence_count": occurrence_count,
+            "device_group_id": device_group_id,
+            "mode_key": mode_key,
+            "quality_score_avg": quality_score,
+            "device_id": int(device_id) if device_id else 0,
+            "confidence_score_db": confidence_score_norm,
+            "frequency_per_day_db": frequency_per_day_seed,
+            "candidate_name": candidate_name,
+            "is_confirmed": False,
+            "shape_vector_json": shape_vector_json,
+            "prototype_hash": prototype_hash,
+            "raw_label": storage_fields["raw_label"],
+            "refined_label": suggestion_seed,
+            "candidate_labels_json": storage_fields["candidate_labels_json"],
+            "waveform_points_json": storage_fields["waveform_points_json"],
+            "waveform_summary_json": storage_fields["waveform_summary_json"],
+            "pre_roll_samples_json": storage_fields["pre_roll_samples_json"],
+            "post_roll_samples_json": storage_fields["post_roll_samples_json"],
+            "derived_features_json": storage_fields["derived_features_json"],
+            "rule_confidence": storage_fields["rule_confidence"],
+            "shape_confidence": storage_fields["shape_confidence"],
+            "temporal_confidence": storage_fields["temporal_confidence"],
+            "final_confidence": max(float(storage_fields["final_confidence"]), confidence_score_norm),
+            "label_source": storage_fields["label_source"],
+            "cluster_id": storage_fields["cluster_id"],
+            "merged_from_pattern_ids": storage_fields["merged_from_pattern_ids"],
+            "segmentation_flags_json": storage_fields["segmentation_flags_json"],
+            "truncated_start": bool(storage_fields["truncated_start"]),
+            "truncated_end": bool(storage_fields["truncated_end"]),
+            "temporal_features_json": storage_fields["temporal_features_json"],
+            "reason_text": storage_fields["reason_text"],
+        }
+
+    def _store_provisional_pattern(
+        self,
+        cycle: Dict[str, Any],
+        learning_label: str,
+        quality_score: float,
+        event_id: Optional[int] = None,
+    ) -> Dict[str, Any]:
+        if not self._patterns_conn:
+            return {"status": "blocked", "provisional_pattern": None, "pattern": None}
+
+        candidates = self._list_provisional_patterns(limit=500)
+        best: Optional[Dict[str, Any]] = None
+        best_similarity = 0.0
+        for item in candidates:
+            if str(item.get("phase") or "L1") != str(cycle.get("phase") or "L1"):
+                continue
+            similarity = float(self._dedup_similarity(item, cycle))
+            if similarity > best_similarity:
+                best_similarity = similarity
+                best = item
+
+        now = datetime.now().isoformat()
+        storage_fields = self._cycle_storage_fields(cycle)
+        segmentation_confidence = float(cycle.get("segmentation_confidence", 0.0) or 0.0)
+        provisional_merge_similarity = float(self.LEARNING_PARAMS["dedup_merge_similarity"])
+
+        if best and best_similarity >= provisional_merge_similarity:
+            seen_count = int(best.get("seen_count", 1) or 1) + 1
+            alpha = 1.0 / max(seen_count, 1)
+            profile_points = self._normalize_profile_points(cycle.get("profile_points", [])) or self._normalize_profile_points(best.get("profile_points", []))
+            waveform_points = self._normalize_profile_points(cycle.get("waveform_points", [])) or self._normalize_profile_points(best.get("waveform_points", []))
+            confidence_penalties = list(best.get("confidence_penalties", []))
+            confidence_penalties.extend(list(cycle.get("confidence_penalties", [])))
+            confidence_penalties = sorted(set(str(item) for item in confidence_penalties if str(item).strip()))
+            reason_flags = list(best.get("reason_flags", []))
+            reason_flags.extend(list(cycle.get("confidence_penalties", [])))
+            reason_flags.append(str(cycle.get("reason") or "provisional_learning"))
+            reason_flags = sorted(set(str(item) for item in reason_flags if str(item).strip()))
+            candidate_labels = list(best.get("candidate_labels", [])) or list(cycle.get("candidate_labels", []))
+
+            with self._patterns_conn:
+                self._patterns_conn.execute(
+                    """
+                    UPDATE provisional_patterns
+                    SET updated_at = ?,
+                        last_seen = ?,
+                        seen_count = ?,
+                        avg_power_w = ?,
+                        peak_power_w = ?,
+                        duration_s = ?,
+                        energy_wh = ?,
+                        segmentation_confidence_avg = ?,
+                        quality_score_avg = ?,
+                        profile_points_json = ?,
+                        waveform_points_json = ?,
+                        pre_roll_samples_json = ?,
+                        post_roll_samples_json = ?,
+                        derived_features_json = ?,
+                        candidate_labels_json = ?,
+                        segmentation_flags_json = ?,
+                        confidence_penalties_json = ?,
+                        reason_flags_json = ?,
+                        curve_hash = ?,
+                        shape_signature = ?,
+                        raw_label = ?,
+                        refined_label = ?,
+                        source_event_id = ?
+                    WHERE id = ?
+                    """,
+                    (
+                        now,
+                        str(cycle.get("end_ts") or now),
+                        seen_count,
+                        float(best.get("avg_power_w", 0.0) or 0.0) * (1.0 - alpha) + float(cycle.get("avg_power_w", 0.0) or 0.0) * alpha,
+                        float(best.get("peak_power_w", 0.0) or 0.0) * (1.0 - alpha) + float(cycle.get("peak_power_w", 0.0) or 0.0) * alpha,
+                        float(best.get("duration_s", 0.0) or 0.0) * (1.0 - alpha) + float(cycle.get("duration_s", 0.0) or 0.0) * alpha,
+                        float(best.get("energy_wh", 0.0) or 0.0) * (1.0 - alpha) + float(cycle.get("energy_wh", 0.0) or 0.0) * alpha,
+                        float(best.get("segmentation_confidence", 0.0) or 0.0) * (1.0 - alpha) + segmentation_confidence * alpha,
+                        float(best.get("quality_score_avg", 0.0) or 0.0) * (1.0 - alpha) + float(quality_score) * alpha,
+                        json.dumps(profile_points),
+                        json.dumps(waveform_points),
+                        json.dumps(self._normalize_profile_points(cycle.get("pre_roll_samples", []))),
+                        json.dumps(self._normalize_profile_points(cycle.get("post_roll_samples", []))),
+                        storage_fields["derived_features_json"],
+                        json.dumps(candidate_labels),
+                        storage_fields["segmentation_flags_json"],
+                        json.dumps(confidence_penalties),
+                        json.dumps(reason_flags),
+                        str(cycle.get("curve_hash") or best.get("curve_hash") or self._curve_hash_from_cycle(cycle)),
+                        str(cycle.get("shape_signature") or best.get("shape_signature") or self._shape_signature_from_cycle(cycle)),
+                        storage_fields["raw_label"],
+                        learning_label,
+                        int(event_id) if event_id else int(best.get("source_event_id", 0) or 0),
+                        int(best["id"]),
+                    ),
+                )
+            best.update(
+                {
+                    "updated_at": now,
+                    "last_seen": str(cycle.get("end_ts") or now),
+                    "seen_count": seen_count,
+                    "avg_power_w": float(best.get("avg_power_w", 0.0) or 0.0) * (1.0 - alpha) + float(cycle.get("avg_power_w", 0.0) or 0.0) * alpha,
+                    "peak_power_w": float(best.get("peak_power_w", 0.0) or 0.0) * (1.0 - alpha) + float(cycle.get("peak_power_w", 0.0) or 0.0) * alpha,
+                    "duration_s": float(best.get("duration_s", 0.0) or 0.0) * (1.0 - alpha) + float(cycle.get("duration_s", 0.0) or 0.0) * alpha,
+                    "energy_wh": float(best.get("energy_wh", 0.0) or 0.0) * (1.0 - alpha) + float(cycle.get("energy_wh", 0.0) or 0.0) * alpha,
+                    "segmentation_confidence": float(best.get("segmentation_confidence", 0.0) or 0.0) * (1.0 - alpha) + segmentation_confidence * alpha,
+                    "quality_score_avg": float(best.get("quality_score_avg", 0.0) or 0.0) * (1.0 - alpha) + float(quality_score) * alpha,
+                    "refined_label": learning_label,
+                }
+            )
+            provisional_pattern = best
+        else:
+            profile_points = self._normalize_profile_points(cycle.get("profile_points", []))
+            waveform_points = self._normalize_profile_points(cycle.get("waveform_points", []))
+            with self._patterns_conn:
+                cur = self._patterns_conn.execute(
+                    """
+                    INSERT INTO provisional_patterns (
+                        created_at, updated_at, first_seen, last_seen, seen_count,
+                        phase, suggestion_type, raw_label, refined_label,
+                        avg_power_w, peak_power_w, duration_s, energy_wh,
+                        segmentation_confidence_avg, quality_score_avg,
+                        profile_points_json, waveform_points_json,
+                        pre_roll_samples_json, post_roll_samples_json,
+                        derived_features_json, candidate_labels_json, segmentation_flags_json,
+                        confidence_penalties_json, reason_flags_json,
+                        curve_hash, shape_signature, device_group_id, mode_key,
+                        status, promoted_pattern_id, source_event_id
+                    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'weak_pattern', NULL, ?)
+                    """,
+                    (
+                        now,
+                        now,
+                        str(cycle.get("start_ts") or now),
+                        str(cycle.get("end_ts") or now),
+                        1,
+                        str(cycle.get("phase") or "L1"),
+                        learning_label,
+                        storage_fields["raw_label"],
+                        learning_label,
+                        float(cycle.get("avg_power_w", 0.0) or 0.0),
+                        float(cycle.get("peak_power_w", 0.0) or 0.0),
+                        float(cycle.get("duration_s", 0.0) or 0.0),
+                        float(cycle.get("energy_wh", 0.0) or 0.0),
+                        segmentation_confidence,
+                        float(quality_score),
+                        json.dumps(profile_points),
+                        json.dumps(waveform_points),
+                        storage_fields["pre_roll_samples_json"],
+                        storage_fields["post_roll_samples_json"],
+                        storage_fields["derived_features_json"],
+                        storage_fields["candidate_labels_json"],
+                        storage_fields["segmentation_flags_json"],
+                        json.dumps(list(cycle.get("confidence_penalties", []))),
+                        json.dumps([str(cycle.get("reason") or "provisional_learning")]),
+                        str(cycle.get("curve_hash") or self._curve_hash_from_cycle(cycle)),
+                        str(cycle.get("shape_signature") or self._shape_signature_from_cycle(cycle)),
+                        str(cycle.get("device_group_id") or self._device_group_id(learning_label, cycle)),
+                        str(cycle.get("mode_key") or self._mode_key_from_cycle(cycle)),
+                        int(event_id) if event_id else None,
+                    ),
+                )
+                provisional_id = int(cur.lastrowid or 0)
+            provisional_pattern = {
+                "id": provisional_id,
+                "seen_count": 1,
+                "segmentation_confidence": segmentation_confidence,
+                "quality_score_avg": float(quality_score),
+                "refined_label": learning_label,
+            }
+            best_similarity = 0.0
+
+        if int(provisional_pattern.get("seen_count", 0) or 0) >= int(self.learning_provisional_promotion_count):
+            promoted_cycle = dict(cycle)
+            promoted_cycle["avg_power_w"] = float(provisional_pattern.get("avg_power_w", cycle.get("avg_power_w", 0.0)) or 0.0)
+            promoted_cycle["peak_power_w"] = float(provisional_pattern.get("peak_power_w", cycle.get("peak_power_w", 0.0)) or 0.0)
+            promoted_cycle["duration_s"] = float(provisional_pattern.get("duration_s", cycle.get("duration_s", 0.0)) or 0.0)
+            promoted_cycle["energy_wh"] = float(provisional_pattern.get("energy_wh", cycle.get("energy_wh", 0.0)) or 0.0)
+            promoted_cycle["occurrence_count"] = int(provisional_pattern.get("seen_count", 1) or 1)
+            promoted_cycle["profile_points"] = self._normalize_profile_points(provisional_pattern.get("profile_points", cycle.get("profile_points", [])))
+            promoted_cycle["waveform_points"] = self._normalize_profile_points(provisional_pattern.get("waveform_points", cycle.get("waveform_points", [])))
+            promoted_cycle["device_group_id"] = str(provisional_pattern.get("device_group_id") or promoted_cycle.get("device_group_id") or self._device_group_id(learning_label, promoted_cycle))
+            promoted_cycle["mode_key"] = str(provisional_pattern.get("mode_key") or promoted_cycle.get("mode_key") or self._mode_key_from_cycle(promoted_cycle))
+            promoted_cycle["shape_signature"] = str(provisional_pattern.get("shape_signature") or promoted_cycle.get("shape_signature") or self._shape_signature_from_cycle(promoted_cycle))
+            if float(provisional_pattern.get("segmentation_confidence", 0.0) or 0.0) >= float(self.learning_segmentation_threshold):
+                promoted = self._insert_learned_pattern_from_cycle(
+                    cycle=promoted_cycle,
+                    suggestion_seed=learning_label,
+                    quality_score=max(float(provisional_pattern.get("quality_score_avg", quality_score) or quality_score), quality_score),
+                    now=now,
+                )
+                with self._patterns_conn:
+                    self._patterns_conn.execute(
+                        "UPDATE provisional_patterns SET status = 'promoted', promoted_pattern_id = ?, updated_at = ? WHERE id = ?",
+                        (int(promoted["id"]), now, int(provisional_pattern.get("id", 0) or 0)),
+                    )
+                return {
+                    "status": "promoted",
+                    "pattern": promoted,
+                    "provisional_pattern": provisional_pattern,
+                    "similarity": best_similarity,
+                }
+
+        return {
+            "status": "provisional",
+            "pattern": None,
+            "provisional_pattern": provisional_pattern,
+            "similarity": best_similarity,
         }
 
     @classmethod
@@ -5753,6 +6468,8 @@ class SQLiteStore:
                 "reason": "online_learning_disabled",
             }
 
+        self._increment_learning_counter("events_detected_total")
+
         prepared = prepare_cycle_for_learning(
             cycle=cycle,
             suggestion_type=suggestion_type,
@@ -5770,15 +6487,36 @@ class SQLiteStore:
         suggestion_seed = str(prepared.suggestion_seed)
 
         if prepared.skipped_reason == "low_quality_cycle":
+            event_id = self._record_cycle_event(
+                cycle=cycle,
+                assigned_pattern_id=None,
+                assigned_device_id=None,
+                final_label=suggestion_seed,
+                final_confidence=0.0,
+                rejected_reason="low_quality_cycle",
+                dedup_result="learning_blocked",
+                dedup_reason="cycle_quality_below_min_accept",
+            )
             return {
                 "matched": False,
                 "pattern": None,
                 "skipped": True,
                 "reason": "low_quality_cycle",
                 "quality_score": quality_score,
+                "event_id": event_id,
             }
 
         if prepared.skipped_reason == "baseline_unstable":
+            event_id = self._record_cycle_event(
+                cycle=cycle,
+                assigned_pattern_id=None,
+                assigned_device_id=None,
+                final_label=suggestion_seed,
+                final_confidence=0.0,
+                rejected_reason="baseline_unstable",
+                dedup_result="learning_blocked",
+                dedup_reason="baseline_quality_below_min",
+            )
             return {
                 "matched": False,
                 "pattern": None,
@@ -5786,11 +6524,22 @@ class SQLiteStore:
                 "reason": "baseline_unstable",
                 "quality_score": quality_score,
                 "baseline_quality_score": float(cycle.get("baseline_quality_score", 0.0) or 0.0),
+                "event_id": event_id,
             }
 
         if self._is_session_duplicate(cycle, suggestion_seed):
+            event_id = self._record_cycle_event(
+                cycle=cycle,
+                assigned_pattern_id=None,
+                assigned_device_id=None,
+                final_label=suggestion_seed,
+                final_confidence=0.0,
+                rejected_reason="session_duplicate_cycle",
+                dedup_result="session_skip",
+                dedup_reason="same_cycle_already_seen_in_runtime_session",
+            )
             self.log_training_decision(
-                event_id=None,
+                event_id=event_id,
                 accepted=False,
                 reason="session_duplicate_cycle",
                 label=suggestion_seed,
@@ -5810,24 +6559,41 @@ class SQLiteStore:
                     "similarity_score": 1.0,
                     "reason": "same_cycle_already_seen_in_runtime_session",
                 },
+                "event_id": event_id,
             }
 
         now = datetime.now().isoformat()
         patterns = self.list_patterns(limit=500)
         cycle = self._enrich_cycle_for_learning(cycle, fallback=suggestion_seed, patterns=patterns)
         suggestion_seed = str(cycle.get("refined_label") or suggestion_seed or "unknown")
+        learning_tier = self._determine_learning_tier(cycle)
+        cycle["learning_tier"] = learning_tier
+        cycle["learning_allowed"] = learning_tier != "blocked"
+        learning_label = self._candidate_learning_label(cycle, suggestion_seed)
 
-        if float(cycle.get("segmentation_confidence", 0.0) or 0.0) < 0.55 or not bool(cycle.get("learning_allowed", True)):
+        if learning_tier == "blocked":
+            self._increment_learning_counter("events_blocked_by_segmentation")
+            event_id = self._record_cycle_event(
+                cycle=cycle,
+                assigned_pattern_id=None,
+                assigned_device_id=None,
+                final_label=learning_label,
+                final_confidence=float(cycle.get("final_confidence", 0.0) or 0.0),
+                rejected_reason="segmentation_quality_gate",
+                dedup_result="learning_blocked",
+                dedup_reason=str(cycle.get("reason") or "segmentation incomplete"),
+            )
             self.log_training_decision(
-                event_id=None,
+                event_id=event_id,
                 accepted=False,
                 reason="segmentation_quality_gate",
-                label=suggestion_seed,
+                label=learning_label,
                 dedup_result="learning_blocked",
                 matched_pattern_id=None,
                 similarity_score=float(cycle.get("segmentation_confidence", 0.0) or 0.0),
                 dedup_reason=str(cycle.get("reason") or "segmentation incomplete"),
             )
+            self._emit_learning_summary_if_due()
             return {
                 "matched": False,
                 "pattern": None,
@@ -5836,6 +6602,61 @@ class SQLiteStore:
                 "quality_score": quality_score,
                 "segmentation_confidence": float(cycle.get("segmentation_confidence", 0.0) or 0.0),
                 "learning_allowed": bool(cycle.get("learning_allowed", False)),
+                "learning_tier": learning_tier,
+                "event_id": event_id,
+            }
+
+        if learning_tier == "provisional":
+            event_id = self._record_cycle_event(
+                cycle=cycle,
+                assigned_pattern_id=None,
+                assigned_device_id=None,
+                final_label=learning_label,
+                final_confidence=float(cycle.get("final_confidence", 0.0) or 0.0),
+                rejected_reason=None,
+                dedup_result="provisional_store",
+                dedup_reason=str(cycle.get("reason") or "medium_quality_learning"),
+            )
+            provisional_result = self._store_provisional_pattern(
+                cycle=cycle,
+                learning_label=learning_label,
+                quality_score=quality_score,
+                event_id=event_id,
+            )
+            self._increment_learning_counter("events_learned")
+            provisional_status = str(provisional_result.get("status") or "provisional")
+            accepted_reason = "provisional_promoted" if provisional_status == "promoted" else "provisional_learning"
+            self.log_training_decision(
+                event_id=event_id,
+                accepted=True,
+                reason=accepted_reason,
+                label=learning_label,
+                dedup_result=provisional_status,
+                matched_pattern_id=int((provisional_result.get("pattern") or {}).get("id", 0) or 0) or None,
+                similarity_score=float(provisional_result.get("similarity", 0.0) or 0.0),
+                dedup_reason=str(cycle.get("reason") or "medium_quality_learning"),
+            )
+            self._emit_learning_summary_if_due()
+            if provisional_status == "promoted":
+                promoted = dict(provisional_result.get("pattern") or {})
+                self._record_pattern_features(int(promoted.get("id", 0) or 0), cycle)
+                self._record_pattern_history_snapshot(promoted)
+                self._upsert_patterns_mirror(promoted)
+                return {
+                    "matched": False,
+                    "pattern": promoted,
+                    "provisional_pattern": provisional_result.get("provisional_pattern"),
+                    "promoted": True,
+                    "learning_tier": learning_tier,
+                    "event_id": event_id,
+                }
+            return {
+                "matched": False,
+                "pattern": None,
+                "provisional_pattern": provisional_result.get("provisional_pattern"),
+                "provisional": True,
+                "learning_tier": learning_tier,
+                "event_id": event_id,
             }
 
         # Get phase from cycle (default to L1 if not specified)
@@ -5861,171 +6682,179 @@ class SQLiteStore:
             mode_key_fn=self._mode_key_from_cycle,
             group_id_fn=self._device_group_id,
         )
-        dedup_result = dedup_decision.result
-        dedup_reason = dedup_decision.reason
-        force_match = bool(dedup_decision.force_match)
-        if best and self._is_duplicate_pattern_candidate(best, cycle):
-            dedup_result = "update_existing"
-            dedup_reason = "explicit_duplicate_tolerance_match"
-            force_match = True
-        logger.debug(
-            "learn_cycle_pattern dedup decision: result=%s reason=%s similarity=%.4f best_id=%s",
-            dedup_result,
-            dedup_reason,
-            best_similarity,
-            int(best.get("id", 0) or 0) if best else None,
-        )
+        dedup_result = str(dedup_decision.result)
+        dedup_reason = str(dedup_decision.reason)
 
         try:
-            best_tolerance = tolerance
-            if best:
-                seen = max(int(best.get("seen_count", 1)), 1)
-                best_tolerance = max(0.22, tolerance - min((seen - 1) * 0.005, 0.14))
+            if best and dedup_decision.force_match:
+                seen_count = int(best.get("seen_count", 1) or 1) + 1
+                alpha = 1.0 / max(seen_count, 1)
 
-            if best and force_match:
-                seen_count = int(best["seen_count"]) + 1
-                alpha = 1.0 / seen_count
+                def blend(existing_key: str, cycle_key: str, default: float = 0.0) -> float:
+                    old_value = float(best.get(existing_key, default) or default)
+                    new_value = float(cycle.get(cycle_key, default) or default)
+                    return old_value * (1.0 - alpha) + new_value * alpha
 
-                avg_power = float(best["avg_power_w"]) * (1.0 - alpha) + float(cycle["avg_power_w"]) * alpha
-                peak_power = float(best["peak_power_w"]) * (1.0 - alpha) + float(cycle["peak_power_w"]) * alpha
-                duration = float(best["duration_s"]) * (1.0 - alpha) + float(cycle["duration_s"]) * alpha
-                energy = float(best["energy_wh"]) * (1.0 - alpha) + float(cycle["energy_wh"]) * alpha
-                avg_active_phases = float(best.get("avg_active_phases", 1.0)) * (1.0 - alpha) + float(cycle.get("active_phase_count", 1.0)) * alpha
+                power_variance = blend("power_variance", "power_variance")
+                rise_rate = blend("rise_rate_w_per_s", "rise_rate_w_per_s")
+                fall_rate = blend("fall_rate_w_per_s", "fall_rate_w_per_s")
+                duty_cycle = blend("duty_cycle", "duty_cycle")
+                peak_to_avg = blend("peak_to_avg_ratio", "peak_to_avg_ratio", 1.0)
+                avg_power = blend("avg_power_w", "avg_power_w")
+                peak_power = blend("peak_power_w", "peak_power_w")
+                duration = blend("duration_s", "duration_s")
+                energy = blend("energy_wh", "energy_wh")
+                avg_active_phases = blend("avg_active_phases", "active_phase_count", 1.0)
+                quality_score_avg = blend("quality_score_avg", "quality_score", quality_score)
+                baseline_before_w_avg = blend("baseline_before_w_avg", "baseline_before_w")
+                baseline_after_w_avg = blend("baseline_after_w_avg", "baseline_after_w")
+                delta_avg_power_w = blend("delta_avg_power_w", "delta_avg_power_w")
+                delta_peak_power_w = blend("delta_peak_power_w", "delta_peak_power_w")
+                delta_energy_wh = blend("delta_energy_wh", "delta_energy_wh")
+                avg_delta_power_w = blend("avg_delta_power_w", "delta_avg_power_w")
+                avg_duration_s = blend("avg_duration_s", "duration_s")
+                avg_peak_power_w = blend("avg_peak_power_w", "peak_power_w")
+                avg_inrush_duration_s = blend("avg_inrush_duration_s", "settling_time_s")
+                num_substates = max(int(best.get("num_substates", 0) or 0), int(cycle.get("num_substates", 0) or 0))
+                step_count = max(int(best.get("step_count", 0) or 0), int(cycle.get("step_count", 0) or 0))
+                has_heating = 1 if bool(best.get("has_heating_pattern", 0)) or bool(cycle.get("has_heating_pattern", False)) else 0
+                has_motor = 1 if bool(best.get("has_motor_pattern", 0)) or bool(cycle.get("has_motor_pattern", False)) else 0
+                plateau_count = max(int(best.get("plateau_count", 0) or 0), int(cycle.get("plateau_count", 0) or 0))
+                occurrence_count = max(int(best.get("occurrence_count", seen_count) or seen_count), seen_count)
                 phase_mode = str(cycle.get("phase_mode") or best.get("phase_mode") or "unknown")
                 phase = str(cycle.get("phase") or best.get("phase") or "L1")
-                power_variance = float(best.get("power_variance", 0.0)) * (1.0 - alpha) + float(cycle.get("power_variance", 0.0)) * alpha
-                rise_rate = float(best.get("rise_rate_w_per_s", 0.0)) * (1.0 - alpha) + float(cycle.get("rise_rate_w_per_s", 0.0)) * alpha
-                fall_rate = float(best.get("fall_rate_w_per_s", 0.0)) * (1.0 - alpha) + float(cycle.get("fall_rate_w_per_s", 0.0)) * alpha
-                duty_cycle = float(best.get("duty_cycle", 0.0)) * (1.0 - alpha) + float(cycle.get("duty_cycle", 0.0)) * alpha
-                peak_to_avg = float(best.get("peak_to_avg_ratio", 1.0)) * (1.0 - alpha) + float(cycle.get("peak_to_avg_ratio", 1.0)) * alpha
-                num_substates = int(round(float(best.get("num_substates", 0)) * (1.0 - alpha) + float(cycle.get("num_substates", 0)) * alpha))
-                step_count = int(round(float(best.get("step_count", 0)) * (1.0 - alpha) + float(cycle.get("step_count", 0)) * alpha))
-                has_heating = 1 if (bool(best.get("has_heating_pattern", 0)) or bool(cycle.get("has_heating_pattern", False))) else 0
-                has_motor = 1 if (bool(best.get("has_motor_pattern", 0)) or bool(cycle.get("has_motor_pattern", False))) else 0
-                profile_points = self._normalize_profile_points(cycle.get("profile_points", []))
+
+                profile_points = self._normalize_profile_points(cycle.get("profile_points", [])) or self._normalize_profile_points(best.get("profile_points", []))
                 delta_profile_points = self._normalize_profile_points(cycle.get("delta_profile_points", []))
-                if not profile_points:
-                    profile_points = self._normalize_profile_points(best.get("profile_points", []))
+                if not delta_profile_points:
+                    delta_profile_points = self._normalize_profile_points(best.get("delta_profile_points", []))
+                waveform_points = self._normalize_profile_points(cycle.get("waveform_points", [])) or self._normalize_profile_points(best.get("waveform_points", []))
                 profile_points_json = json.dumps(profile_points)
-                shape_vector_json = json.dumps(self._resample_profile_points(profile_points, sample_count=32))
                 delta_profile_points_json = json.dumps(delta_profile_points)
-                delta_shape_vector_json = json.dumps(cycle.get("delta_shape_vector", []))
+                shape_vector_json = json.dumps(self._resample_profile_points(profile_points, sample_count=32))
+                delta_shape_vector_json = json.dumps(cycle.get("delta_shape_vector", [])) if cycle.get("delta_shape_vector") else str(best.get("delta_shape_vector_json") or "[]")
                 prototype_hash = self._prototype_hash_from_cycle(cycle)
-                baseline_before_w_avg = float(best.get("baseline_before_w_avg", cycle.get("baseline_before_w", 0.0)) or 0.0) * (1.0 - alpha) + float(cycle.get("baseline_before_w", 0.0) or 0.0) * alpha
-                baseline_after_w_avg = float(best.get("baseline_after_w_avg", cycle.get("baseline_after_w", 0.0)) or 0.0) * (1.0 - alpha) + float(cycle.get("baseline_after_w", 0.0) or 0.0) * alpha
-                delta_avg_power_w = float(best.get("delta_avg_power_w", 0.0) or 0.0) * (1.0 - alpha) + float(cycle.get("delta_avg_power_w", 0.0) or 0.0) * alpha
-                delta_peak_power_w = float(best.get("delta_peak_power_w", 0.0) or 0.0) * (1.0 - alpha) + float(cycle.get("delta_peak_power_w", 0.0) or 0.0) * alpha
-                delta_energy_wh = float(best.get("delta_energy_wh", 0.0) or 0.0) * (1.0 - alpha) + float(cycle.get("delta_energy_wh", 0.0) or 0.0) * alpha
-                plateau_count = int(round(float(best.get("plateau_count", 0) or 0.0) * (1.0 - alpha) + float(cycle.get("plateau_count", 0) or 0.0) * alpha))
-                avg_delta_power_w = float(best.get("avg_delta_power_w", best.get("delta_avg_power_w", 0.0)) or 0.0) * (1.0 - alpha) + float(cycle.get("delta_avg_power_w", 0.0) or 0.0) * alpha
-                avg_duration_s = float(best.get("avg_duration_s", best.get("duration_s", 0.0)) or 0.0) * (1.0 - alpha) + float(cycle.get("duration_s", 0.0) or 0.0) * alpha
-                avg_peak_power_w = float(best.get("avg_peak_power_w", best.get("peak_power_w", 0.0)) or 0.0) * (1.0 - alpha) + float(cycle.get("peak_power_w", 0.0) or 0.0) * alpha
-                avg_inrush_duration_s = float(best.get("avg_inrush_duration_s", 0.0) or 0.0) * (1.0 - alpha) + float(cycle.get("settling_time_s", 0.0) or 0.0) * alpha
-                occurrence_count = int(best.get("occurrence_count", seen_count - 1) or (seen_count - 1)) + 1
-                curve_hash = str(cycle.get("curve_hash") or self._curve_hash_from_cycle(cycle))
-                shape_signature = str(cycle.get("shape_signature") or self._shape_signature_from_cycle(cycle))
-                mode_key = str(cycle.get("mode_key") or self._mode_key_from_cycle(cycle))
-                quality_score_avg = float(best.get("quality_score_avg", 0.5)) * (1.0 - alpha) + quality_score * alpha
-                candidate_mode = self._build_mode_signature(cycle, str(cycle.get("end_ts", now)))
-                merged_modes = self._merge_operating_modes(
-                    self._parse_operating_modes(best.get("operating_modes", [])),
-                    candidate_mode,
-                )
-                operating_modes_json = json.dumps(merged_modes)
-                has_multiple_modes = 1 if len(merged_modes) >= 2 else 0
-                
-                # Temporal pattern tracking - calculate interval since last occurrence
-                last_seen_str = best.get("last_seen", cycle["end_ts"])
-                try:
-                    last_seen_dt = datetime.fromisoformat(last_seen_str)
-                    cycle_end_dt = datetime.fromisoformat(cycle["end_ts"])
-                    interval_s = (cycle_end_dt - last_seen_dt).total_seconds()
-                    
-                    # Update last_intervals history (keep last 10)
-                    last_intervals = json.loads(best.get("last_intervals_json", "[]"))
-                    if interval_s > 0:
-                        last_intervals.append(interval_s)
-                    if len(last_intervals) > 10:
-                        last_intervals = last_intervals[-10:]
-                    last_intervals_json = json.dumps(last_intervals)
-                    
-                    # Calculate typical interval (median of last intervals)
-                    if len(last_intervals) >= 2:
-                        sorted_intervals = sorted(last_intervals)
-                        median_idx = len(sorted_intervals) // 2
-                        typical_interval_s = sorted_intervals[median_idx]
-                    else:
-                        typical_interval_s = interval_s if interval_s > 0 else float(best.get("typical_interval_s", 0.0))
-                    
-                    # Update hour distribution
-                    cycle_hour = cycle_end_dt.hour + cycle_end_dt.minute / 60.0
-                    hour_dist = json.loads(best.get("hour_distribution_json", "{}"))
-                    hour_bucket = str(cycle_end_dt.hour)  # Bucket by hour
-                    hour_dist[hour_bucket] = hour_dist.get(hour_bucket, 0) + 1
-                    hour_distribution_json = json.dumps(hour_dist)
-                    
-                    # Calculate weighted average hour of day
-                    total_count = sum(hour_dist.values())
-                    weighted_hour = sum(int(h) * c for h, c in hour_dist.items()) / total_count
-                    avg_hour_of_day = weighted_hour
-                    
-                except (ValueError, TypeError) as e:
-                    logger.debug(f"Failed to calculate temporal patterns: {e}")
-                    typical_interval_s = best.get("typical_interval_s", 0.0)
-                    avg_hour_of_day = best.get("avg_hour_of_day", 12.0)
-                    last_intervals_json = best.get("last_intervals_json", "[]")
-                    hour_distribution_json = best.get("hour_distribution_json", "{}")
+                curve_hash = str(cycle.get("curve_hash") or best.get("curve_hash") or self._curve_hash_from_cycle(cycle))
+                shape_signature = str(cycle.get("shape_signature") or best.get("shape_signature") or self._shape_signature_from_cycle(cycle))
+                device_group_id = str(cycle.get("device_group_id") or best.get("device_group_id") or self._device_group_id(suggestion_seed, cycle))
+                mode_key = str(cycle.get("mode_key") or best.get("mode_key") or self._mode_key_from_cycle(cycle))
 
                 first_seen_norm, last_seen_norm = self._normalize_seen_bounds(
-                    first_seen=self._iso_min(str(best.get("first_seen") or ""), str(cycle.get("start_ts") or now)),
-                    last_seen=self._iso_max(str(best.get("last_seen") or ""), str(cycle.get("end_ts") or now)),
+                    first_seen=self._iso_min(str(best.get("first_seen") or now), str(cycle.get("start_ts") or now)),
+                    last_seen=self._iso_max(str(best.get("last_seen") or now), str(cycle.get("end_ts") or now)),
                     fallback_start=str(cycle.get("start_ts") or now),
                     fallback_end=str(cycle.get("end_ts") or now),
                 )
 
-                base_label = str(cycle.get("raw_label") or best.get("suggestion_type") or suggestion_type or "unknown")
+                cycle_end_dt = self._parse_iso_timestamp(str(cycle.get("end_ts") or now))
+                previous_last_dt = self._parse_iso_timestamp(str(best.get("last_seen") or ""))
+                intervals: List[float] = []
+                try:
+                    intervals = [float(value) for value in json.loads(str(best.get("last_intervals_json") or "[]"))]
+                except Exception:
+                    intervals = []
+                if cycle_end_dt and previous_last_dt:
+                    interval_s = (cycle_end_dt - previous_last_dt).total_seconds()
+                    if interval_s > 0:
+                        intervals.append(interval_s)
+                intervals = intervals[-24:]
+                typical_interval_s = sum(intervals) / float(len(intervals)) if intervals else float(best.get("typical_interval_s", 0.0) or 0.0)
+                last_intervals_json = json.dumps(intervals)
+
+                try:
+                    hour_distribution = json.loads(str(best.get("hour_distribution_json") or "{}"))
+                    if not isinstance(hour_distribution, dict):
+                        hour_distribution = {}
+                except Exception:
+                    hour_distribution = {}
+                if cycle_end_dt:
+                    bucket = str(cycle_end_dt.hour)
+                    hour_distribution[bucket] = int(hour_distribution.get(bucket, 0) or 0) + 1
+                    cycle_hour = cycle_end_dt.hour + cycle_end_dt.minute / 60.0
+                else:
+                    cycle_hour = float(best.get("avg_hour_of_day", 12.0) or 12.0)
+                avg_hour_of_day = (
+                    float(best.get("avg_hour_of_day", 12.0) or 12.0) * (1.0 - alpha)
+                    + float(cycle_hour) * alpha
+                )
+                hour_distribution_json = json.dumps(hour_distribution)
+
+                initial_mode = self._build_mode_signature(cycle, str(cycle.get("end_ts") or now))
+                merged_modes = self._merge_operating_modes(
+                    self._parse_operating_modes(best.get("operating_modes", [])),
+                    initial_mode,
+                )
+                has_multiple_modes = 1 if len(merged_modes) >= 2 else 0
+                operating_modes_json = json.dumps(merged_modes)
+
                 frequency_per_day = self._frequency_per_day(
                     seen_count=seen_count,
                     first_seen_iso=first_seen_norm,
                     last_seen_iso=last_seen_norm,
                 )
-                auto_label, freq_rule = self._refine_label_by_frequency(base_label, avg_power, frequency_per_day)
-                confirmed_label = str(best.get("user_label") or "").strip()
-                final_label = confirmed_label or auto_label
-                if confirmed_label:
-                    freq_rule = "user_confirmed_locked"
-                stored_suggestion = base_label if confirmed_label else auto_label
-                confidence_score_norm = max(0.0, min(1.0, (quality_score_avg * 0.7) + ((1.0 - math.exp(-seen_count / 8.0)) * 0.3)))
-                candidate_name = self._normalize_pattern_name(final_label)
-                device_id = self._get_or_create_device(
+                user_label = str(best.get("user_label") or "").strip()
+                base_label = user_label or str(cycle.get("refined_label") or suggestion_seed or best.get("suggestion_type") or "unknown")
+                refined_label, freq_rule = self._refine_label_by_frequency(base_label, avg_power, frequency_per_day)
+                final_label = user_label or refined_label
+                stored_suggestion = str(best.get("suggestion_type") or suggestion_seed or final_label)
+                candidate_name = self._normalize_pattern_name(final_label or stored_suggestion)
+                confidence_score_norm = max(
+                    0.0,
+                    min(1.0, (quality_score_avg * 0.7) + ((1.0 - math.exp(-seen_count / 8.0)) * 0.3)),
+                )
+                storage_fields = self._cycle_storage_fields(cycle)
+                device_id = int(best.get("device_id", 0) or 0) or self._get_or_create_device(
                     label=final_label,
                     phase=phase,
                     confidence=confidence_score_norm,
-                    confirmed=bool(confirmed_label),
+                    confirmed=bool(user_label) or bool(best.get("is_confirmed", False)),
                 )
                 device_subclass = self._derive_device_subclass(final_label, cycle)
-                device_group_id = str(cycle.get("device_group_id") or self._device_group_id(final_label, cycle))
-                storage_fields = self._cycle_storage_fields(cycle)
 
                 with self._patterns_conn:
                     self._patterns_conn.execute(
                         """
                         UPDATE learned_patterns
-                        SET updated_at = ?, first_seen = ?, last_seen = ?, seen_count = ?,
-                            avg_power_w = ?, peak_power_w = ?, duration_s = ?, energy_wh = ?,
-                            avg_active_phases = ?, phase_mode = ?, phase = ?,
-                            power_variance = ?, rise_rate_w_per_s = ?, fall_rate_w_per_s = ?,
-                            duty_cycle = ?, peak_to_avg_ratio = ?, num_substates = ?, step_count = ?,
-                            has_heating_pattern = ?, has_motor_pattern = ?,
-                            profile_points_json = ?,
-                            baseline_before_w_avg = ?, baseline_after_w_avg = ?,
-                            delta_avg_power_w = ?, delta_peak_power_w = ?, delta_energy_wh = ?,
-                            delta_profile_points_json = ?, delta_shape_vector_json = ?, plateau_count = ?,
-                            curve_hash = ?, shape_signature = ?,
-                            avg_delta_power_w = ?, avg_duration_s = ?, avg_peak_power_w = ?, avg_inrush_duration_s = ?,
-                            occurrence_count = ?, device_group_id = ?, mode_key = ?,
-                            quality_score_avg = ?,
+                        SET updated_at = ?,
+                            first_seen = ?,
+                            last_seen = ?,
+                            seen_count = ?,
+                            avg_power_w = ?,
+                            peak_power_w = ?,
+                            duration_s = ?,
+                            energy_wh = ?,
                             suggestion_type = ?,
+                            avg_active_phases = ?,
+                            phase_mode = ?,
+                            phase = ?,
+                            power_variance = ?,
+                            rise_rate_w_per_s = ?,
+                            fall_rate_w_per_s = ?,
+                            duty_cycle = ?,
+                            peak_to_avg_ratio = ?,
+                            num_substates = ?,
+                            step_count = ?,
+                            has_heating_pattern = ?,
+                            has_motor_pattern = ?,
+                            profile_points_json = ?,
+                            baseline_before_w_avg = ?,
+                            baseline_after_w_avg = ?,
+                            delta_avg_power_w = ?,
+                            delta_peak_power_w = ?,
+                            delta_energy_wh = ?,
+                            delta_profile_points_json = ?,
+                            delta_shape_vector_json = ?,
+                            plateau_count = ?,
+                            curve_hash = ?,
+                            shape_signature = ?,
+                            avg_delta_power_w = ?,
+                            avg_duration_s = ?,
+                            avg_peak_power_w = ?,
+                            avg_inrush_duration_s = ?,
+                            occurrence_count = ?,
+                            device_group_id = ?,
+                            mode_key = ?,
+                            quality_score_avg = ?,
                             device_id = ?,
                             confidence_score = ?,
                             frequency_per_day = ?,
@@ -6035,15 +6864,30 @@ class SQLiteStore:
                             prototype_hash = ?,
                             operating_modes = ?,
                             has_multiple_modes = ?,
-                            typical_interval_s = ?, avg_hour_of_day = ?,
-                            last_intervals_json = ?, hour_distribution_json = ?,
-                            raw_label = ?, refined_label = ?, candidate_labels_json = ?,
-                            waveform_points_json = ?, waveform_summary_json = ?,
-                            pre_roll_samples_json = ?, post_roll_samples_json = ?, derived_features_json = ?,
-                            rule_confidence = ?, shape_confidence = ?, temporal_confidence = ?, final_confidence = ?,
-                            label_source = ?, cluster_id = ?, merged_from_pattern_ids = ?,
-                            segmentation_flags_json = ?, truncated_start = ?, truncated_end = ?,
-                            temporal_features_json = ?, reason_text = ?
+                            typical_interval_s = ?,
+                            avg_hour_of_day = ?,
+                            last_intervals_json = ?,
+                            hour_distribution_json = ?,
+                            raw_label = ?,
+                            refined_label = ?,
+                            candidate_labels_json = ?,
+                            waveform_points_json = ?,
+                            waveform_summary_json = ?,
+                            pre_roll_samples_json = ?,
+                            post_roll_samples_json = ?,
+                            derived_features_json = ?,
+                            rule_confidence = ?,
+                            shape_confidence = ?,
+                            temporal_confidence = ?,
+                            final_confidence = ?,
+                            label_source = ?,
+                            cluster_id = ?,
+                            merged_from_pattern_ids = ?,
+                            segmentation_flags_json = ?,
+                            truncated_start = ?,
+                            truncated_end = ?,
+                            temporal_features_json = ?,
+                            reason_text = ?
                         WHERE id = ?
                         """,
                         (
@@ -6055,6 +6899,7 @@ class SQLiteStore:
                             peak_power,
                             duration,
                             energy,
+                            stored_suggestion,
                             avg_active_phases,
                             phase_mode,
                             phase,
@@ -6086,12 +6931,11 @@ class SQLiteStore:
                             device_group_id,
                             mode_key,
                             quality_score_avg,
-                            stored_suggestion,
                             int(device_id) if device_id else None,
                             confidence_score_norm,
                             frequency_per_day,
                             candidate_name,
-                            1 if bool(confirmed_label) else int(best.get("is_confirmed", 0) or 0),
+                            1 if (user_label or bool(best.get("is_confirmed", False))) else 0,
                             shape_vector_json,
                             prototype_hash,
                             operating_modes_json,
@@ -6203,11 +7047,15 @@ class SQLiteStore:
                         "confidence_score_db": confidence_score_norm,
                         "frequency_per_day_db": frequency_per_day,
                         "candidate_name": candidate_name,
-                        "is_confirmed": bool(best.get("user_label")) or bool(best.get("is_confirmed", False)),
+                        "is_confirmed": bool(user_label) or bool(best.get("is_confirmed", False)),
                         "shape_vector_json": shape_vector_json,
                         "prototype_hash": prototype_hash,
                         "operating_modes": merged_modes,
                         "has_multiple_modes": bool(has_multiple_modes),
+                        "typical_interval_s": typical_interval_s,
+                        "avg_hour_of_day": avg_hour_of_day,
+                        "last_intervals_json": last_intervals_json,
+                        "hour_distribution_json": hour_distribution_json,
                         "raw_label": storage_fields["raw_label"],
                         "refined_label": final_label,
                         "candidate_labels_json": storage_fields["candidate_labels_json"],
@@ -6262,6 +7110,8 @@ class SQLiteStore:
                     final_confidence=float(self._last_hybrid_decision.get("confidence", 0.0) or 0.0),
                     decision_source=str(self._last_hybrid_decision.get("source", "pattern_update")),
                 )
+                self._increment_learning_counter("events_learned")
+                self._emit_learning_summary_if_due()
                 return {
                     "matched": True,
                     "distance": best_distance,
@@ -6273,296 +7123,35 @@ class SQLiteStore:
                         "reason": dedup_reason,
                     },
                     "pattern": best,
+                    "learning_tier": learning_tier,
+                    "event_id": event_id,
                 }
 
-            with self._patterns_conn:
-                # Extract advanced features if available
-                power_variance = float(cycle.get("power_variance", 0.0))
-                rise_rate = float(cycle.get("rise_rate_w_per_s", 0.0))
-                fall_rate = float(cycle.get("fall_rate_w_per_s", 0.0))
-                duty_cycle = float(cycle.get("duty_cycle", 0.0))
-                peak_to_avg = float(cycle.get("peak_to_avg_ratio", 1.0))
-                num_substates = int(cycle.get("num_substates", 0))
-                step_count = int(cycle.get("step_count", 0))
-                has_heating = 1 if cycle.get("has_heating_pattern", False) else 0
-                has_motor = 1 if cycle.get("has_motor_pattern", False) else 0
-                profile_points = self._normalize_profile_points(cycle.get("profile_points", []))
-                delta_profile_points = self._normalize_profile_points(cycle.get("delta_profile_points", []))
-                profile_points_json = json.dumps(profile_points)
-                shape_vector_json = json.dumps(self._resample_profile_points(profile_points, sample_count=32))
-                delta_profile_points_json = json.dumps(delta_profile_points)
-                delta_shape_vector_json = json.dumps(cycle.get("delta_shape_vector", []))
-                prototype_hash = self._prototype_hash_from_cycle(cycle)
-                curve_hash = str(cycle.get("curve_hash") or self._curve_hash_from_cycle(cycle))
-                shape_signature = str(cycle.get("shape_signature") or self._shape_signature_from_cycle(cycle))
-                baseline_before_w_avg = float(cycle.get("baseline_before_w", 0.0) or 0.0)
-                baseline_after_w_avg = float(cycle.get("baseline_after_w", 0.0) or 0.0)
-                delta_avg_power_w = float(cycle.get("delta_avg_power_w", 0.0) or 0.0)
-                delta_peak_power_w = float(cycle.get("delta_peak_power_w", 0.0) or 0.0)
-                delta_energy_wh = float(cycle.get("delta_energy_wh", 0.0) or 0.0)
-                plateau_count = int(cycle.get("plateau_count", 0) or 0)
-                avg_delta_power_w = delta_avg_power_w
-                avg_duration_s = float(cycle.get("duration_s", 0.0) or 0.0)
-                avg_peak_power_w = float(cycle.get("peak_power_w", 0.0) or 0.0)
-                avg_inrush_duration_s = float(cycle.get("settling_time_s", 0.0) or 0.0)
-                occurrence_count = 1
-                mode_key = str(cycle.get("mode_key") or self._mode_key_from_cycle(cycle))
-                
-                # Multi-mode learning
-                initial_mode = self._build_mode_signature(cycle, str(cycle.get("end_ts", now)))
-                seed_modes = self._parse_operating_modes(cycle.get("operating_modes", []))
-                merged_seed_modes = self._merge_operating_modes(seed_modes, initial_mode)
-                operating_modes_json = json.dumps(merged_seed_modes)
-                has_multiple_modes = 1 if len(merged_seed_modes) >= 2 else 0
-                
-                # Temporal pattern tracking - initialize for new pattern
-                try:
-                    cycle_end_dt = datetime.fromisoformat(cycle["end_ts"])
-                    initial_hour_of_day = cycle_end_dt.hour + cycle_end_dt.minute / 60.0
-                    initial_hour_bucket = str(cycle_end_dt.hour)
-                    initial_hour_dist_json = json.dumps({initial_hour_bucket: 1})
-                except (ValueError, TypeError):
-                    initial_hour_of_day = 12.0
-                    initial_hour_dist_json = "{}"
-
-                confidence_score_norm = max(0.0, min(1.0, quality_score))
-                frequency_per_day_seed = self._frequency_per_day(
-                    seen_count=1,
-                    first_seen_iso=str(cycle.get("start_ts") or now),
-                    last_seen_iso=str(cycle.get("end_ts") or now),
-                )
-                candidate_name = self._normalize_pattern_name(suggestion_seed)
-                device_group_id = str(cycle.get("device_group_id") or self._device_group_id(suggestion_seed, cycle))
-                device_id = self._get_or_create_device(
-                    label=suggestion_seed,
-                    phase=str(cycle.get("phase", "L1")),
-                    confidence=confidence_score_norm,
-                    confirmed=False,
-                )
-                device_subclass = self._derive_device_subclass(suggestion_seed, cycle)
-                storage_fields = self._cycle_storage_fields(cycle)
-                
-                insert_columns = [
-                    "created_at", "updated_at", "first_seen", "last_seen", "seen_count",
-                    "avg_power_w", "peak_power_w", "duration_s", "energy_wh",
-                    "suggestion_type", "user_label", "status",
-                    "avg_active_phases", "phase_mode", "phase",
-                    "power_variance", "rise_rate_w_per_s", "fall_rate_w_per_s",
-                    "duty_cycle", "peak_to_avg_ratio", "num_substates", "step_count",
-                    "has_heating_pattern", "has_motor_pattern",
-                    "profile_points_json",
-                    "baseline_before_w_avg", "baseline_after_w_avg",
-                    "delta_avg_power_w", "delta_peak_power_w", "delta_energy_wh",
-                    "delta_profile_points_json", "delta_shape_vector_json", "plateau_count",
-                    "curve_hash", "shape_signature",
-                    "avg_delta_power_w", "avg_duration_s", "avg_peak_power_w", "avg_inrush_duration_s",
-                    "occurrence_count", "device_group_id", "mode_key",
-                    "quality_score_avg",
-                    "device_id", "confidence_score", "frequency_per_day",
-                    "candidate_name", "is_confirmed", "shape_vector_json", "prototype_hash",
-                    "operating_modes", "has_multiple_modes",
-                    "typical_interval_s", "avg_hour_of_day", "last_intervals_json", "hour_distribution_json",
-                    "raw_label", "refined_label", "candidate_labels_json",
-                    "waveform_points_json", "waveform_summary_json",
-                    "pre_roll_samples_json", "post_roll_samples_json", "derived_features_json",
-                    "rule_confidence", "shape_confidence", "temporal_confidence", "final_confidence",
-                    "label_source", "cluster_id", "merged_from_pattern_ids",
-                    "segmentation_flags_json", "truncated_start", "truncated_end",
-                    "temporal_features_json", "reason_text",
-                ]
-                insert_values = (
-                    now,
-                    now,
-                    cycle["start_ts"],
-                    cycle["end_ts"],
-                    1,
-                    float(cycle["avg_power_w"]),
-                    float(cycle["peak_power_w"]),
-                    float(cycle["duration_s"]),
-                    float(cycle["energy_wh"]),
-                    suggestion_seed,
-                    None,
-                    "active",
-                    float(cycle.get("active_phase_count", 1.0)),
-                    str(cycle.get("phase_mode", "unknown")),
-                    str(cycle.get("phase", "L1")),
-                    power_variance,
-                    rise_rate,
-                    fall_rate,
-                    duty_cycle,
-                    peak_to_avg,
-                    num_substates,
-                    step_count,
-                    has_heating,
-                    has_motor,
-                    profile_points_json,
-                    baseline_before_w_avg,
-                    baseline_after_w_avg,
-                    delta_avg_power_w,
-                    delta_peak_power_w,
-                    delta_energy_wh,
-                    delta_profile_points_json,
-                    delta_shape_vector_json,
-                    plateau_count,
-                    curve_hash,
-                    shape_signature,
-                    avg_delta_power_w,
-                    avg_duration_s,
-                    avg_peak_power_w,
-                    avg_inrush_duration_s,
-                    occurrence_count,
-                    device_group_id,
-                    mode_key,
-                    quality_score,
-                    int(device_id) if device_id else None,
-                    confidence_score_norm,
-                    frequency_per_day_seed,
-                    candidate_name,
-                    0,
-                    shape_vector_json,
-                    prototype_hash,
-                    operating_modes_json,
-                    has_multiple_modes,
-                    0.0,
-                    initial_hour_of_day,
-                    "[]",
-                    initial_hour_dist_json,
-                    storage_fields["raw_label"],
-                    suggestion_seed,
-                    storage_fields["candidate_labels_json"],
-                    storage_fields["waveform_points_json"],
-                    storage_fields["waveform_summary_json"],
-                    storage_fields["pre_roll_samples_json"],
-                    storage_fields["post_roll_samples_json"],
-                    storage_fields["derived_features_json"],
-                    storage_fields["rule_confidence"],
-                    storage_fields["shape_confidence"],
-                    storage_fields["temporal_confidence"],
-                    max(float(storage_fields["final_confidence"]), confidence_score_norm),
-                    storage_fields["label_source"],
-                    storage_fields["cluster_id"],
-                    storage_fields["merged_from_pattern_ids"],
-                    storage_fields["segmentation_flags_json"],
-                    storage_fields["truncated_start"],
-                    storage_fields["truncated_end"],
-                    storage_fields["temporal_features_json"],
-                    storage_fields["reason_text"],
-                )
-                placeholders = ", ".join(["?"] * len(insert_columns))
-                cur = self._patterns_conn.execute(
-                    f"INSERT INTO learned_patterns ({', '.join(insert_columns)}) VALUES ({placeholders})",
-                    insert_values,
-                )
-                row_id = cur.lastrowid if cur.lastrowid is not None else 0
-                new_id = int(row_id)
-                if device_id:
-                    self._patterns_conn.execute(
-                        """
-                        UPDATE devices
-                        SET device_subclass = ?, baseline_range_min_w = ?, baseline_range_max_w = ?, updated_at = ?
-                        WHERE device_id = ?
-                        """,
-                        (
-                            device_subclass,
-                            baseline_before_w_avg,
-                            baseline_after_w_avg,
-                            now,
-                            int(device_id),
-                        ),
-                    )
-
-            created = {
-                "id": new_id,
-                "created_at": now,
-                "updated_at": now,
-                "first_seen": cycle["start_ts"],
-                "last_seen": cycle["end_ts"],
-                "seen_count": 1,
-                "avg_power_w": float(cycle["avg_power_w"]),
-                "peak_power_w": float(cycle["peak_power_w"]),
-                "duration_s": float(cycle["duration_s"]),
-                "energy_wh": float(cycle["energy_wh"]),
-                "suggestion_type": suggestion_seed,
-                "user_label": None,
-                "status": "active",
-                "avg_active_phases": float(cycle.get("active_phase_count", 1.0)),
-                "phase_mode": str(cycle.get("phase_mode", "unknown")),
-                "phase": str(cycle.get("phase", "L1")),
-                "power_variance": float(cycle.get("power_variance", 0.0)),
-                "rise_rate_w_per_s": float(cycle.get("rise_rate_w_per_s", 0.0)),
-                "fall_rate_w_per_s": float(cycle.get("fall_rate_w_per_s", 0.0)),
-                "duty_cycle": float(cycle.get("duty_cycle", 0.0)),
-                "peak_to_avg_ratio": float(cycle.get("peak_to_avg_ratio", 1.0)),
-                "num_substates": int(cycle.get("num_substates", 0)),
-                "step_count": int(cycle.get("step_count", 0)),
-                "has_heating_pattern": 1 if cycle.get("has_heating_pattern", False) else 0,
-                "has_motor_pattern": 1 if cycle.get("has_motor_pattern", False) else 0,
-                "profile_points": self._normalize_profile_points(cycle.get("profile_points", [])),
-                "baseline_before_w_avg": baseline_before_w_avg,
-                "baseline_after_w_avg": baseline_after_w_avg,
-                "delta_avg_power_w": delta_avg_power_w,
-                "delta_peak_power_w": delta_peak_power_w,
-                "delta_energy_wh": delta_energy_wh,
-                "delta_profile_points": delta_profile_points,
-                "delta_shape_vector_json": delta_shape_vector_json,
-                "plateau_count": plateau_count,
-                "curve_hash": curve_hash,
-                "shape_signature": shape_signature,
-                "avg_delta_power_w": avg_delta_power_w,
-                "avg_duration_s": avg_duration_s,
-                "avg_peak_power_w": avg_peak_power_w,
-                "avg_inrush_duration_s": avg_inrush_duration_s,
-                "occurrence_count": occurrence_count,
-                "device_group_id": device_group_id,
-                "mode_key": mode_key,
-                "quality_score_avg": quality_score,
-                "device_id": int(device_id) if device_id else 0,
-                "confidence_score_db": confidence_score_norm,
-                "frequency_per_day_db": frequency_per_day_seed,
-                "candidate_name": candidate_name,
-                "is_confirmed": False,
-                "shape_vector_json": shape_vector_json,
-                "prototype_hash": prototype_hash,
-                "raw_label": storage_fields["raw_label"],
-                "refined_label": suggestion_seed,
-                "candidate_labels_json": storage_fields["candidate_labels_json"],
-                "waveform_points_json": storage_fields["waveform_points_json"],
-                "waveform_summary_json": storage_fields["waveform_summary_json"],
-                "pre_roll_samples_json": storage_fields["pre_roll_samples_json"],
-                "post_roll_samples_json": storage_fields["post_roll_samples_json"],
-                "derived_features_json": storage_fields["derived_features_json"],
-                "rule_confidence": storage_fields["rule_confidence"],
-                "shape_confidence": storage_fields["shape_confidence"],
-                "temporal_confidence": storage_fields["temporal_confidence"],
-                "final_confidence": max(float(storage_fields["final_confidence"]), confidence_score_norm),
-                "label_source": storage_fields["label_source"],
-                "cluster_id": storage_fields["cluster_id"],
-                "merged_from_pattern_ids": storage_fields["merged_from_pattern_ids"],
-                "segmentation_flags_json": storage_fields["segmentation_flags_json"],
-                "truncated_start": bool(storage_fields["truncated_start"]),
-                "truncated_end": bool(storage_fields["truncated_end"]),
-                "temporal_features_json": storage_fields["temporal_features_json"],
-                "reason_text": storage_fields["reason_text"],
-            }
+            created = self._insert_learned_pattern_from_cycle(
+                cycle=cycle,
+                suggestion_seed=suggestion_seed,
+                quality_score=quality_score,
+                now=now,
+            )
             logger.info(
                 "Pattern classify/create: id=%s label=%s rule=%s features[var=%.2f substates=%s steps=%s rise=%.2f fall=%.2f]",
-                new_id,
+                int(created.get("id", 0) or 0),
                 suggestion_seed,
                 "initial_cycle_label",
-                power_variance,
-                num_substates,
-                step_count,
-                rise_rate,
-                fall_rate,
+                float(cycle.get("power_variance", 0.0) or 0.0),
+                int(cycle.get("num_substates", 0) or 0),
+                int(cycle.get("step_count", 0) or 0),
+                float(cycle.get("rise_rate_w_per_s", 0.0) or 0.0),
+                float(cycle.get("fall_rate_w_per_s", 0.0) or 0.0),
             )
-            self._record_pattern_features(new_id, cycle)
+            self._record_pattern_features(int(created.get("id", 0) or 0), cycle)
             self._record_pattern_history_snapshot(created)
             self._upsert_patterns_mirror(created)
             event_id = self._record_cycle_event(
                 cycle=cycle,
-                assigned_pattern_id=new_id,
-                assigned_device_id=int(device_id) if device_id else None,
-                final_label=suggestion_seed,
+                assigned_pattern_id=int(created.get("id", 0) or 0),
+                assigned_device_id=int(created.get("device_id", 0) or 0) or None,
+                final_label=str(created.get("refined_label") or suggestion_seed),
                 final_confidence=float(self._last_hybrid_decision.get("confidence", 0.0) or 0.0),
                 dedup_result="create_new",
                 matched_pattern_id=int(best.get("id", 0) or 0) if best else None,
@@ -6573,7 +7162,7 @@ class SQLiteStore:
                 event_id=event_id,
                 accepted=True,
                 reason="dedup_create_new",
-                label=suggestion_seed,
+                label=str(created.get("refined_label") or suggestion_seed),
                 dedup_result="create_new",
                 matched_pattern_id=int(best.get("id", 0) or 0) if best else None,
                 similarity_score=best_similarity if best else 0.0,
@@ -6581,12 +7170,14 @@ class SQLiteStore:
             )
             self._record_classification_log(
                 event_id=event_id,
-                pattern_id=new_id,
-                device_id=int(device_id) if device_id else None,
-                final_label=suggestion_seed,
+                pattern_id=int(created.get("id", 0) or 0),
+                device_id=int(created.get("device_id", 0) or 0) or None,
+                final_label=str(created.get("refined_label") or suggestion_seed),
                 final_confidence=float(self._last_hybrid_decision.get("confidence", 0.0) or 0.0),
                 decision_source=str(self._last_hybrid_decision.get("source", "pattern_create")),
             )
+            self._increment_learning_counter("events_learned")
+            self._emit_learning_summary_if_due()
             return {
                 "matched": False,
                 "distance": None,
@@ -6598,6 +7189,8 @@ class SQLiteStore:
                     "reason": dedup_reason,
                 },
                 "pattern": created,
+                "learning_tier": learning_tier,
+                "event_id": event_id,
             }
         except Exception as e:
             logger.error(f"Failed to learn cycle pattern: {e}", exc_info=True)

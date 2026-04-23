@@ -4,6 +4,27 @@
 
 ## 0.6.38 (BETA)
 
+## 0.6.41 (BETA)
+
+**Learning-Gating auf Segmentierungs-Tiers erweitert: stabile Muster bleiben sauber, mittlere Qualitaet wird als Provisional gesammelt und kann kontrolliert promoted werden**
+
+- Neue Learning-Policy-Konfiguration:
+  - `segmentation_threshold`
+  - `stable_segmentation_threshold`
+  - `provisional_promotion_count`
+  - `learning_starvation_window`
+- Klassifikationspfad liefert jetzt explizites `learning_tier` (`blocked`/`provisional`/`stable`) und nutzt es fuer Label-/Quellenentscheidung
+- Storage-Lernpfad erweitert:
+  - neues Schema `provisional_patterns`
+  - provisionales Clustering mit spaeterer Promotion in `learned_patterns`
+  - event-/training-log bleibt auch bei geblockten Segmentierungen konsistent befuellt
+  - periodische Learning-Summary-Counter fuer besseres Runtime-Debugging
+- Runtime-Initialisierung uebergibt Learning-Policy zentral an Storage
+- ML-Klassifikator wieder konservativ auf RandomForest-only vereinheitlicht
+- Neue Tests fuer:
+  - Segmentierungs-Block mit Event-Recording
+  - provisionales Lernen ohne sofortige stabile Pattern-Erzeugung
+
 ## 0.6.40 (BETA)
 
 **LLM-Review-Export erweitert: externe Analyse jetzt optional mit echten Messpunkten moeglich**

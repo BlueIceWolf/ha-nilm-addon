@@ -230,7 +230,9 @@ def build_waveform_summary(cycle: Dict[str, Any]) -> Dict[str, Any]:
         baseline_visible_after = baseline_visible_after or _baseline_edge_visible(waveform, baseline_after, from_start=False)
     startup_visible = baseline_visible_before and not bool(cycle.get("truncated_start", False))
     shutdown_visible = baseline_visible_after and not bool(cycle.get("truncated_end", False))
+    duration_s = safe_float(cycle.get("duration_s"))
     sample_quality = clamp(len(waveform) / 24.0)
+    synthetic_context_support = profile_only_cycle and startup_visible and shutdown_visible
     waveform_completeness_score = clamp(
         (0.20 * (1.0 if baseline_visible_before else 0.0))
         + (0.20 * (1.0 if baseline_visible_after else 0.0))
@@ -238,12 +240,20 @@ def build_waveform_summary(cycle: Dict[str, Any]) -> Dict[str, Any]:
         + (0.20 * (1.0 if shutdown_visible else 0.0))
         + (0.20 * sample_quality)
     )
+    plateau_duration_support = 1.0 if (has_flat_plateau and duration_s >= 90.0) else (0.7 if duration_s >= 45.0 else 0.35)
+    pre_roll_support = 1.0 if safe_float(cycle.get("pre_roll_duration_s")) > 0.0 else (1.0 if synthetic_context_support else 0.0)
+    post_roll_support = 1.0 if safe_float(cycle.get("post_roll_duration_s")) > 0.0 else (1.0 if synthetic_context_support else 0.0)
+    truncation_penalty = 0.0
+    if bool(cycle.get("truncated_start", False)):
+        truncation_penalty += 0.15
+    if bool(cycle.get("truncated_end", False)):
+        truncation_penalty += 0.12
     segmentation_confidence = clamp(
-        (0.20 * (1.0 if safe_float(cycle.get("pre_roll_duration_s")) > 0.0 else 0.0))
-        + (0.20 * (1.0 if safe_float(cycle.get("post_roll_duration_s")) > 0.0 else 0.0))
-        + (0.20 * (0.0 if bool(cycle.get("truncated_start", False)) else 1.0))
-        + (0.20 * (0.0 if bool(cycle.get("truncated_end", False)) else 1.0))
-        + (0.20 * waveform_completeness_score)
+        (0.22 * pre_roll_support)
+        + (0.22 * post_roll_support)
+        + (0.28 * waveform_completeness_score)
+        + (0.28 * plateau_duration_support)
+        - truncation_penalty
     )
     penalties: List[str] = []
     if not baseline_visible_before:
@@ -257,6 +267,11 @@ def build_waveform_summary(cycle: Dict[str, Any]) -> Dict[str, Any]:
     shape_meta = _shape_signature_meta(cycle)
     if str(shape_meta.get("shape_signature_status")) != "valid":
         penalties.append("missing_shape_signature_penalty")
+    learning_tier = "blocked"
+    if segmentation_confidence >= 0.7:
+        learning_tier = "stable"
+    elif segmentation_confidence >= 0.4:
+        learning_tier = "provisional"
     waveform_summary = {
         "sample_count": len(waveform),
         "delta_sample_count": len(delta_points),
@@ -300,7 +315,8 @@ def build_waveform_summary(cycle: Dict[str, Any]) -> Dict[str, Any]:
         "waveform_completeness_score": round(waveform_completeness_score, 4),
         "segmentation_confidence": round(segmentation_confidence, 4),
         "confidence_penalties": penalties,
-        "learning_allowed": segmentation_confidence >= 0.55 and waveform_completeness_score >= 0.45,
+        "learning_allowed": learning_tier != "blocked",
+        "learning_tier": learning_tier,
         **shape_meta,
         "waveform_summary": waveform_summary,
     }
@@ -505,8 +521,17 @@ def generate_heuristic_candidates(cycle: Dict[str, Any], temporal: TemporalConte
     truncated = bool(cycle.get("truncated_start", False) or cycle.get("truncated_end", False))
     segmentation_confidence = safe_float(cycle.get("segmentation_confidence", features.get("segmentation_confidence", 0.0)))
     waveform_completeness = safe_float(cycle.get("waveform_completeness_score", features.get("waveform_completeness_score", 0.0)))
+    normalized_variance = safe_float(features.get("normalized_variance", cycle.get("normalized_variance", 0.0)))
     has_motor = bool(cycle.get("has_motor_pattern", False)) or inrush_ratio >= 1.25
     candidates: List[Dict[str, Any]] = []
+
+    if has_flat_plateau and normalized_variance <= 8.0 and duration_s >= 180.0:
+        candidates.append({
+            "label": "constant_load_pattern",
+            "score": 0.62 if segmentation_confidence >= 0.4 else 0.52,
+            "source": "heuristic",
+            "reasons": ["stable_plateau_detected", f"normalized_variance={normalized_variance:.2f}", f"duration_s={duration_s:.1f}"],
+        })
 
     if truncated and has_motor and duration_s <= 90.0:
         candidates.append({
@@ -608,6 +633,7 @@ def resolve_final_decision(
     waveform_completeness = safe_float(cycle.get("waveform_completeness_score", cycle.get("derived_features", {}).get("waveform_completeness_score", 0.0)))
     penalties = list(cycle.get("confidence_penalties") or cycle.get("derived_features", {}).get("confidence_penalties", []))
     learning_allowed = bool(cycle.get("learning_allowed", cycle.get("derived_features", {}).get("learning_allowed", False)))
+    learning_tier = str(cycle.get("learning_tier", cycle.get("derived_features", {}).get("learning_tier", "blocked")))
 
     if shape_match.valid and shape_match.score >= 0.55 and shape_match.label not in {"", "unknown", "unbekannt"}:
         candidates.append(
@@ -638,13 +664,15 @@ def resolve_final_decision(
     reasons = list(best.get("reasons") or [])
     label_source = str(best.get("source") or "heuristic")
 
-    if segmentation_confidence < 0.55 or waveform_completeness < 0.5:
+    if learning_tier != "stable" or waveform_completeness < 0.5:
         label_source = "heuristic"
-        if label in {"fridge", "compressor_small", "compressor_large", "small_pump_motor", "large_pump_motor"}:
+        if label in {"fridge", "compressor_small", "compressor_large", "small_pump_motor", "large_pump_motor", "constant_load_pattern"}:
             if "fridge" in label:
                 label = "fridge_candidate"
             elif "pump" in label:
                 label = "pump_candidate"
+            elif label == "constant_load_pattern" and learning_tier == "blocked":
+                label = "unknown_constant_load"
             else:
                 label = "compressor_candidate"
             reasons.append("full-cycle evidence missing")
@@ -702,6 +730,7 @@ def resolve_final_decision(
         "final_confidence": round(final_confidence, 4),
         "label_source": label_source,
         "learning_allowed": learning_allowed,
+        "learning_tier": learning_tier,
         "confidence_penalties": penalties,
         "shape_signature_status": str(cycle.get("shape_signature_status") or cycle.get("derived_features", {}).get("shape_signature_status") or "missing"),
         "shape_signature_reason": str(cycle.get("shape_signature_reason") or cycle.get("derived_features", {}).get("shape_signature_reason") or "unknown"),
@@ -735,6 +764,7 @@ def enrich_cycle_for_classification(cycle: Dict[str, Any], patterns: Sequence[Di
     enriched["segmentation_confidence"] = safe_float(derived.get("segmentation_confidence"))
     enriched["waveform_completeness_score"] = safe_float(derived.get("waveform_completeness_score"))
     enriched["learning_allowed"] = bool(derived.get("learning_allowed", False))
+    enriched["learning_tier"] = str(derived.get("learning_tier", "blocked"))
     enriched["confidence_penalties"] = list(derived.get("confidence_penalties", []))
     enriched["shape_signature_status"] = str(derived.get("shape_signature_status", "missing"))
     enriched["shape_signature_reason"] = str(derived.get("shape_signature_reason", "unknown"))

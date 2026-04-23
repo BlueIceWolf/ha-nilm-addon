@@ -4,6 +4,26 @@
 
 ---
 
+# Release 0.6.41 (BETA)
+
+## Store Kurztext
+- **🧠 Lernpfad erweitert mit stabil/provisorisch-Gating**: Segmentierungsqualitaet steuert jetzt gezielter, ob Events blockiert, provisional gesammelt oder in stabile Muster uebernommen werden.
+
+## Highlights
+- **Feineres Learning-Gating nach Segmentierungsqualitaet**
+  - neue Schwellen: `segmentation_threshold`, `stable_segmentation_threshold`
+  - Lerntiers `blocked`, `provisional`, `stable` fuer nachvollziehbare Entscheidungen
+- **Provisional-Pattern-Flow neu eingefuehrt**
+  - Events mittlerer Qualitaet werden in `provisional_patterns` gesammelt statt direkt verworfen
+  - automatische Promotion zu stabilen Patterns nach konfigurierbarer Wiederholung (`provisional_promotion_count`)
+- **Starvation-Schutz fuer Lernpipeline**
+  - bei laengerer Blockade durch Segmentierungs-Gate wird die effektive Schwelle kontrolliert abgesenkt (`learning_starvation_window`)
+- **Konfiguration & Verifikation ausgebaut**
+  - neue Lern-Policy-Optionen in Add-on-Config und Runtime-Initialisierung
+  - erweiterte Tests fuer blockierte Segmentierung und provisionales Lernen
+
+---
+
 # Release 0.6.40 (BETA)
 
 ## Store Kurztext

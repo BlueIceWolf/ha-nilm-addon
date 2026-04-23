@@ -56,6 +56,10 @@ class Config:
         self.online_learning_enabled = True
         self.pattern_match_threshold = 0.45
         self.ml_confidence_threshold = 0.60
+        self.learning_segmentation_threshold = 0.40
+        self.learning_stable_segmentation_threshold = 0.70
+        self.learning_provisional_promotion_count = 3
+        self.learning_starvation_window = 8
         self.learning_auto_pipeline_enabled = True
         self.learning_auto_pipeline_interval_minutes = 30
         self.power_source = "home_assistant_rest"
@@ -179,6 +183,18 @@ class Config:
         self.ml_confidence_threshold = float(
             learning_config.get('ml_confidence_threshold', self.ml_confidence_threshold)
         )
+        self.learning_segmentation_threshold = float(
+            learning_config.get('segmentation_threshold', self.learning_segmentation_threshold)
+        )
+        self.learning_stable_segmentation_threshold = float(
+            learning_config.get('stable_segmentation_threshold', self.learning_stable_segmentation_threshold)
+        )
+        self.learning_provisional_promotion_count = int(
+            learning_config.get('provisional_promotion_count', self.learning_provisional_promotion_count)
+        )
+        self.learning_starvation_window = int(
+            learning_config.get('learning_starvation_window', self.learning_starvation_window)
+        )
         self.learning_auto_pipeline_enabled = bool(
             learning_config.get('auto_pipeline_enabled', self.learning_auto_pipeline_enabled)
         )
@@ -190,6 +206,13 @@ class Config:
         )
         if self.learning_auto_pipeline_interval_minutes < 5:
             self.learning_auto_pipeline_interval_minutes = 5
+        self.learning_segmentation_threshold = max(0.10, min(self.learning_segmentation_threshold, 0.95))
+        self.learning_stable_segmentation_threshold = max(
+            self.learning_segmentation_threshold,
+            min(self.learning_stable_segmentation_threshold, 0.99),
+        )
+        self.learning_provisional_promotion_count = max(2, min(self.learning_provisional_promotion_count, 10))
+        self.learning_starvation_window = max(3, min(self.learning_starvation_window, 50))
 
         self.power_source = "home_assistant_rest"
         self.storage_path = str(config_dict.get('storage_path', self.storage_path)).strip() or self.storage_path
