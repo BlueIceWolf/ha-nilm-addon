@@ -4,6 +4,33 @@
 
 ## 0.6.38 (BETA)
 
+## 0.6.42 (BETA)
+
+**Segmentierung und Lernpfad gezielt refaktoriert: Events werden frueher/vollstaendiger erfasst und wiederholte imperfect cycles landen als Provisional statt bei patterns=0 zu enden**
+
+- Event-Erkennung robuster gemacht:
+  - explizite Start/End-State-Machine auf `idle -> possible_start -> active -> possible_end -> ended`
+  - Start nicht mehr nur Delta-basiert, sondern zusaetzlich mit Slope/Step/Inrush-Signalen
+  - Ende mit Baseline-Naehe, Varianzfenster und Shutdown-Flanke abgesichert
+- Segmentierungskontext verbessert:
+  - Ringbuffer fuer Vorlaufdaten und laengerer, konfigurierbarer Nachlauf
+  - Truncation-Handling verbessert, inkl. `truncated_end`-Fallback bei fehlendem Post-Roll
+- Lernfreigabe neu kalibriert:
+  - Tiering kombiniert jetzt Segmentierungs-Confidence mit Waveform-Score, Mindestdauer und Mindestsamples
+  - `truncated_start + baseline_visible_before=false` wird bewusst provisional gespeichert statt hart verworfen
+- Provisional-Flow ausgebaut:
+  - wiederholte aehnliche provisional Events clustern robuster und koennen frueher promoted werden
+  - Merge-Schwellen konfigurierbar (inkl. relaxed same-label provisional merge)
+- Feature-Engineering erweitert:
+  - zusaetzliche persistente Merkmale wie `baseline_before/after`, `delta_from_baseline`, `time_to_peak`, `plateau_lengths`, `area_under_curve`, `normalized_energy`, `load_factor`, `phase_stability`
+  - interne Unterklassen fuer feinere Pattern-Zuordnung vorbereitet (`constant_*`, `compressor_*`, `pump_*`, `heater_resistive`, `multi_stage_heating`)
+- Konfigurierbarkeit deutlich verbessert:
+  - neue Tuning-Optionen fuer `ring_buffer_seconds`, `min_samples_for_learning`, `min_waveform_score_for_*`, `merge_similarity_threshold`, `delta_threshold`, `slope_threshold`
+- Regressionstests erweitert fuer:
+  - fehlenden Pre-/Post-Roll
+  - provisional->promoted Pfad
+  - getrennte Behandlung aehnlicher vs. ungleicher Events
+
 ## 0.6.41 (BETA)
 
 **Learning-Gating auf Segmentierungs-Tiers erweitert: stabile Muster bleiben sauber, mittlere Qualitaet wird als Provisional gesammelt und kann kontrolliert promoted werden**
