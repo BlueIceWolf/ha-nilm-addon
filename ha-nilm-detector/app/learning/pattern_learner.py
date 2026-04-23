@@ -80,9 +80,16 @@ class PatternLearner:
         max_gap_s: float = 6.0,                # Merge short OFF gaps inside one running cycle
         end_hold_s: float = 6.0,
         pre_roll_seconds: float = 2.0,
-        post_roll_seconds: float = 2.0,
+        post_roll_seconds: float = 24.0,
+        ring_buffer_seconds: float = 10.0,
+        min_samples_for_cycle: int = 4,
         stabilization_grace_s: float = 12.0,
         derivative_threshold_w_per_s: float = 120.0,
+        start_slope_threshold_w_per_s: float = 90.0,
+        start_step_delta_w: float = 18.0,
+        inrush_ratio_threshold: float = 1.55,
+        end_variance_max_w: float = 10.0,
+        shutdown_negative_slope_w_per_s: float = 40.0,
     ):
         # Legacy fixed thresholds (fallback if adaptive disabled)
         self.on_threshold_w = float(on_threshold_w)
@@ -102,8 +109,11 @@ class PatternLearner:
         self.end_hold_s = max(1.0, float(end_hold_s))
         self.pre_roll_seconds = max(0.0, float(pre_roll_seconds))
         self.post_roll_seconds = max(0.0, float(post_roll_seconds))
+        self.ring_buffer_seconds = max(5.0, float(ring_buffer_seconds))
+        self.min_samples_for_cycle = max(4, int(min_samples_for_cycle))
         self.stabilization_grace_s = max(0.0, float(stabilization_grace_s))
         self.derivative_threshold_w_per_s = max(1.0, float(derivative_threshold_w_per_s))
+        self.start_slope_threshold_w_per_s = max(1.0, float(start_slope_threshold_w_per_s))
         
         # Adaptive baseline tracking
         self._baseline_power_w: float = 0.0
@@ -118,11 +128,15 @@ class PatternLearner:
             EventDetectionConfig(
                 delta_on_w=self.adaptive_on_offset_w,
                 delta_off_w=self.adaptive_off_offset_w,
-                derivative_threshold_w_per_s=self.derivative_threshold_w_per_s,
+                derivative_threshold_w_per_s=self.start_slope_threshold_w_per_s,
+                start_step_delta_w=float(start_step_delta_w),
+                inrush_ratio_threshold=float(inrush_ratio_threshold),
                 debounce_samples=self.debounce_samples,
                 max_gap_s=self.max_gap_s,
                 end_hold_s=self.end_hold_s,
                 stabilization_grace_s=self.stabilization_grace_s,
+                end_variance_max_w=float(end_variance_max_w),
+                shutdown_negative_slope_w_per_s=float(shutdown_negative_slope_w_per_s),
             )
         )
         self._last_ts: Optional[datetime] = None
@@ -218,6 +232,9 @@ class PatternLearner:
                 "start_threshold_w": self.adaptive_on_offset_w,
                 "end_threshold_w": self.adaptive_off_offset_w,
                 "derivative_threshold_w_per_s": self.derivative_threshold_w_per_s,
+                "start_slope_threshold_w_per_s": self.start_slope_threshold_w_per_s,
+                "start_signals": int(transition.start_signals),
+                "end_signals": int(transition.end_signals),
                 "baseline_start_w": round(float(self._baseline_power_w), 3),
                 "start_delta_w": round(float(transition.delta_w), 3),
                 "start_derivative_w_per_s": round(float(transition.derivative_w_per_s), 3),
@@ -225,6 +242,8 @@ class PatternLearner:
                 "hold_time_s": self.end_hold_s,
                 "pre_roll_seconds": self.pre_roll_seconds,
                 "post_roll_seconds": self.post_roll_seconds,
+                "ring_buffer_seconds": self.ring_buffer_seconds,
+                "min_samples_for_cycle": self.min_samples_for_cycle,
             }
             self._last_ts = reading.timestamp
             logger.debug(
@@ -320,7 +339,7 @@ class PatternLearner:
                 age_s = (newest.timestamp - oldest.timestamp).total_seconds()
             except Exception:
                 break
-            if age_s <= max(self.pre_roll_seconds + self.baseline_window_seconds, 10.0):
+            if age_s <= max(self.ring_buffer_seconds, self.pre_roll_seconds + self.baseline_window_seconds):
                 break
             self._pre_event_buffer.popleft()
 
@@ -425,13 +444,15 @@ class PatternLearner:
     ) -> bool:
         if self._truncated_end:
             return True
+        post_roll_duration = self._pre_roll_duration(post_roll_samples)
+        if post_roll_duration <= 0.0 and len(post_roll_samples) <= 1:
+            return True
         if len(event_samples) < 3:
             return False
 
         tail = [float(sample.power_w) for sample in event_samples[-3:]]
         last_drop = tail[-2] - tail[-1]
         abrupt_drop = last_drop >= max(self.adaptive_off_offset_w * 2.5, 20.0) and tail[-1] <= (baseline_w + self.adaptive_off_offset_w)
-        post_roll_duration = self._pre_roll_duration(post_roll_samples)
         return bool(abrupt_drop and post_roll_duration < max(self.post_roll_seconds * 0.5, 0.5))
     
     def _check_synchronized_phase_rise(self, samples: List[PowerReading]) -> bool:
@@ -489,7 +510,7 @@ class PatternLearner:
             return False
 
     def _build_cycle(self, end_ts: datetime) -> Optional[LearnedCycle]:
-        if not self._cycle_start or len(self._event_samples) < 2:
+        if not self._cycle_start or len(self._event_samples) < self.min_samples_for_cycle:
             return None
 
         duration_s = (end_ts - self._cycle_start).total_seconds()

@@ -102,6 +102,11 @@ class SQLiteStore:
         self.learning_stable_segmentation_threshold = 0.70
         self.learning_provisional_promotion_count = 3
         self.learning_starvation_window = 8
+        self.learning_min_event_duration_s = 20.0
+        self.learning_min_samples_for_learning = 4
+        self.learning_min_waveform_score_for_provisional = 0.20
+        self.learning_min_waveform_score_for_final = 0.45
+        self.learning_merge_similarity_threshold = float(self.LEARNING_PARAMS.get("dedup_merge_similarity", 0.88))
         self._learning_debug_counters: Dict[str, int] = {
             "events_detected_total": 0,
             "events_blocked_by_segmentation": 0,
@@ -137,6 +142,11 @@ class SQLiteStore:
         stable_segmentation_threshold: float = 0.70,
         provisional_promotion_count: int = 3,
         starvation_window: int = 8,
+        min_event_duration_s: float = 20.0,
+        min_samples_for_learning: int = 4,
+        min_waveform_score_for_provisional: float = 0.20,
+        min_waveform_score_for_final: float = 0.45,
+        merge_similarity_threshold: float = 0.88,
     ) -> None:
         """Configure thresholds for stable/provisional learning decisions."""
         self.learning_segmentation_threshold = max(0.10, min(float(segmentation_threshold), 0.95))
@@ -146,6 +156,14 @@ class SQLiteStore:
         )
         self.learning_provisional_promotion_count = max(2, min(int(provisional_promotion_count), 10))
         self.learning_starvation_window = max(3, min(int(starvation_window), 50))
+        self.learning_min_event_duration_s = max(1.0, min(float(min_event_duration_s), 36000.0))
+        self.learning_min_samples_for_learning = max(3, min(int(min_samples_for_learning), 120))
+        self.learning_min_waveform_score_for_provisional = max(0.05, min(float(min_waveform_score_for_provisional), 0.95))
+        self.learning_min_waveform_score_for_final = max(
+            self.learning_min_waveform_score_for_provisional,
+            min(float(min_waveform_score_for_final), 0.99),
+        )
+        self.learning_merge_similarity_threshold = max(0.60, min(float(merge_similarity_threshold), 0.99))
 
     def get_hybrid_debug_status(self) -> Dict[str, Any]:
         """Return latest hybrid AI decision snapshot for dashboard debug panel."""
@@ -2977,10 +2995,42 @@ class SQLiteStore:
 
     def _determine_learning_tier(self, cycle: Dict[str, Any]) -> str:
         segmentation_confidence = float(cycle.get("segmentation_confidence", 0.0) or 0.0)
-        if segmentation_confidence >= float(self.learning_stable_segmentation_threshold):
-            return "stable"
-        if segmentation_confidence >= self._effective_segmentation_threshold():
+        waveform_score = float(cycle.get("waveform_completeness_score", 0.0) or 0.0)
+        derived = dict(cycle.get("derived_features") or {})
+        if waveform_score <= 0.0:
+            waveform_score = float(derived.get("waveform_completeness_score", 0.0) or 0.0)
+        duration_s = float(cycle.get("duration_s", 0.0) or 0.0)
+        sample_count = int(cycle.get("sample_count", 0) or 0)
+        if sample_count <= 0:
+            sample_count = len(cycle.get("profile_points") or [])
+
+        min_viable = (
+            duration_s >= float(self.learning_min_event_duration_s)
+            and sample_count >= int(self.learning_min_samples_for_learning)
+        )
+
+        if not min_viable:
+            return "blocked"
+
+        baseline_visible_before = bool(cycle.get("baseline_visible_before", derived.get("baseline_visible_before", False)))
+        if bool(cycle.get("truncated_start", False)) and not baseline_visible_before:
             return "provisional"
+
+        if (
+            segmentation_confidence >= float(self.learning_stable_segmentation_threshold)
+            and waveform_score >= float(self.learning_min_waveform_score_for_final)
+        ):
+            return "stable"
+
+        if (
+            segmentation_confidence >= self._effective_segmentation_threshold()
+            and waveform_score >= float(self.learning_min_waveform_score_for_provisional)
+        ):
+            return "provisional"
+
+        if sample_count >= int(self.learning_min_samples_for_learning) and waveform_score >= 0.10:
+            return "provisional"
+
         return "blocked"
 
     @staticmethod
@@ -3367,6 +3417,8 @@ class SQLiteStore:
         candidates = self._list_provisional_patterns(limit=500)
         best: Optional[Dict[str, Any]] = None
         best_similarity = 0.0
+        best_threshold = float(self.learning_merge_similarity_threshold)
+        provisional_merge_similarity = float(self.learning_merge_similarity_threshold)
         for item in candidates:
             if str(item.get("phase") or "L1") != str(cycle.get("phase") or "L1"):
                 continue
@@ -3374,13 +3426,14 @@ class SQLiteStore:
             if similarity > best_similarity:
                 best_similarity = similarity
                 best = item
+                same_label = str(item.get("suggestion_type") or "") == str(learning_label or "")
+                best_threshold = min(provisional_merge_similarity, 0.78) if same_label else provisional_merge_similarity
 
         now = datetime.now().isoformat()
         storage_fields = self._cycle_storage_fields(cycle)
         segmentation_confidence = float(cycle.get("segmentation_confidence", 0.0) or 0.0)
-        provisional_merge_similarity = float(self.LEARNING_PARAMS["dedup_merge_similarity"])
 
-        if best and best_similarity >= provisional_merge_similarity:
+        if best and best_similarity >= best_threshold:
             seen_count = int(best.get("seen_count", 1) or 1) + 1
             alpha = 1.0 / max(seen_count, 1)
             profile_points = self._normalize_profile_points(cycle.get("profile_points", [])) or self._normalize_profile_points(best.get("profile_points", []))
@@ -3538,7 +3591,19 @@ class SQLiteStore:
             promoted_cycle["device_group_id"] = str(provisional_pattern.get("device_group_id") or promoted_cycle.get("device_group_id") or self._device_group_id(learning_label, promoted_cycle))
             promoted_cycle["mode_key"] = str(provisional_pattern.get("mode_key") or promoted_cycle.get("mode_key") or self._mode_key_from_cycle(promoted_cycle))
             promoted_cycle["shape_signature"] = str(provisional_pattern.get("shape_signature") or promoted_cycle.get("shape_signature") or self._shape_signature_from_cycle(promoted_cycle))
-            if float(provisional_pattern.get("segmentation_confidence", 0.0) or 0.0) >= float(self.learning_segmentation_threshold):
+            provisional_features = dict(provisional_pattern.get("derived_features") or {})
+            provisional_waveform_score = float(
+                provisional_features.get(
+                    "waveform_completeness_score",
+                    cycle.get("waveform_completeness_score", 0.0),
+                )
+                or 0.0
+            )
+            can_promote = (
+                float(provisional_pattern.get("segmentation_confidence", 0.0) or 0.0) >= float(self.learning_segmentation_threshold)
+                or provisional_waveform_score >= float(self.learning_min_waveform_score_for_provisional)
+            )
+            if can_promote:
                 promoted = self._insert_learned_pattern_from_cycle(
                     cycle=promoted_cycle,
                     suggestion_seed=learning_label,
@@ -6594,6 +6659,16 @@ class SQLiteStore:
                 dedup_reason=str(cycle.get("reason") or "segmentation incomplete"),
             )
             self._emit_learning_summary_if_due()
+            logger.info(
+                "Learning decision: event_id=%s tier=blocked seg=%.3f wave=%.3f allowed=%s pattern_created=%s merged_into_pattern_id=%s rejection_reason=%s",
+                int(event_id or 0),
+                float(cycle.get("segmentation_confidence", 0.0) or 0.0),
+                float(cycle.get("waveform_completeness_score", 0.0) or 0.0),
+                bool(cycle.get("learning_allowed", False)),
+                False,
+                None,
+                "segmentation_quality_gate",
+            )
             return {
                 "matched": False,
                 "pattern": None,
@@ -6642,6 +6717,16 @@ class SQLiteStore:
                 self._record_pattern_features(int(promoted.get("id", 0) or 0), cycle)
                 self._record_pattern_history_snapshot(promoted)
                 self._upsert_patterns_mirror(promoted)
+                logger.info(
+                    "Learning decision: event_id=%s tier=provisional->stable seg=%.3f wave=%.3f allowed=%s pattern_created=%s merged_into_pattern_id=%s rejection_reason=%s",
+                    int(event_id or 0),
+                    float(cycle.get("segmentation_confidence", 0.0) or 0.0),
+                    float(cycle.get("waveform_completeness_score", 0.0) or 0.0),
+                    bool(cycle.get("learning_allowed", False)),
+                    True,
+                    int(promoted.get("id", 0) or 0),
+                    "",
+                )
                 return {
                     "matched": False,
                     "pattern": promoted,
@@ -6650,6 +6735,16 @@ class SQLiteStore:
                     "learning_tier": learning_tier,
                     "event_id": event_id,
                 }
+            logger.info(
+                "Learning decision: event_id=%s tier=provisional seg=%.3f wave=%.3f allowed=%s pattern_created=%s merged_into_pattern_id=%s rejection_reason=%s",
+                int(event_id or 0),
+                float(cycle.get("segmentation_confidence", 0.0) or 0.0),
+                float(cycle.get("waveform_completeness_score", 0.0) or 0.0),
+                bool(cycle.get("learning_allowed", False)),
+                False,
+                None,
+                "",
+            )
             return {
                 "matched": False,
                 "pattern": None,
@@ -6678,7 +6773,7 @@ class SQLiteStore:
             suggestion_seed=suggestion_seed,
             best_similarity=best_similarity,
             dedup_update_similarity=float(self.LEARNING_PARAMS["dedup_update_similarity"]),
-            dedup_merge_similarity=float(self.LEARNING_PARAMS["dedup_merge_similarity"]),
+            dedup_merge_similarity=float(self.learning_merge_similarity_threshold),
             mode_key_fn=self._mode_key_from_cycle,
             group_id_fn=self._device_group_id,
         )
@@ -7112,6 +7207,16 @@ class SQLiteStore:
                 )
                 self._increment_learning_counter("events_learned")
                 self._emit_learning_summary_if_due()
+                logger.info(
+                    "Learning decision: event_id=%s tier=stable seg=%.3f wave=%.3f allowed=%s pattern_created=%s merged_into_pattern_id=%s rejection_reason=%s",
+                    int(event_id or 0),
+                    float(cycle.get("segmentation_confidence", 0.0) or 0.0),
+                    float(cycle.get("waveform_completeness_score", 0.0) or 0.0),
+                    bool(cycle.get("learning_allowed", False)),
+                    True,
+                    int(best.get("id", 0) or 0),
+                    "",
+                )
                 return {
                     "matched": True,
                     "distance": best_distance,
@@ -7178,6 +7283,16 @@ class SQLiteStore:
             )
             self._increment_learning_counter("events_learned")
             self._emit_learning_summary_if_due()
+            logger.info(
+                "Learning decision: event_id=%s tier=stable seg=%.3f wave=%.3f allowed=%s pattern_created=%s merged_into_pattern_id=%s rejection_reason=%s",
+                int(event_id or 0),
+                float(cycle.get("segmentation_confidence", 0.0) or 0.0),
+                float(cycle.get("waveform_completeness_score", 0.0) or 0.0),
+                bool(cycle.get("learning_allowed", False)),
+                True,
+                int(created.get("id", 0) or 0),
+                "",
+            )
             return {
                 "matched": False,
                 "distance": None,

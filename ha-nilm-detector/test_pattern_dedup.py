@@ -263,18 +263,21 @@ def test_blocked_segmentation_still_records_event():
             blocked["post_roll_duration_s"] = 0.0
             learned = store.learn_cycle_pattern(blocked, suggestion_type="fridge")
 
-            assert learned.get("skipped") is True
-            assert learned.get("reason") == "segmentation_quality_gate"
+            assert learned.get("provisional") is True
             assert store._patterns_conn is not None
             event_count = store._patterns_conn.execute("SELECT COUNT(*) FROM events").fetchone()
-            rejected = store._patterns_conn.execute(
-                "SELECT rejected_reason FROM events ORDER BY event_id DESC LIMIT 1"
+            dedup_row = store._patterns_conn.execute(
+                "SELECT dedup_result FROM events ORDER BY event_id DESC LIMIT 1"
             ).fetchone()
             pattern_count = store._patterns_conn.execute("SELECT COUNT(*) FROM learned_patterns").fetchone()
+            provisional_count = store._patterns_conn.execute(
+                "SELECT COUNT(*) FROM provisional_patterns WHERE status = 'weak_pattern'"
+            ).fetchone()
 
             assert int((event_count or [0])[0]) == 1
-            assert str((rejected or [""])[0] or "") == "segmentation_quality_gate"
+            assert str((dedup_row or [""])[0] or "") == "provisional_store"
             assert int((pattern_count or [0])[0]) == 0
+            assert int((provisional_count or [0])[0]) == 1
         finally:
             store.close()
 
@@ -311,5 +314,60 @@ def test_provisional_learning_stores_cluster_without_stable_pattern():
             assert int((provisional_count or [0])[0]) == 1
             assert str((event_row or [""])[0] or "") == "provisional_store"
             assert int((pattern_count or [0])[0]) == 0
+        finally:
+            store.close()
+
+
+def test_repeated_provisional_events_promote_to_stable_pattern():
+    with TemporaryDirectory() as tmpdir:
+        live_db = os.path.join(tmpdir, "live.sqlite3")
+        patterns_db = os.path.join(tmpdir, "patterns.sqlite3")
+        store = SQLiteStore(db_path=live_db, patterns_db_path=patterns_db)
+        try:
+            assert store.connect() is True
+            store.configure_learning_policy(
+                segmentation_threshold=0.30,
+                stable_segmentation_threshold=0.85,
+                provisional_promotion_count=2,
+                min_waveform_score_for_provisional=0.15,
+                min_waveform_score_for_final=0.40,
+            )
+
+            c1 = _build_context_cycle(datetime(2026, 4, 9, 8, 0, 0), duration_s=70.0)
+            c1["pre_roll_duration_s"] = 0.0
+            c2 = _build_context_cycle(datetime(2026, 4, 9, 9, 0, 0), duration_s=70.0)
+            c2["pre_roll_duration_s"] = 0.0
+
+            r1 = store.learn_cycle_pattern(c1, suggestion_type="fridge")
+            r2 = store.learn_cycle_pattern(c2, suggestion_type="fridge")
+
+            assert r1.get("provisional") is True
+            assert r2.get("promoted") is True
+            assert store._patterns_conn is not None
+            pattern_count = store._patterns_conn.execute("SELECT COUNT(*) FROM learned_patterns").fetchone()
+            assert int((pattern_count or [0])[0]) >= 1
+        finally:
+            store.close()
+
+
+def test_dissimilar_events_do_not_merge_into_one_pattern():
+    with TemporaryDirectory() as tmpdir:
+        live_db = os.path.join(tmpdir, "live.sqlite3")
+        patterns_db = os.path.join(tmpdir, "patterns.sqlite3")
+        store = SQLiteStore(db_path=live_db, patterns_db_path=patterns_db)
+        try:
+            assert store.connect() is True
+            store.configure_learning_policy(merge_similarity_threshold=0.90)
+
+            base_time = datetime(2026, 4, 10, 6, 0, 0)
+            a = _build_cycle(base_time, avg_power=180.0, peak_power=260.0, duration_s=55.0)
+            b = _build_cycle(base_time + timedelta(minutes=40), avg_power=620.0, peak_power=980.0, duration_s=210.0)
+
+            _ = store.learn_cycle_pattern(a, suggestion_type="fridge")
+            _ = store.learn_cycle_pattern(b, suggestion_type="washing_machine")
+
+            assert store._patterns_conn is not None
+            pattern_count = store._patterns_conn.execute("SELECT COUNT(*) FROM learned_patterns").fetchone()
+            assert int((pattern_count or [0])[0]) >= 2
         finally:
             store.close()

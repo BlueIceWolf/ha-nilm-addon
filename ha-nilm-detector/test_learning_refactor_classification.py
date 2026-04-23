@@ -29,7 +29,7 @@ def test_unknown_bucket_refinement_avoids_broad_unknown_electronics():
 
     label, reasons = infer_unknown_subclass(enrich_cycle_for_classification(cycle, [], fallback="unknown"))
 
-    assert label in {"unknown_motor", "unknown_high_inrush", "unknown_short_pulse"}
+    assert label in {"pump_constant", "pump_variable", "compressor_low_power", "compressor_high_power", "unknown_short_pulse"}
     assert isinstance(reasons, list)
 
 
@@ -77,7 +77,7 @@ def test_high_inrush_motor_prefers_motor_or_compressor_candidate_over_generic_pu
 
     enriched = enrich_cycle_for_classification(cycle, [], fallback="unknown")
 
-    assert enriched["refined_label"] in {"compressor_candidate", "motor_candidate", "small_pump_motor", "large_pump_motor", "unknown_high_inrush"}
+    assert enriched["refined_label"] in {"compressor_candidate", "motor_candidate", "small_pump_motor", "large_pump_motor", "compressor_low_power", "compressor_high_power"}
     assert float(enriched["shape_confidence"]) >= 0.0
     assert float(enriched["final_confidence"]) >= 0.35
 

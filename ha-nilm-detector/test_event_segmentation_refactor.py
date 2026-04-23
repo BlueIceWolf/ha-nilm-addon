@@ -113,3 +113,46 @@ def test_event_starting_mid_cycle_sets_truncated_start_true():
     assert len(completed) == 1
     cycle = completed[0]
     assert cycle.truncated_start is True
+
+
+def test_event_without_pre_roll_still_emits_cycle_as_truncated_start():
+    learner = PatternLearner(
+        min_cycle_seconds=5.0,
+        adaptive_on_offset_w=30.0,
+        adaptive_off_offset_w=10.0,
+        derivative_threshold_w_per_s=80.0,
+        end_hold_s=3.0,
+        pre_roll_seconds=0.0,
+        post_roll_seconds=2.0,
+        stabilization_grace_s=2.0,
+        debounce_samples=1,
+        noise_filter_window=1,
+    )
+    powers = [50.0, 50.0, 250.0] + [160.0] * 8 + [60.0, 50.0, 50.0, 50.0, 50.0, 50.0]
+    completed = _run_sequence(powers, learner=learner)
+
+    assert len(completed) == 1
+    cycle = completed[0]
+    assert cycle.truncated_start is True
+    assert cycle.duration_s >= 6.0
+
+
+def test_event_without_post_roll_marks_truncated_end_for_hard_drop():
+    learner = PatternLearner(
+        min_cycle_seconds=5.0,
+        adaptive_on_offset_w=30.0,
+        adaptive_off_offset_w=10.0,
+        derivative_threshold_w_per_s=80.0,
+        end_hold_s=2.0,
+        pre_roll_seconds=2.0,
+        post_roll_seconds=0.0,
+        stabilization_grace_s=1.0,
+        debounce_samples=1,
+        noise_filter_window=1,
+    )
+    powers = [40.0, 41.0, 39.0, 40.0, 42.0, 260.0] + [170.0] * 7 + [42.0, 41.0, 40.0]
+    completed = _run_sequence(powers, learner=learner)
+
+    assert len(completed) == 1
+    cycle = completed[0]
+    assert cycle.truncated_end is True

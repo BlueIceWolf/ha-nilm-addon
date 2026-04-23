@@ -103,6 +103,11 @@ class NILMDetectionSystem:
                     stable_segmentation_threshold=self.config.learning_stable_segmentation_threshold,
                     provisional_promotion_count=self.config.learning_provisional_promotion_count,
                     starvation_window=self.config.learning_starvation_window,
+                    min_event_duration_s=self.config.learning_min_cycle_seconds,
+                    min_samples_for_learning=self.config.learning_min_samples_for_learning,
+                    min_waveform_score_for_provisional=self.config.learning_min_waveform_score_for_provisional,
+                    min_waveform_score_for_final=self.config.learning_min_waveform_score_for_final,
+                    merge_similarity_threshold=self.config.learning_merge_similarity_threshold,
                 )
                 try:
                     patterns_loaded = len(self.storage.list_patterns(limit=1000))
@@ -139,8 +144,11 @@ class NILMDetectionSystem:
                         end_hold_s=self.config.learning_end_hold_s,
                         pre_roll_seconds=self.config.learning_pre_roll_s,
                         post_roll_seconds=self.config.learning_post_roll_s,
+                        ring_buffer_seconds=self.config.learning_ring_buffer_s,
+                        min_samples_for_cycle=self.config.learning_min_samples_for_learning,
                         stabilization_grace_s=self.config.learning_stabilization_grace_s,
                         derivative_threshold_w_per_s=self.config.learning_derivative_threshold_w_per_s,
+                        start_slope_threshold_w_per_s=self.config.learning_start_slope_threshold_w_per_s,
                     )
                     self.phase_learners[phase_name] = learner
                     self.phase_pipelines[phase_name] = NILMPipeline(
@@ -642,8 +650,11 @@ class NILMDetectionSystem:
                     end_hold_s=self.config.learning_end_hold_s,
                     pre_roll_seconds=self.config.learning_pre_roll_s,
                     post_roll_seconds=self.config.learning_post_roll_s,
+                    ring_buffer_seconds=self.config.learning_ring_buffer_s,
+                    min_samples_for_cycle=self.config.learning_min_samples_for_learning,
                     stabilization_grace_s=self.config.learning_stabilization_grace_s,
                     derivative_threshold_w_per_s=self.config.learning_derivative_threshold_w_per_s,
+                    start_slope_threshold_w_per_s=self.config.learning_start_slope_threshold_w_per_s,
                 )
             return learners
 

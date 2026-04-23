@@ -231,28 +231,32 @@ def build_waveform_summary(cycle: Dict[str, Any]) -> Dict[str, Any]:
     startup_visible = baseline_visible_before and not bool(cycle.get("truncated_start", False))
     shutdown_visible = baseline_visible_after and not bool(cycle.get("truncated_end", False))
     duration_s = safe_float(cycle.get("duration_s"))
-    sample_quality = clamp(len(waveform) / 24.0)
+    sample_quality = clamp(len(waveform) / 18.0)
     synthetic_context_support = profile_only_cycle and startup_visible and shutdown_visible
+    pre_roll_seconds = safe_float(cycle.get("pre_roll_duration_s"))
+    post_roll_seconds = safe_float(cycle.get("post_roll_duration_s"))
+    pre_roll_support = clamp(pre_roll_seconds / 3.0) if pre_roll_seconds > 0.0 else (0.85 if synthetic_context_support else 0.25)
+    post_roll_support = clamp(post_roll_seconds / 3.0) if post_roll_seconds > 0.0 else (0.85 if synthetic_context_support else 0.25)
+    startup_support = 1.0 if startup_visible else (0.55 if baseline_visible_before else 0.25)
+    shutdown_support = 1.0 if shutdown_visible else (0.55 if baseline_visible_after else 0.25)
+    plateau_duration_support = 1.0 if (has_flat_plateau and duration_s >= 90.0) else (0.78 if duration_s >= 45.0 else 0.55)
     waveform_completeness_score = clamp(
-        (0.20 * (1.0 if baseline_visible_before else 0.0))
-        + (0.20 * (1.0 if baseline_visible_after else 0.0))
-        + (0.20 * (1.0 if startup_visible else 0.0))
-        + (0.20 * (1.0 if shutdown_visible else 0.0))
-        + (0.20 * sample_quality)
+        (0.24 * pre_roll_support)
+        + (0.24 * post_roll_support)
+        + (0.18 * startup_support)
+        + (0.18 * shutdown_support)
+        + (0.16 * sample_quality)
     )
-    plateau_duration_support = 1.0 if (has_flat_plateau and duration_s >= 90.0) else (0.7 if duration_s >= 45.0 else 0.35)
-    pre_roll_support = 1.0 if safe_float(cycle.get("pre_roll_duration_s")) > 0.0 else (1.0 if synthetic_context_support else 0.0)
-    post_roll_support = 1.0 if safe_float(cycle.get("post_roll_duration_s")) > 0.0 else (1.0 if synthetic_context_support else 0.0)
     truncation_penalty = 0.0
     if bool(cycle.get("truncated_start", False)):
-        truncation_penalty += 0.15
+        truncation_penalty += 0.08
     if bool(cycle.get("truncated_end", False)):
-        truncation_penalty += 0.12
+        truncation_penalty += 0.06
     segmentation_confidence = clamp(
-        (0.22 * pre_roll_support)
-        + (0.22 * post_roll_support)
-        + (0.28 * waveform_completeness_score)
-        + (0.28 * plateau_duration_support)
+        (0.24 * pre_roll_support)
+        + (0.24 * post_roll_support)
+        + (0.34 * waveform_completeness_score)
+        + (0.18 * plateau_duration_support)
         - truncation_penalty
     )
     penalties: List[str] = []
@@ -268,10 +272,40 @@ def build_waveform_summary(cycle: Dict[str, Any]) -> Dict[str, Any]:
     if str(shape_meta.get("shape_signature_status")) != "valid":
         penalties.append("missing_shape_signature_penalty")
     learning_tier = "blocked"
-    if segmentation_confidence >= 0.7:
+    if segmentation_confidence >= 0.6:
         learning_tier = "stable"
-    elif segmentation_confidence >= 0.4:
+    elif segmentation_confidence >= 0.28:
         learning_tier = "provisional"
+
+    delta_from_baseline = max(avg_power - baseline_before, 0.0)
+    time_to_peak_s = 0.0
+    if waveform:
+        peak_idx = max(range(len(waveform)), key=lambda idx: safe_float(waveform[idx].get("power_w")))
+        time_to_peak_s = safe_float(waveform[peak_idx].get("t_s"))
+    area_under_curve = max(safe_float(cycle.get("energy_wh")) * 3600.0, 0.0)
+    normalized_energy = area_under_curve / max(duration_s, 1.0)
+    load_factor = avg_power / max(peak_power, EPSILON)
+    phase_stability = clamp(1.0 - min(normalized_variance / 12.0, 1.0))
+
+    plateau_lengths: List[float] = []
+    if waveform:
+        pw = [safe_float(item.get("power_w")) for item in waveform]
+        pmin = min(pw)
+        pmax = max(pw)
+        level = pmin + (pmax - pmin) * 0.5
+        tol = max((pmax - pmin) * 0.1, 8.0)
+        seg_start = None
+        for idx, value in enumerate(pw):
+            on_level = abs(value - level) <= tol
+            if on_level and seg_start is None:
+                seg_start = idx
+            if (not on_level or idx == len(pw) - 1) and seg_start is not None:
+                end_idx = idx if not on_level else idx
+                t0 = safe_float(waveform[seg_start].get("t_s"))
+                t1 = safe_float(waveform[end_idx].get("t_s"))
+                if t1 > t0:
+                    plateau_lengths.append(round(t1 - t0, 3))
+                seg_start = None
     waveform_summary = {
         "sample_count": len(waveform),
         "delta_sample_count": len(delta_points),
@@ -304,6 +338,17 @@ def build_waveform_summary(cycle: Dict[str, Any]) -> Dict[str, Any]:
         "has_multi_stage_shape": has_multi_stage_shape,
         "shape_peak_position": round(shape_peak_position, 4),
         "shape_tail_slope": round(shape_tail_slope, 4),
+        "baseline_before": round(baseline_before, 4),
+        "baseline_after": round(baseline_after, 4),
+        "delta_from_baseline": round(delta_from_baseline, 4),
+        "slope_up": round(startup_sharpness, 4),
+        "slope_down": round(shutdown_sharpness, 4),
+        "plateau_lengths": plateau_lengths,
+        "time_to_peak_s": round(time_to_peak_s, 4),
+        "area_under_curve": round(area_under_curve, 4),
+        "normalized_energy": round(normalized_energy, 4),
+        "load_factor": round(load_factor, 4),
+        "phase_stability": round(phase_stability, 4),
         "baseline_visible_before": baseline_visible_before,
         "baseline_visible_after": baseline_visible_after,
         "startup_visible": startup_visible,
@@ -333,12 +378,28 @@ def infer_unknown_subclass(cycle: Dict[str, Any]) -> Tuple[str, List[str]]:
     if bool(features.get("has_multi_stage_shape")):
         reasons.append("multiple_plateaus_detected")
         return ("unknown_multistage", reasons)
+    if avg_power < 120.0 and duration_s >= 120.0 and normalized_variance <= 6.0:
+        reasons.append("stable_low_power")
+        return ("constant_low_power", reasons)
+    if 120.0 <= avg_power < 450.0 and duration_s >= 90.0 and normalized_variance <= 8.0:
+        reasons.append("stable_medium_power")
+        return ("constant_medium_power", reasons)
     if inrush_ratio >= 1.7:
         reasons.append("high_inrush_ratio")
-        return ("unknown_high_inrush", reasons)
+        if avg_power <= 400.0:
+            return ("compressor_low_power", reasons)
+        return ("compressor_high_power", reasons)
     if bool(cycle.get("has_motor_pattern", False)):
         reasons.append("motor_like_shape")
-        return ("unknown_motor", reasons)
+        if normalized_variance <= 9.0:
+            return ("pump_constant", reasons)
+        return ("pump_variable", reasons)
+    if bool(cycle.get("has_heating_pattern", False)) and normalized_variance <= 6.0:
+        reasons.append("resistive_heating_profile")
+        return ("heater_resistive", reasons)
+    if bool(cycle.get("has_heating_pattern", False)) and bool(features.get("has_multi_stage_shape")):
+        reasons.append("multistage_heating_profile")
+        return ("multi_stage_heating", reasons)
     if duration_s <= 20.0:
         reasons.append("short_runtime")
         return ("unknown_short_pulse", reasons)

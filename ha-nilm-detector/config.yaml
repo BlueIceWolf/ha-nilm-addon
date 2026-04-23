@@ -26,18 +26,25 @@ options:
     shape_matching_enabled: true
     online_learning_enabled: true
     start_threshold_w: 30.0
+    delta_threshold: 30.0
     end_threshold_w: 12.0
     baseline_window_s: 5.0
     derivative_threshold_w_per_s: 120.0
+    slope_threshold: 90.0
     hold_time_s: 6.0
     stabilization_grace_s: 12.0
-    pre_roll_s: 2.0
-    post_roll_s: 2.0
+    pre_roll_s: 3.0
+    post_roll_s: 24.0
+    ring_buffer_seconds: 10.0
     max_gap_s: 6.0
     pattern_match_threshold: 0.45
     ml_confidence_threshold: 0.60
     segmentation_threshold: 0.40
     stable_segmentation_threshold: 0.70
+    min_samples_for_learning: 4
+    min_waveform_score_for_provisional: 0.20
+    min_waveform_score_for_final: 0.45
+    merge_similarity_threshold: 0.86
     provisional_promotion_count: 3
     learning_starvation_window: 8
   home_assistant:
@@ -70,13 +77,16 @@ schema:
     shape_matching_enabled: bool?
     online_learning_enabled: bool?
     start_threshold_w: float(5,1000)?
+    delta_threshold: float(5,1000)?
     end_threshold_w: float(2,500)?
     baseline_window_s: float(1,30)?
     derivative_threshold_w_per_s: float(5,5000)?
+    slope_threshold: float(5,5000)?
     hold_time_s: float(1,120)?
     stabilization_grace_s: float(0,120)?
     pre_roll_s: float(0,30)?
     post_roll_s: float(0,30)?
+    ring_buffer_seconds: float(5,30)?
     delta_on_w: float(5,1000)?
     delta_off_w: float(2,500)?
     max_gap_s: float(1,120)?
@@ -84,6 +94,10 @@ schema:
     ml_confidence_threshold: float(0.1,0.99)?
     segmentation_threshold: float(0.1,0.95)?
     stable_segmentation_threshold: float(0.1,0.99)?
+    min_samples_for_learning: int(3,120)?
+    min_waveform_score_for_provisional: float(0.05,0.95)?
+    min_waveform_score_for_final: float(0.05,0.99)?
+    merge_similarity_threshold: float(0.6,0.99)?
     provisional_promotion_count: int(2,10)?
     learning_starvation_window: int(3,50)?
   storage:

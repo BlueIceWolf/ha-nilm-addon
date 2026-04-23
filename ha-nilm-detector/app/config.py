@@ -48,8 +48,14 @@ class Config:
         self.learning_end_hold_s = 6.0
         self.learning_derivative_threshold_w_per_s = 120.0
         self.learning_stabilization_grace_s = 12.0
-        self.learning_pre_roll_s = 2.0
-        self.learning_post_roll_s = 2.0
+        self.learning_pre_roll_s = 3.0
+        self.learning_post_roll_s = 24.0
+        self.learning_ring_buffer_s = 10.0
+        self.learning_min_samples_for_learning = 4
+        self.learning_min_waveform_score_for_provisional = 0.20
+        self.learning_min_waveform_score_for_final = 0.45
+        self.learning_merge_similarity_threshold = 0.86
+        self.learning_start_slope_threshold_w_per_s = 90.0
         self.ai_enabled = True
         self.ml_enabled = True
         self.shape_matching_enabled = True
@@ -140,7 +146,10 @@ class Config:
             learning_config.get('min_cycle_seconds', self.learning_min_cycle_seconds)
         )
         self.learning_delta_on_w = float(
-            learning_config.get('start_threshold_w', learning_config.get('delta_on_w', self.learning_delta_on_w))
+            learning_config.get(
+                'start_threshold_w',
+                learning_config.get('delta_threshold', learning_config.get('delta_on_w', self.learning_delta_on_w)),
+            )
         )
         self.learning_delta_off_w = float(
             learning_config.get('end_threshold_w', learning_config.get('delta_off_w', self.learning_delta_off_w))
@@ -168,6 +177,24 @@ class Config:
         )
         self.learning_post_roll_s = float(
             learning_config.get('post_roll_s', self.learning_post_roll_s)
+        )
+        self.learning_ring_buffer_s = float(
+            learning_config.get('ring_buffer_seconds', self.learning_ring_buffer_s)
+        )
+        self.learning_min_samples_for_learning = int(
+            learning_config.get('min_samples_for_learning', self.learning_min_samples_for_learning)
+        )
+        self.learning_min_waveform_score_for_provisional = float(
+            learning_config.get('min_waveform_score_for_provisional', self.learning_min_waveform_score_for_provisional)
+        )
+        self.learning_min_waveform_score_for_final = float(
+            learning_config.get('min_waveform_score_for_final', self.learning_min_waveform_score_for_final)
+        )
+        self.learning_merge_similarity_threshold = float(
+            learning_config.get('merge_similarity_threshold', self.learning_merge_similarity_threshold)
+        )
+        self.learning_start_slope_threshold_w_per_s = float(
+            learning_config.get('slope_threshold', self.learning_start_slope_threshold_w_per_s)
         )
         self.ai_enabled = bool(learning_config.get('ai_enabled', self.ai_enabled))
         self.ml_enabled = bool(learning_config.get('ml_enabled', self.ml_enabled))
@@ -211,8 +238,17 @@ class Config:
             self.learning_segmentation_threshold,
             min(self.learning_stable_segmentation_threshold, 0.99),
         )
+        self.learning_min_waveform_score_for_provisional = max(0.05, min(self.learning_min_waveform_score_for_provisional, 0.95))
+        self.learning_min_waveform_score_for_final = max(
+            self.learning_min_waveform_score_for_provisional,
+            min(self.learning_min_waveform_score_for_final, 0.99),
+        )
         self.learning_provisional_promotion_count = max(2, min(self.learning_provisional_promotion_count, 10))
         self.learning_starvation_window = max(3, min(self.learning_starvation_window, 50))
+        self.learning_ring_buffer_s = max(5.0, min(self.learning_ring_buffer_s, 30.0))
+        self.learning_min_samples_for_learning = max(4, min(self.learning_min_samples_for_learning, 120))
+        self.learning_merge_similarity_threshold = max(0.60, min(self.learning_merge_similarity_threshold, 0.99))
+        self.learning_start_slope_threshold_w_per_s = max(5.0, min(self.learning_start_slope_threshold_w_per_s, 5000.0))
 
         self.power_source = "home_assistant_rest"
         self.storage_path = str(config_dict.get('storage_path', self.storage_path)).strip() or self.storage_path
