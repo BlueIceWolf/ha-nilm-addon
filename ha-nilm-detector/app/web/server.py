@@ -3363,7 +3363,10 @@ class StatsWebServer:
                 self.send_header("Content-Type", "application/json")
                 self.send_header("Content-Length", str(len(body)))
                 self.end_headers()
-                self.wfile.write(body)
+                try:
+                    self.wfile.write(body)
+                except (BrokenPipeError, ConnectionResetError):
+                    logger.debug("Client disconnected while sending JSON response")
 
             def _send_html(self, body: str) -> None:
                 data = body.encode("utf-8")
@@ -3371,7 +3374,10 @@ class StatsWebServer:
                 self.send_header("Content-Type", "text/html; charset=utf-8")
                 self.send_header("Content-Length", str(len(data)))
                 self.end_headers()
-                self.wfile.write(data)
+                try:
+                    self.wfile.write(data)
+                except (BrokenPipeError, ConnectionResetError):
+                    logger.debug("Client disconnected while sending HTML response")
 
             def do_GET(self):
                 parsed = urlparse(self.path)

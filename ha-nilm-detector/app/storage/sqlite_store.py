@@ -6423,11 +6423,27 @@ class SQLiteStore:
     def list_patterns(self, limit: int = 100) -> List[Dict]:
         if not self._patterns_conn:
             return []
-        if not self._table_exists(self._patterns_conn, "learned_patterns"):
-            logger.info("Pattern list unavailable: table learned_patterns is missing")
-            return []
+        safe_limit = max(1, min(int(limit), 10000))
+        conn = self._patterns_conn
+        temp_conn: Optional[sqlite3.Connection] = None
+
+        if not self._table_exists(conn, "learned_patterns"):
+            try:
+                temp_conn = self._open_connection(self.patterns_db_path)
+                conn = temp_conn
+            except Exception:
+                conn = self._patterns_conn
+            if not self._table_exists(conn, "learned_patterns"):
+                logger.info("Pattern list unavailable: table learned_patterns is missing")
+                if temp_conn:
+                    try:
+                        temp_conn.close()
+                    except Exception:
+                        pass
+                return []
         try:
-            cur = self._patterns_conn.execute(
+            try:
+                cur = conn.execute(
                 """
                 SELECT id, created_at, updated_at, first_seen, last_seen, seen_count,
                        avg_power_w, peak_power_w, duration_s, energy_wh,
@@ -6484,8 +6500,76 @@ class SQLiteStore:
                 ORDER BY seen_count DESC, last_seen DESC
                 LIMIT ?
                 """,
-                (int(limit),),
-            )
+                (safe_limit,),
+                )
+            except sqlite3.InterfaceError:
+                # Shared connections can intermittently fail under concurrent web/API access.
+                if temp_conn:
+                    try:
+                        temp_conn.close()
+                    except Exception:
+                        pass
+                temp_conn = self._open_connection(self.patterns_db_path)
+                conn = temp_conn
+                cur = conn.execute(
+                    """
+                    SELECT id, created_at, updated_at, first_seen, last_seen, seen_count,
+                           avg_power_w, peak_power_w, duration_s, energy_wh,
+                          suggestion_type, user_label, status,
+                          COALESCE(avg_active_phases, 1.0), COALESCE(phase_mode, 'unknown'), COALESCE(phase, 'L1'),
+                          COALESCE(power_variance, 0.0), COALESCE(duty_cycle, 0.0),
+                          COALESCE(peak_to_avg_ratio, 1.0),
+                          COALESCE(operating_modes, '[]'), COALESCE(has_multiple_modes, 0),
+                          COALESCE(typical_interval_s, 0.0), COALESCE(avg_hour_of_day, 12.0),
+                          COALESCE(last_intervals_json, '[]'), COALESCE(hour_distribution_json, '{}'),
+                          COALESCE(rise_rate_w_per_s, 0.0), COALESCE(fall_rate_w_per_s, 0.0),
+                                                    COALESCE(num_substates, 0), COALESCE(step_count, 0),
+                                                    COALESCE(has_heating_pattern, 0), COALESCE(has_motor_pattern, 0),
+                                                    COALESCE(profile_points_json, '[]'), COALESCE(quality_score_avg, 0.5),
+                                                    COALESCE(device_id, 0), COALESCE(confidence_score, 0.0),
+                                                    COALESCE(frequency_per_day, 0.0), COALESCE(candidate_name, ''),
+                                                    COALESCE(is_confirmed, 0), COALESCE(shape_vector_json, '[]'),
+                                                    COALESCE(prototype_hash, ''),
+                                                    baseline_before_w_avg, baseline_after_w_avg,
+                                                    delta_avg_power_w, delta_peak_power_w, delta_energy_wh,
+                                                    COALESCE(delta_profile_points_json, '[]'),
+                                                    COALESCE(delta_shape_vector_json, '[]'),
+                                                    COALESCE(plateau_count, 0),
+                                                    COALESCE(curve_hash, ''),
+                                                    COALESCE(shape_signature, ''),
+                                                    COALESCE(avg_delta_power_w, delta_avg_power_w),
+                                                    COALESCE(avg_duration_s, duration_s),
+                                                    COALESCE(avg_peak_power_w, peak_power_w),
+                                                    COALESCE(avg_inrush_duration_s, 0.0),
+                                                    COALESCE(occurrence_count, seen_count),
+                                                    COALESCE(device_group_id, ''),
+                                                    COALESCE(mode_key, ''),
+                                                    COALESCE(raw_label, COALESCE(suggestion_type, 'unknown')),
+                                                    COALESCE(refined_label, COALESCE(suggestion_type, 'unknown')),
+                                                    COALESCE(candidate_labels_json, '[]'),
+                                                    COALESCE(waveform_points_json, '[]'),
+                                                    COALESCE(waveform_summary_json, '{}'),
+                                                    COALESCE(pre_roll_samples_json, '[]'),
+                                                    COALESCE(post_roll_samples_json, '[]'),
+                                                    COALESCE(derived_features_json, '{}'),
+                                                    COALESCE(rule_confidence, 0.0),
+                                                    COALESCE(shape_confidence, 0.0),
+                                                    COALESCE(temporal_confidence, 0.0),
+                                                    COALESCE(final_confidence, 0.0),
+                                                    COALESCE(label_source, 'heuristic'),
+                                                    COALESCE(cluster_id, ''),
+                                                    COALESCE(merged_from_pattern_ids, '[]'),
+                                                    COALESCE(segmentation_flags_json, '{}'),
+                                                    COALESCE(temporal_features_json, '{}'),
+                                                    COALESCE(truncated_start, 0),
+                                                    COALESCE(truncated_end, 0),
+                                                    COALESCE(reason_text, '')
+                    FROM learned_patterns
+                    ORDER BY seen_count DESC, last_seen DESC
+                    LIMIT ?
+                    """,
+                    (safe_limit,),
+                )
             rows = cur.fetchall()
             out: List[Dict] = []
             for row in rows:
@@ -6664,6 +6748,12 @@ class SQLiteStore:
         except Exception as e:
             logger.error(f"Failed to list learned patterns: {e}", exc_info=True)
             return []
+        finally:
+            if temp_conn:
+                try:
+                    temp_conn.close()
+                except Exception:
+                    pass
 
     def _insert_provisional_learned_pattern(
         self,
