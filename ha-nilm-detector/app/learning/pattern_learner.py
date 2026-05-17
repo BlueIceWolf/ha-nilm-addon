@@ -79,8 +79,8 @@ class PatternLearner:
         noise_filter_window: int = 3,          # Median filter window for spike rejection (reduced from 5)
         max_gap_s: float = 6.0,                # Merge short OFF gaps inside one running cycle
         end_hold_s: float = 6.0,
-        pre_roll_seconds: float = 2.0,
-        post_roll_seconds: float = 24.0,
+        pre_roll_seconds: float = 20.0,
+        post_roll_seconds: float = 30.0,
         ring_buffer_seconds: float = 10.0,
         min_samples_for_cycle: int = 4,
         stabilization_grace_s: float = 12.0,
@@ -222,7 +222,11 @@ class PatternLearner:
             self._post_roll_samples = []
             self._pending_end_ts = None
             self._pending_finalize_at = None
-            self._truncated_start = self._pre_roll_duration(self._pre_roll_samples) < max(self.pre_roll_seconds * 0.5, 0.5)
+            estimated_step_s = self._estimate_sample_step_s(event_seed)
+            self._truncated_start = self._pre_roll_duration(
+                self._pre_roll_samples,
+                fallback_step_s=estimated_step_s,
+            ) < max(self.pre_roll_seconds * 0.5, 0.5)
             self._truncated_end = False
             self._segmentation_flags = {
                 "used_rolling_baseline": True,
@@ -280,7 +284,10 @@ class PatternLearner:
                 self._post_roll_samples.append(reading)
                 self._cycle_samples.append(reading)
             self._update_baseline(power, reading.timestamp)
-            post_roll_duration_s = self._pre_roll_duration(self._post_roll_samples)
+            post_roll_duration_s = self._pre_roll_duration(
+                self._post_roll_samples,
+                fallback_step_s=self._estimate_sample_step_s(self._event_samples),
+            )
             if (
                 self._pending_finalize_at
                 and (
@@ -353,11 +360,11 @@ class PatternLearner:
         return list(out)
 
     @staticmethod
-    def _pre_roll_duration(samples: List[PowerReading]) -> float:
+    def _pre_roll_duration(samples: List[PowerReading], fallback_step_s: float = 0.0) -> float:
         if not samples:
             return 0.0
         if len(samples) == 1:
-            return 0.0
+            return max(float(fallback_step_s), 0.0)
 
         span_s = max((samples[-1].timestamp - samples[0].timestamp).total_seconds(), 0.0)
         intervals = [
@@ -368,6 +375,20 @@ class PatternLearner:
             return span_s
         representative_step_s = sum(intervals) / max(len(intervals), 1)
         return span_s + representative_step_s
+
+    @staticmethod
+    def _estimate_sample_step_s(samples: List[PowerReading]) -> float:
+        if len(samples) < 2:
+            return 0.0
+        deltas: List[float] = []
+        for idx in range(1, len(samples)):
+            dt = max((samples[idx].timestamp - samples[idx - 1].timestamp).total_seconds(), 0.0)
+            if dt > 0.0:
+                deltas.append(dt)
+        if not deltas:
+            return 0.0
+        deltas.sort()
+        return float(deltas[len(deltas) // 2])
 
     def _reset_cycle_buffers(self) -> None:
         self._cycle_start = None
@@ -423,8 +444,11 @@ class PatternLearner:
         event_samples: List[PowerReading],
         baseline_w: float,
     ) -> bool:
-        pre_roll_duration = self._pre_roll_duration(pre_roll_samples)
-        if pre_roll_duration < max(self.pre_roll_seconds * 0.5, 0.5):
+        pre_roll_duration = self._pre_roll_duration(
+            pre_roll_samples,
+            fallback_step_s=self._estimate_sample_step_s(event_samples),
+        )
+        if pre_roll_duration < max(self.pre_roll_seconds * 0.5, 0.5) and len(pre_roll_samples) == 0:
             return True
         if len(event_samples) < 2:
             return True
@@ -444,7 +468,10 @@ class PatternLearner:
     ) -> bool:
         if self._truncated_end:
             return True
-        post_roll_duration = self._pre_roll_duration(post_roll_samples)
+        post_roll_duration = self._pre_roll_duration(
+            post_roll_samples,
+            fallback_step_s=self._estimate_sample_step_s(event_samples),
+        )
         if post_roll_duration <= 0.0 and len(post_roll_samples) <= 1:
             return True
         if len(event_samples) < 3:
@@ -453,6 +480,8 @@ class PatternLearner:
         tail = [float(sample.power_w) for sample in event_samples[-3:]]
         last_drop = tail[-2] - tail[-1]
         abrupt_drop = last_drop >= max(self.adaptive_off_offset_w * 2.5, 20.0) and tail[-1] <= (baseline_w + self.adaptive_off_offset_w)
+        if self.post_roll_seconds <= 0.0:
+            return len(post_roll_samples) <= 1
         return bool(abrupt_drop and post_roll_duration < max(self.post_roll_seconds * 0.5, 0.5))
     
     def _check_synchronized_phase_rise(self, samples: List[PowerReading]) -> bool:
@@ -578,6 +607,9 @@ class PatternLearner:
 
         profile_points = self._build_profile_points(self._event_samples)
         waveform_points = self._build_profile_points(self._pre_roll_samples + self._event_samples + self._post_roll_samples)
+        sample_step_s = self._estimate_sample_step_s(self._event_samples)
+        pre_roll_duration_s = self._pre_roll_duration(self._pre_roll_samples, fallback_step_s=sample_step_s)
+        post_roll_duration_s = self._pre_roll_duration(self._post_roll_samples, fallback_step_s=sample_step_s)
         truncated_start = self._detect_truncated_start(
             pre_roll_samples=self._pre_roll_samples,
             event_samples=self._event_samples,
@@ -613,8 +645,8 @@ class PatternLearner:
             segmentation_flags=segmentation_flags,
             truncated_start=truncated_start,
             truncated_end=truncated_end,
-            pre_roll_duration_s=self._pre_roll_duration(self._pre_roll_samples),
-            post_roll_duration_s=self._pre_roll_duration(self._post_roll_samples),
+            pre_roll_duration_s=pre_roll_duration_s,
+            post_roll_duration_s=post_roll_duration_s,
         )
 
     @staticmethod

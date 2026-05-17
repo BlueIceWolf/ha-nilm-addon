@@ -48,8 +48,8 @@ class Config:
         self.learning_end_hold_s = 6.0
         self.learning_derivative_threshold_w_per_s = 120.0
         self.learning_stabilization_grace_s = 12.0
-        self.learning_pre_roll_s = 3.0
-        self.learning_post_roll_s = 24.0
+        self.learning_pre_roll_s = 20.0
+        self.learning_post_roll_s = 30.0
         self.learning_ring_buffer_s = 10.0
         self.learning_min_samples_for_learning = 4
         self.learning_min_waveform_score_for_provisional = 0.20

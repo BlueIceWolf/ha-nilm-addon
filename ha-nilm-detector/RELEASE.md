@@ -4,30 +4,30 @@
 
 ---
 
-# Release 0.6.42 (BETA)
+# Release 0.6.44 (BETA)
 
 ## Store Kurztext
-- **Segmentierung/Lernen refaktoriert**: Events werden frueher und vollstaendiger erkannt, wiederholte imperfect Zyklen landen als Provisional und koennen zu stabilen Patterns promoted werden.
+- **Lernpfad weiter gehaertet**: robustere Segmentierungs-Kontexte, weniger falsche Kompressor-Zuordnungen, fuzzy Cluster-Merge und automatische Confirm-Regeln fuer stabilere Pattern-Qualitaet.
 
 ## Highlights
-- **Robustere Event-Segmentierung**
-  - neue State-Machine: `idle -> possible_start -> active -> possible_end -> ended`
-  - Start mit Delta + Slope + Step + Inrush-Signalen
-  - Ende ueber Baseline-Rueckkehr, niedrige Varianz und Shutdown-Flanke abgesichert
-- **Besserer Kontext fuer Lernqualitaet**
-  - Ringbuffer fuer Pre-Roll plus laengerer, konfigurierbarer Post-Roll
-  - Truncation-Handling verbessert (inkl. sauberem `truncated_end`-Fallback)
-- **Lernpfad entblockt**
-  - Learning-Tier nutzt jetzt Segmentierungs-Confidence, Waveform-Score, Mindestdauer und Mindestsamples kombiniert
-  - unperfekte, aber brauchbare Events werden als Provisional gespeichert statt verworfen
-  - wiederholte aehnliche provisional Events werden geclustert und promoted
-- **Mehr Features und Klassen fuer spaetere Genauigkeit**
-  - neue persistente Event-Features fuer Pattern-Vergleich und Klassifikation
-  - feinere interne Unterklassen fuer konstante Lasten, Kompressor/Pumpen und Heizprofile
-- **Mehr Tuning ohne Code-Aenderung**
-  - neue Optionen fuer `ring_buffer_seconds`, `min_samples_for_learning`, `min_waveform_score_for_provisional`, `min_waveform_score_for_final`, `merge_similarity_threshold`, `delta_threshold`, `slope_threshold`
-- **Verifikation**
-  - erweiterte Regressionstests fuer Segmentierung, Klassifikation und Dedup/Provisional-Flows sind gruen
+- **Vollstaendig validiert**
+  - kompletter `ha-nilm-detector` Testlauf erfolgreich (`35 passed`)
+- **Segmentierungskontext verbessert**
+  - Default-Werte fuer Learning-Pre/Post-Roll auf `20s/30s` angehoben
+  - Sparse-Sampling-Handling und Truncation-Bewertung verfeinert
+  - Regression bei `post_roll_seconds=0` fuer `truncated_end` gezielt behoben
+- **Klassifikation differenzierter**
+  - aggressives `compressor_candidate`-Fallback reduziert, wenn Motor-Evidenz schwach ist
+  - neutralere Low-Power-/Unknown-Clusterlabels fuer ambivalente Lasten
+- **Merge/Cluster robuster**
+  - fuzzy Cluster-Merge nach Shape/Power/Duration/Plateau-Toleranzen ergaenzt
+  - verhindert unnötige Pattern-Fragmentierung bei aehnlichen Zyklen
+- **Promotion/Confirmation konsistenter**
+  - provisional Promotion aktualisiert bestehende learned Patterns sauber auf `active`
+  - auto-confirm Regeln greifen im Lernpfad und beim Stable-Update
+  - Shared-Export beruecksichtigt bestaetigte Patterns auch ohne manuelles User-Label
+- **Diagnostik erweitert**
+  - provisional Lernentscheidungen schreiben nun ebenfalls Classification-Logs
 
 ---
 

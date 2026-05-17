@@ -2,6 +2,20 @@
 
 > ⚠️ **Hinweis**: Dieses Projekt ist experimentell (BETA) - Breaking Changes und Bugs können auftreten.
 
+## 0.6.44 (BETA)
+
+### Fixes
+- **Segmentierungs-Regression**: `truncated_end` wird bei deaktiviertem Post-Roll (`post_roll_seconds=0`) wieder korrekt gesetzt
+- **Provisional Promotion Konsistenz**: Promotion aktualisiert bestehende `learned_patterns` (Status/Seen/Quality/Confirm) statt inkonsistente Split-Zustaende zu erzeugen
+
+### Improvements
+- **Vollstaendige Validierung**: gesamtes `ha-nilm-detector` Testset erfolgreich (`35 passed`)
+- **Kontext-Defaults angehoben**: Learning Pre-/Post-Roll standardmaessig auf `20s/30s` fuer vollstaendigere Zyklen
+- **Klassifikation geschaerft**: weniger aggressive `compressor_candidate`-Zuordnung bei schwacher Motor-Evidenz, mehr neutrale Low-Power-Clusterlabels
+- **Merge robuster**: fuzzy Cluster-Merge ergaenzt (Shape/Power/Duration/Plateau-Toleranzen) fuer weniger Fragmentierung aehnlicher Patterns
+- **Confirmation praxisnah**: auto-confirm Regeln im Lernpfad und Export-Gate akzeptiert bestaetigte Muster auch ohne manuelles User-Label
+- **Diagnostik erweitert**: provisional Learning schreibt konsistente Classification-Logs fuer spaetere Ursachenanalyse
+
 ## 0.6.43 (BETA)
 
 ### Fixes

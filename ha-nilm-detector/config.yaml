@@ -1,6 +1,6 @@
 name: "HA NILM Detector"
 description: "Detect appliances from power consumption patterns (BETA - Experimental project in active development)"
-version: "0.6.43"
+version: "0.6.44"
 slug: "ha_nilm_detector"
 startup: application
 boot: auto
@@ -33,8 +33,8 @@ options:
     slope_threshold: 90.0
     hold_time_s: 6.0
     stabilization_grace_s: 12.0
-    pre_roll_s: 3.0
-    post_roll_s: 24.0
+    pre_roll_s: 20.0
+    post_roll_s: 30.0
     ring_buffer_seconds: 10.0
     max_gap_s: 6.0
     pattern_match_threshold: 0.45

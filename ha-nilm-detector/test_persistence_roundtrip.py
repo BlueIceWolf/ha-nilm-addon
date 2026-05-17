@@ -49,7 +49,8 @@ def test_patterns_persist_after_restart():
         first_store = SQLiteStore(db_path=live_db, patterns_db_path=patterns_db)
         try:
             assert first_store.connect() is True
-            base = datetime(2026, 4, 6, 8, 0, 0)
+            # Keep the sample fresh so retention cleanup on reconnect does not purge it.
+            base = datetime.now() - timedelta(minutes=5)
             learned = first_store.learn_cycle_pattern(_build_cycle(base), suggestion_type="fridge")
             pattern = learned.get("pattern") or {}
             pattern_id = int(pattern.get("id", 0) or 0)

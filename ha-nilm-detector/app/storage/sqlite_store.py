@@ -1235,7 +1235,7 @@ class SQLiteStore:
         for pattern in patterns:
             if str(pattern.get("status") or "active") != "active":
                 continue
-            if confirmed_only and not bool(pattern.get("user_label")):
+            if confirmed_only and not (bool(pattern.get("user_label")) or bool(pattern.get("is_confirmed"))):
                 continue
 
             public_label = self._public_pattern_label(pattern)
@@ -3078,11 +3078,31 @@ class SQLiteStore:
         text = str(label or "").strip()
         return text.endswith("_candidate") or text.startswith("unknown_") or text == "constant_load_pattern"
 
+    @staticmethod
+    def _looks_like_low_power_non_motor(cycle: Dict[str, Any]) -> bool:
+        avg_power = float(cycle.get("avg_power_w", 0.0) or 0.0)
+        duration_s = float(cycle.get("duration_s", 0.0) or 0.0)
+        inrush_ratio = float(cycle.get("inrush_ratio", cycle.get("peak_to_avg_ratio", 0.0)) or 0.0)
+        has_motor = bool(cycle.get("has_motor_pattern", False))
+        return avg_power <= 220.0 and duration_s >= 120.0 and inrush_ratio < 1.25 and not has_motor
+
+    @staticmethod
+    def _auto_confirm_pattern(seen_count: int, shape_confidence: float, temporal_confidence: float) -> bool:
+        if seen_count >= 3 and shape_confidence > 0.92 and temporal_confidence > 0.60:
+            return True
+        if seen_count >= 5 and shape_confidence > 0.88:
+            return True
+        return False
+
     def _candidate_learning_label(self, cycle: Dict[str, Any], fallback_label: str) -> str:
         preferred = str(cycle.get("refined_label") or fallback_label or "unknown").strip() or "unknown"
+        if self._looks_like_low_power_non_motor(cycle):
+            return "electronics_cluster"
         if preferred == "unknown_constant_load":
             return "constant_load_pattern"
         if self._is_candidate_only_label(preferred):
+            if preferred == "compressor_candidate" and self._looks_like_low_power_non_motor(cycle):
+                return "unknown_cluster"
             return preferred
 
         candidate_labels = cycle.get("candidate_labels") or []
@@ -3091,6 +3111,8 @@ class SQLiteStore:
                 continue
             label = str(item.get("label") or "").strip()
             if self._is_candidate_only_label(label):
+                if label == "compressor_candidate" and self._looks_like_low_power_non_motor(cycle):
+                    continue
                 return label
 
         if preferred in {"fridge", "fridge_like"}:
@@ -3229,16 +3251,21 @@ class SQLiteStore:
             first_seen_iso=str(cycle.get("start_ts") or now),
             last_seen_iso=str(cycle.get("end_ts") or now),
         )
+        storage_fields = self._cycle_storage_fields(cycle)
+        auto_confirmed = self._auto_confirm_pattern(
+            seen_count=occurrence_count,
+            shape_confidence=float(storage_fields.get("shape_confidence", 0.0) or 0.0),
+            temporal_confidence=float(storage_fields.get("temporal_confidence", 0.0) or 0.0),
+        )
         candidate_name = self._normalize_pattern_name(suggestion_seed)
         device_group_id = str(cycle.get("device_group_id") or self._device_group_id(suggestion_seed, cycle))
         device_id = self._get_or_create_device(
             label=suggestion_seed,
             phase=str(cycle.get("phase", "L1")),
             confidence=confidence_score_norm,
-            confirmed=False,
+            confirmed=auto_confirmed,
         )
         device_subclass = self._derive_device_subclass(suggestion_seed, cycle)
-        storage_fields = self._cycle_storage_fields(cycle)
 
         insert_columns = [
             "created_at", "updated_at", "first_seen", "last_seen", "seen_count",
@@ -3316,7 +3343,7 @@ class SQLiteStore:
             confidence_score_norm,
             frequency_per_day_seed,
             candidate_name,
-            0,
+            1 if auto_confirmed else 0,
             shape_vector_json,
             prototype_hash,
             operating_modes_json,
@@ -3419,7 +3446,7 @@ class SQLiteStore:
             "confidence_score_db": confidence_score_norm,
             "frequency_per_day_db": frequency_per_day_seed,
             "candidate_name": candidate_name,
-            "is_confirmed": False,
+            "is_confirmed": auto_confirmed,
             "shape_vector_json": shape_vector_json,
             "prototype_hash": prototype_hash,
             "raw_label": storage_fields["raw_label"],
@@ -3450,6 +3477,7 @@ class SQLiteStore:
         learning_label: str,
         quality_score: float,
         event_id: Optional[int] = None,
+        learned_pattern_id: Optional[int] = None,
     ) -> Dict[str, Any]:
         if not self._patterns_conn:
             return {"status": "blocked", "provisional_pattern": None, "pattern": None}
@@ -3472,8 +3500,9 @@ class SQLiteStore:
         now = datetime.now().isoformat()
         storage_fields = self._cycle_storage_fields(cycle)
         segmentation_confidence = float(cycle.get("segmentation_confidence", 0.0) or 0.0)
+        fuzzy_match = bool(best and self._fuzzy_cluster_merge_match(best, cycle))
 
-        if best and best_similarity >= best_threshold:
+        if best and (best_similarity >= best_threshold or fuzzy_match):
             seen_count = int(best.get("seen_count", 1) or 1) + 1
             alpha = 1.0 / max(seen_count, 1)
             profile_points = self._normalize_profile_points(cycle.get("profile_points", [])) or self._normalize_profile_points(best.get("profile_points", []))
@@ -3543,6 +3572,7 @@ class SQLiteStore:
                         int(best["id"]),
                     ),
                 )
+
             best.update(
                 {
                     "updated_at": now,
@@ -3631,42 +3661,68 @@ class SQLiteStore:
             promoted_cycle["device_group_id"] = str(provisional_pattern.get("device_group_id") or promoted_cycle.get("device_group_id") or self._device_group_id(learning_label, promoted_cycle))
             promoted_cycle["mode_key"] = str(provisional_pattern.get("mode_key") or promoted_cycle.get("mode_key") or self._mode_key_from_cycle(promoted_cycle))
             promoted_cycle["shape_signature"] = str(provisional_pattern.get("shape_signature") or promoted_cycle.get("shape_signature") or self._shape_signature_from_cycle(promoted_cycle))
+
             provisional_features = dict(provisional_pattern.get("derived_features") or {})
             provisional_waveform_score = float(
-                provisional_features.get(
-                    "waveform_completeness_score",
-                    cycle.get("waveform_completeness_score", 0.0),
-                )
+                provisional_features.get("waveform_completeness_score", cycle.get("waveform_completeness_score", 0.0))
                 or 0.0
             )
             can_promote = (
                 float(provisional_pattern.get("segmentation_confidence", 0.0) or 0.0) >= float(self.learning_segmentation_threshold)
                 or provisional_waveform_score >= float(self.learning_min_waveform_score_for_provisional)
             )
+
+            shape_conf = float(
+                provisional_features.get("shape_confidence", cycle.get("shape_confidence", 0.0))
+                or 0.0
+            )
+            temporal_conf = float(
+                provisional_features.get("temporal_confidence", cycle.get("temporal_confidence", 0.0))
+                or 0.0
+            )
+            auto_confirm = self._auto_confirm_pattern(
+                seen_count=int(provisional_pattern.get("seen_count", 0) or 0),
+                shape_confidence=shape_conf,
+                temporal_confidence=temporal_conf,
+            )
+
             if can_promote:
-                promoted = self._insert_learned_pattern_from_cycle(
-                    cycle=promoted_cycle,
-                    suggestion_seed=learning_label,
-                    quality_score=max(float(provisional_pattern.get("quality_score_avg", quality_score) or quality_score), quality_score),
-                    now=now,
-                )
+                promoted: Dict[str, Any]
+                if int(learned_pattern_id or 0) > 0:
+                    promoted = {
+                        "id": int(learned_pattern_id or 0),
+                        "seen_count": int(provisional_pattern.get("seen_count", 1) or 1),
+                        "quality_score_avg": max(float(provisional_pattern.get("quality_score_avg", quality_score) or quality_score), quality_score),
+                        "shape_confidence": shape_conf,
+                        "temporal_confidence": temporal_conf,
+                        "is_confirmed": auto_confirm,
+                    }
+                else:
+                    promoted = self._insert_learned_pattern_from_cycle(
+                        cycle=promoted_cycle,
+                        suggestion_seed=learning_label,
+                        quality_score=max(float(provisional_pattern.get("quality_score_avg", quality_score) or quality_score), quality_score),
+                        now=now,
+                    )
+
                 with self._patterns_conn:
                     self._patterns_conn.execute(
                         "UPDATE provisional_patterns SET status = 'promoted', promoted_pattern_id = ?, updated_at = ? WHERE id = ?",
                         (int(promoted["id"]), now, int(provisional_pattern.get("id", 0) or 0)),
                     )
+
                 return {
                     "status": "promoted",
                     "pattern": promoted,
                     "provisional_pattern": provisional_pattern,
-                    "similarity": best_similarity,
+                    "similarity": max(best_similarity, 0.92 if fuzzy_match else best_similarity),
                 }
 
         return {
             "status": "provisional",
             "pattern": None,
             "provisional_pattern": provisional_pattern,
-            "similarity": best_similarity,
+            "similarity": max(best_similarity, 0.92 if fuzzy_match else best_similarity),
         }
 
     @classmethod
@@ -4028,6 +4084,38 @@ class SQLiteStore:
             score += 0.08
         return max(0.0, min(1.0, score))
 
+    @classmethod
+    def _fuzzy_cluster_merge_match(cls, existing: Dict[str, Any], candidate: Dict[str, Any]) -> bool:
+        shape_distance = cls._profile_shape_distance(existing, candidate)
+        if shape_distance is None:
+            return False
+
+        shape_similarity = max(0.0, min(1.0, 1.0 - float(shape_distance)))
+
+        def rel_delta(a: float, b: float) -> float:
+            base = max(abs(a), abs(b), 1.0)
+            return abs(a - b) / base
+
+        power_delta = rel_delta(
+            cls._safe_float(existing.get("avg_power_w"), 0.0),
+            cls._safe_float(candidate.get("avg_power_w"), 0.0),
+        )
+        duration_delta = rel_delta(
+            cls._safe_float(existing.get("duration_s"), 0.0),
+            cls._safe_float(candidate.get("duration_s"), 0.0),
+        )
+        plateau_delta = rel_delta(
+            cls._safe_float(existing.get("plateau_count"), cls._safe_float(existing.get("num_substates"), 0.0)),
+            cls._safe_float(candidate.get("plateau_count"), cls._safe_float(candidate.get("num_substates"), 0.0)),
+        )
+
+        return bool(
+            shape_similarity >= 0.92
+            and power_delta <= 0.25
+            and duration_delta <= 0.40
+            and plateau_delta <= 0.75
+        )
+
     @staticmethod
     def _ranges_overlap(start_a: str, end_a: str, start_b: str, end_b: str) -> bool:
         a0 = SQLiteStore._parse_iso_timestamp(start_a)
@@ -4149,6 +4237,12 @@ class SQLiteStore:
             "unknown_long_running",
             "unknown_low_power_cycle",
             "unknown_electronics",
+            "always_on_low_power",
+            "electronics_cluster",
+            "psu_constant_load",
+            "fan_small",
+            "pump_small",
+            "unknown_cluster",
         }
         if raw in allowed:
             return raw
@@ -6987,6 +7081,7 @@ class SQLiteStore:
                 learning_label=learning_label,
                 quality_score=quality_score,
                 event_id=event_id,
+                learned_pattern_id=int(learned_provisional.get("id", 0) or 0),
             )
             
             self._increment_learning_counter("events_learned")
@@ -7002,6 +7097,14 @@ class SQLiteStore:
                 similarity_score=float(provisional_result.get("similarity", 0.0) or 0.0),
                 dedup_reason=str(cycle.get("reason") or "medium_quality_learning"),
             )
+            self._record_classification_log(
+                event_id=event_id,
+                pattern_id=int(learned_provisional.get("id", 0) or 0),
+                device_id=int(learned_provisional.get("device_id", 0) or 0) or None,
+                final_label=str(learned_provisional.get("refined_label") or learning_label),
+                final_confidence=float(self._last_hybrid_decision.get("confidence", 0.0) or 0.0),
+                decision_source="provisional_learning",
+            )
             self._emit_learning_summary_if_due()
             
             if provisional_status == "promoted":
@@ -7011,9 +7114,31 @@ class SQLiteStore:
                 self._record_pattern_history_snapshot(promoted)
                 self._upsert_patterns_mirror(promoted)
                 # Update the learned_patterns status from provisional to active
+                promoted_seen_count = int(provisional_result.get("provisional_pattern", {}).get("seen_count", promoted.get("seen_count", 1)) or 1)
+                promoted_shape_conf = float(provisional_result.get("pattern", {}).get("shape_confidence", cycle.get("shape_confidence", 0.0)) or 0.0)
+                promoted_temporal_conf = float(provisional_result.get("pattern", {}).get("temporal_confidence", cycle.get("temporal_confidence", 0.0)) or 0.0)
+                auto_confirmed = self._auto_confirm_pattern(
+                    seen_count=promoted_seen_count,
+                    shape_confidence=promoted_shape_conf,
+                    temporal_confidence=promoted_temporal_conf,
+                )
                 self._patterns_conn.execute(
-                    "UPDATE learned_patterns SET status = 'active', updated_at = ? WHERE id = ?",
-                    (now, int(learned_provisional.get("id", 0) or 0)),
+                    """
+                    UPDATE learned_patterns
+                    SET status = 'active',
+                        seen_count = MAX(COALESCE(seen_count, 0), ?),
+                        quality_score_avg = MAX(COALESCE(quality_score_avg, 0.0), ?),
+                        is_confirmed = CASE WHEN ? THEN 1 ELSE is_confirmed END,
+                        updated_at = ?
+                    WHERE id = ?
+                    """,
+                    (
+                        promoted_seen_count,
+                        float(promoted.get("quality_score_avg", quality_score) or quality_score),
+                        1 if auto_confirmed else 0,
+                        now,
+                        int(learned_provisional.get("id", 0) or 0),
+                    ),
                 )
                 logger.info(
                     "Learning decision: event_id=%s tier=provisional->active (promoted) seg=%.3f wave=%.3f allowed=%s pattern_created=%s learned_pattern_id=%s rejection_reason=%s",
@@ -7027,7 +7152,7 @@ class SQLiteStore:
                 )
                 return {
                     "matched": False,
-                    "pattern": promoted,
+                    "pattern": {**promoted, "id": int(learned_provisional.get("id", 0) or 0), "is_confirmed": auto_confirmed},
                     "provisional_pattern": learned_provisional,
                     "promoted": True,
                     "learning_tier": learning_tier,
@@ -7076,6 +7201,13 @@ class SQLiteStore:
             mode_key_fn=self._mode_key_from_cycle,
             group_id_fn=self._device_group_id,
         )
+        if best and not dedup_decision.force_match and self._fuzzy_cluster_merge_match(best, cycle):
+            dedup_decision = type(dedup_decision)(
+                result="fuzzy_cluster_merge",
+                reason="fuzzy_cluster_shape_power_duration_match",
+                force_match=True,
+            )
+            best_similarity = max(best_similarity, 0.92)
         dedup_result = str(dedup_decision.result)
         dedup_reason = str(dedup_decision.reason)
 
@@ -7198,11 +7330,16 @@ class SQLiteStore:
                     min(1.0, (quality_score_avg * 0.7) + ((1.0 - math.exp(-seen_count / 8.0)) * 0.3)),
                 )
                 storage_fields = self._cycle_storage_fields(cycle)
+                auto_confirm_update = self._auto_confirm_pattern(
+                    seen_count=seen_count,
+                    shape_confidence=float(storage_fields.get("shape_confidence", 0.0) or 0.0),
+                    temporal_confidence=float(storage_fields.get("temporal_confidence", 0.0) or 0.0),
+                )
                 device_id = int(best.get("device_id", 0) or 0) or self._get_or_create_device(
                     label=final_label,
                     phase=phase,
                     confidence=confidence_score_norm,
-                    confirmed=bool(user_label) or bool(best.get("is_confirmed", False)),
+                    confirmed=bool(user_label) or bool(best.get("is_confirmed", False)) or auto_confirm_update,
                 )
                 device_subclass = self._derive_device_subclass(final_label, cycle)
 
@@ -7330,7 +7467,7 @@ class SQLiteStore:
                             confidence_score_norm,
                             frequency_per_day,
                             candidate_name,
-                            1 if (user_label or bool(best.get("is_confirmed", False))) else 0,
+                            1 if (user_label or bool(best.get("is_confirmed", False)) or auto_confirm_update) else 0,
                             shape_vector_json,
                             prototype_hash,
                             operating_modes_json,

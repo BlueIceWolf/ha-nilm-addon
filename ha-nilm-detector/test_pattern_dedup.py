@@ -276,7 +276,8 @@ def test_blocked_segmentation_still_records_event():
 
             assert int((event_count or [0])[0]) == 1
             assert str((dedup_row or [""])[0] or "") == "provisional_store"
-            assert int((pattern_count or [0])[0]) == 0
+            # Provisional patterns are now persisted directly in learned_patterns.
+            assert int((pattern_count or [0])[0]) == 1
             assert int((provisional_count or [0])[0]) == 1
         finally:
             store.close()
@@ -301,7 +302,9 @@ def test_provisional_learning_stores_cluster_without_stable_pattern():
             learned = store.learn_cycle_pattern(provisional, suggestion_type="fridge")
 
             assert learned.get("provisional") is True
-            assert learned.get("pattern") is None
+            learned_pattern = learned.get("pattern") or {}
+            assert int(learned_pattern.get("id", 0) or 0) > 0
+            assert str(learned_pattern.get("status") or "") == "provisional"
             assert store._patterns_conn is not None
             provisional_count = store._patterns_conn.execute(
                 "SELECT COUNT(*) FROM provisional_patterns WHERE status = 'weak_pattern'"
@@ -313,7 +316,7 @@ def test_provisional_learning_stores_cluster_without_stable_pattern():
 
             assert int((provisional_count or [0])[0]) == 1
             assert str((event_row or [""])[0] or "") == "provisional_store"
-            assert int((pattern_count or [0])[0]) == 0
+            assert int((pattern_count or [0])[0]) == 1
         finally:
             store.close()
 

@@ -154,9 +154,11 @@ def _point_powers(points: Sequence[Dict[str, Any]]) -> List[float]:
 
 def _baseline_visible(points: Sequence[Dict[str, Any]], baseline_w: float) -> bool:
     values = _point_powers(points)
-    if len(values) < 2:
+    if not values:
         return False
     tolerance = max(abs(baseline_w) * 0.15, 12.0)
+    if len(values) == 1:
+        return abs(values[0] - baseline_w) <= tolerance
     median_like = sorted(values)[len(values) // 2]
     return abs(median_like - baseline_w) <= tolerance
 
@@ -378,6 +380,15 @@ def infer_unknown_subclass(cycle: Dict[str, Any]) -> Tuple[str, List[str]]:
     if bool(features.get("has_multi_stage_shape")):
         reasons.append("multiple_plateaus_detected")
         return ("unknown_multistage", reasons)
+    if avg_power < 70.0 and duration_s >= 300.0 and normalized_variance <= 3.5 and inrush_ratio < 1.15:
+        reasons.append("always_on_very_low_power")
+        return ("always_on_low_power", reasons)
+    if avg_power < 180.0 and duration_s >= 120.0 and normalized_variance <= 5.0 and inrush_ratio < 1.20:
+        reasons.append("stable_low_power_psu_like")
+        return ("psu_constant_load", reasons)
+    if avg_power < 240.0 and duration_s >= 90.0 and normalized_variance <= 7.0 and inrush_ratio < 1.25:
+        reasons.append("stable_low_power_cluster")
+        return ("electronics_cluster", reasons)
     if avg_power < 120.0 and duration_s >= 120.0 and normalized_variance <= 6.0:
         reasons.append("stable_low_power")
         return ("constant_low_power", reasons)
@@ -391,6 +402,10 @@ def infer_unknown_subclass(cycle: Dict[str, Any]) -> Tuple[str, List[str]]:
         return ("compressor_high_power", reasons)
     if bool(cycle.get("has_motor_pattern", False)):
         reasons.append("motor_like_shape")
+        if avg_power <= 220.0 and inrush_ratio < 1.6:
+            return ("fan_small", reasons)
+        if avg_power <= 450.0 and inrush_ratio < 1.7:
+            return ("pump_small", reasons)
         if normalized_variance <= 9.0:
             return ("pump_constant", reasons)
         return ("pump_variable", reasons)
@@ -411,9 +426,9 @@ def infer_unknown_subclass(cycle: Dict[str, Any]) -> Tuple[str, List[str]]:
         return ("unknown_variable_load", reasons)
     if bool(features.get("has_flat_plateau", False)):
         reasons.append("stable_plateau_without_device_match")
-        return ("unknown_constant_load", reasons)
+        return ("unknown_cluster", reasons)
     reasons.append("fallback_unknown")
-    return ("unknown_electronics", reasons)
+    return ("unknown_cluster", reasons)
 
 
 def score_shape_match(cycle: Dict[str, Any], patterns: Sequence[Dict[str, Any]]) -> ShapeMatchScore:
@@ -583,18 +598,19 @@ def generate_heuristic_candidates(cycle: Dict[str, Any], temporal: TemporalConte
     segmentation_confidence = safe_float(cycle.get("segmentation_confidence", features.get("segmentation_confidence", 0.0)))
     waveform_completeness = safe_float(cycle.get("waveform_completeness_score", features.get("waveform_completeness_score", 0.0)))
     normalized_variance = safe_float(features.get("normalized_variance", cycle.get("normalized_variance", 0.0)))
-    has_motor = bool(cycle.get("has_motor_pattern", False)) or inrush_ratio >= 1.25
+    has_motor_pattern = bool(cycle.get("has_motor_pattern", False))
+    motor_evidence = has_motor_pattern or inrush_ratio >= 1.25
     candidates: List[Dict[str, Any]] = []
 
-    if has_flat_plateau and normalized_variance <= 8.0 and duration_s >= 180.0:
+    if has_flat_plateau and normalized_variance <= 8.0 and duration_s >= 180.0 and not motor_evidence:
         candidates.append({
-            "label": "constant_load_pattern",
+            "label": "electronics_cluster" if avg_power <= 220.0 else "constant_load_pattern",
             "score": 0.62 if segmentation_confidence >= 0.4 else 0.52,
             "source": "heuristic",
             "reasons": ["stable_plateau_detected", f"normalized_variance={normalized_variance:.2f}", f"duration_s={duration_s:.1f}"],
         })
 
-    if truncated and has_motor and duration_s <= 90.0:
+    if truncated and motor_evidence and duration_s <= 90.0:
         candidates.append({
             "label": "compressor_candidate" if avg_power <= 700.0 else "motor_candidate",
             "score": 0.66,
@@ -602,7 +618,7 @@ def generate_heuristic_candidates(cycle: Dict[str, Any], temporal: TemporalConte
             "reasons": ["startup-only event", "full-cycle evidence missing", "segmentation incomplete"],
         })
 
-    if segmentation_confidence < 0.55 and has_motor and avg_power <= 900.0:
+    if segmentation_confidence < 0.55 and motor_evidence and avg_power <= 900.0:
         candidates.append({
             "label": "pump_candidate" if has_flat_plateau else "motor_candidate",
             "score": 0.58,
@@ -610,7 +626,7 @@ def generate_heuristic_candidates(cycle: Dict[str, Any], temporal: TemporalConte
             "reasons": ["segmentation quality gate", f"segmentation_confidence={segmentation_confidence:.2f}"],
         })
 
-    if has_motor and duration_s <= 45.0 and not has_flat_plateau:
+    if motor_evidence and duration_s <= 45.0 and not has_flat_plateau:
         candidates.append({
             "label": "compressor_candidate",
             "score": 0.54,
@@ -618,14 +634,17 @@ def generate_heuristic_candidates(cycle: Dict[str, Any], temporal: TemporalConte
             "reasons": ["short_high_inrush_startup_without_plateau"],
         })
 
-    if has_motor and has_flat_plateau and duration_s >= 90.0 and segmentation_confidence >= 0.55 and waveform_completeness >= 0.50:
+    if motor_evidence and has_flat_plateau and duration_s >= 90.0 and segmentation_confidence >= 0.55 and waveform_completeness >= 0.50:
         if avg_power <= 550.0:
-            label = "compressor_small" if temporal.occurrence_count >= 4 else "small_pump_motor"
+            if inrush_ratio < 1.30:
+                label = "fan_small" if avg_power <= 180.0 else "pump_small"
+            else:
+                label = "compressor_small" if temporal.occurrence_count >= 4 else "small_pump_motor"
         else:
             label = "compressor_large" if temporal.occurrence_count >= 3 else "large_pump_motor"
         candidates.append({
             "label": label,
-            "score": 0.60 if "compressor" in label else 0.56,
+            "score": 0.60 if "compressor" in label else 0.57,
             "source": "heuristic",
             "reasons": ["motor_like_plateau", f"inrush_ratio={inrush_ratio:.2f}", f"plateau_stability={plateau_stability:.2f}"],
         })
@@ -695,12 +714,19 @@ def resolve_final_decision(
     penalties = list(cycle.get("confidence_penalties") or cycle.get("derived_features", {}).get("confidence_penalties", []))
     learning_allowed = bool(cycle.get("learning_allowed", cycle.get("derived_features", {}).get("learning_allowed", False)))
     learning_tier = str(cycle.get("learning_tier", cycle.get("derived_features", {}).get("learning_tier", "blocked")))
+    has_motor_pattern = bool(cycle.get("has_motor_pattern", False)) or bool(cycle.get("derived_features", {}).get("has_motor_pattern", False))
+    inrush_ratio = safe_float(cycle.get("derived_features", {}).get("inrush_ratio", cycle.get("inrush_ratio", 0.0)))
+    motor_evidence = has_motor_pattern or inrush_ratio >= 1.25
 
     if shape_match.valid and shape_match.score >= 0.55 and shape_match.label not in {"", "unknown", "unbekannt"}:
+        shape_score = min(0.85, 0.35 + (shape_match.score * 0.55))
+        shape_label = str(shape_match.label or "")
+        if ("compressor" in shape_label or shape_label == "fridge") and not motor_evidence:
+            shape_score = min(shape_score, 0.52)
         candidates.append(
             {
-                "label": shape_match.label,
-                "score": min(0.85, 0.35 + (shape_match.score * 0.55)),
+                "label": shape_label,
+                "score": shape_score,
                 "source": "shape_match",
                 "reasons": list(shape_match.reasons),
             }
@@ -733,14 +759,14 @@ def resolve_final_decision(
             elif "pump" in label:
                 label = "pump_candidate"
             elif label == "constant_load_pattern" and learning_tier == "blocked":
-                label = "unknown_constant_load"
+                label = "unknown_cluster"
             else:
-                label = "compressor_candidate"
+                label = "compressor_candidate" if motor_evidence else "unknown_cluster"
             reasons.append("full-cycle evidence missing")
             reasons.append("segmentation incomplete")
 
     if label == "fridge" and temporal.occurrence_count < 5:
-        label = "compressor_candidate"
+        label = "fridge_candidate"
         final_confidence = min(final_confidence, 0.58)
         label_source = "hybrid"
         reasons.append("downgraded_from_fridge_due_to_weak_recurrence")
@@ -762,7 +788,7 @@ def resolve_final_decision(
         final_confidence = min(final_confidence, 0.64)
         reasons.append("learning_blocked_due_to_segmentation_quality")
 
-    if label not in {"unknown", "unbekannt", "unknown_electronics"}:
+    if label not in {"unknown", "unbekannt", "unknown_cluster", "unknown_electronics"}:
         final_confidence = max(final_confidence, 0.35)
 
     if label in {"unknown", "unbekannt"}:
