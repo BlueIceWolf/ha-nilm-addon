@@ -6143,6 +6143,35 @@ class SQLiteStore:
                     source = "hybrid_local_llm_override"
                     decision_reason = "local_llm_strong_override"
 
+        ensemble_votes = {
+            "prototype": (best_label, prototype_confidence),
+            "shape": (best_label, shape_confidence),
+            "ml": (ml_label, ml_conf),
+            "attention": (
+                str(llm_result.label or "unknown") if llm_result else "unknown",
+                float(llm_result.confidence or 0.0) if llm_result else 0.0,
+            ),
+            "temporal": (
+                staged_label,
+                float(cycle.get("temporal_confidence", 0.0) or 0.0),
+            ),
+            "rule": (
+                staged_label,
+                float(cycle.get("rule_confidence", staged_confidence) or 0.0),
+            ),
+        }
+        ensemble_result = self._ensemble_classifier.combine(ensemble_votes)
+        if ensemble_result is not None:
+            if ensemble_result.label == str(final_label):
+                confidence = max(confidence, float(ensemble_result.confidence))
+                source = "ensemble_agreement"
+                decision_reason = "multi_model_agreement"
+            elif confidence < 0.78 and ensemble_result.confidence >= max(0.66, confidence + 0.05):
+                final_label = ensemble_result.label
+                confidence = float(ensemble_result.confidence)
+                source = "ensemble_override"
+                decision_reason = "multi_model_consensus_override"
+
         normalized_final_label = self._normalize_pattern_name(str(final_label or ""))
         label_lock_phase = str(phase_locks.get(normalized_final_label) or "")
         if label_lock_phase in {"L1", "L2", "L3"} and cycle_phase in {"L1", "L2", "L3"} and label_lock_phase != cycle_phase:
