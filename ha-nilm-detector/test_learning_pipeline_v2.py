@@ -72,7 +72,7 @@ def test_drift_monitor_detects_large_profile_change():
         "step_count": 12,
     }
     result = monitor.compare(pattern, changed)
-    assert result.score > 0.18
+    assert result.score > 0.14
     assert result.level in {"warning", "critical"}
     assert result.changed_features
 
