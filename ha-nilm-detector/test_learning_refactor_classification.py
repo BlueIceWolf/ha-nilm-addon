@@ -29,7 +29,7 @@ def test_unknown_bucket_refinement_avoids_broad_unknown_electronics():
 
     label, reasons = infer_unknown_subclass(enrich_cycle_for_classification(cycle, [], fallback="unknown"))
 
-    assert label in {"pump_constant", "pump_variable", "compressor_low_power", "compressor_high_power", "unknown_short_pulse"}
+    assert label in {"motor_load", "variable_motor_load", "motor_start_candidate", "short_pulse_load"}
     assert isinstance(reasons, list)
 
 
@@ -77,7 +77,7 @@ def test_high_inrush_motor_prefers_motor_or_compressor_candidate_over_generic_pu
 
     enriched = enrich_cycle_for_classification(cycle, [], fallback="unknown")
 
-    assert enriched["refined_label"] in {"compressor_candidate", "motor_candidate", "small_pump_motor", "large_pump_motor", "compressor_low_power", "compressor_high_power"}
+    assert enriched["refined_label"] in {"motor_start_candidate", "motor_load", "variable_motor_load", "refrigeration_candidate"}
     assert float(enriched["shape_confidence"]) >= 0.0
     assert float(enriched["final_confidence"]) >= 0.35
 
@@ -128,8 +128,8 @@ def test_startup_only_compressor_event_stays_candidate_not_fridge():
 
     enriched = enrich_cycle_for_classification(cycle, patterns, fallback="unknown")
 
-    assert enriched["refined_label"] in {"compressor_candidate", "motor_candidate", "pump_candidate"}
-    assert "full-cycle evidence missing" in enriched["reason"] or "segmentation incomplete" in enriched["reason"]
+    assert enriched["refined_label"] in {"motor_start_candidate", "motor_load", "refrigeration_candidate"}
+    assert "full_cycle_missing" in enriched["reason"] or "device_identity_downgraded" in enriched["reason"] or "segmentation" in enriched["reason"]
 
 
 def test_full_waveform_generates_shape_signature_and_high_segmentation_confidence():
@@ -159,3 +159,45 @@ def test_full_waveform_generates_shape_signature_and_high_segmentation_confidenc
     assert enriched["shape_signature"] != ""
     assert float(enriched["segmentation_confidence"]) >= 0.7
     assert float(enriched["waveform_completeness_score"]) >= 0.7
+
+def test_stable_low_power_motor_is_not_mislabeled_as_electronics():
+    cycle = {
+        "phase": "L3",
+        "avg_power_w": 105.0,
+        "peak_power_w": 145.0,
+        "duration_s": 900.0,
+        "power_variance": 500.0,
+        "rise_rate_w_per_s": 70.0,
+        "fall_rate_w_per_s": 45.0,
+        "peak_to_avg_ratio": 1.38,
+        "num_substates": 1,
+        "step_count": 1,
+        "has_motor_pattern": True,
+        "profile_points": _profile([10, 145, 112, 106, 104, 103, 12]),
+    }
+
+    enriched = enrich_cycle_for_classification(cycle, [], fallback="unknown")
+
+    assert enriched["refined_label"] not in {"electronics_cluster", "low_power_electronics"}
+    assert enriched["refined_label"] in {"motor_load", "variable_motor_load", "refrigeration_candidate"}
+
+
+def test_multistage_profile_stays_generic_without_device_specific_evidence():
+    cycle = {
+        "phase": "L2",
+        "avg_power_w": 700.0,
+        "peak_power_w": 2100.0,
+        "duration_s": 3600.0,
+        "power_variance": 180000.0,
+        "rise_rate_w_per_s": 120.0,
+        "fall_rate_w_per_s": 90.0,
+        "num_substates": 3,
+        "step_count": 4,
+        "has_motor_pattern": False,
+        "has_heating_pattern": False,
+        "profile_points": _profile([20, 300, 1800, 250, 2100, 300, 20]),
+    }
+
+    enriched = enrich_cycle_for_classification(cycle, [], fallback="unknown")
+
+    assert enriched["refined_label"] == "multistate_appliance"
