@@ -11,7 +11,7 @@ from datetime import datetime, timedelta, timezone
 from typing import Any, Dict, List, Optional, Tuple
 
 from app.learning.ml_classifier import LocalMLClassifier
-from app.learning.local_llm import LocalLLMClassifier
+from app.learning.attention_reviewer import AttentionReviewer
 from app.learning.learning_filter_v2 import LearningFilterV2
 from app.learning.drift_monitor import DriftMonitor
 from app.learning.ensemble import EnsembleClassifier
@@ -89,7 +89,7 @@ class SQLiteStore:
         self.pattern_match_threshold = 0.45
         self.ml_confidence_threshold = 0.60
         self._ml_classifier = LocalMLClassifier()
-        self._local_llm = LocalLLMClassifier()
+        self._attention_reviewer = AttentionReviewer()
         self._learning_filter_v2 = LearningFilterV2()
         self._drift_monitor = DriftMonitor()
         self._ensemble_classifier = EnsembleClassifier()
@@ -6101,14 +6101,14 @@ class SQLiteStore:
 
         confidence = max(0.0, min(1.0, float(final_confidence)))
 
-        # A local LLM is only used as a reviewer for ambiguous, already segmented
-        # events. It may choose only from deterministic candidates / learned labels.
-        llm_result = None
-        if self._local_llm.should_review(
+        # The built-in attention reviewer is used only for ambiguous, already
+        # segmented events and may choose only from known candidate labels.
+        attention_result = None
+        if self._attention_reviewer.should_review(
             current_label=str(final_label or ""),
             current_confidence=confidence,
         ):
-            llm_candidates = [
+            attention_candidates = [
                 final_label,
                 staged_label,
                 best_label,
@@ -6116,40 +6116,40 @@ class SQLiteStore:
                 fallback,
                 *list(cycle.get("candidate_labels", []) or []),
             ]
-            llm_candidates.extend(
+            attention_candidates.extend(
                 self._device_group_key(pattern)
                 for pattern in patterns[:20]
             )
             try:
-                llm_result = self._local_llm.classify(
+                attention_result = self._attention_reviewer.classify(
                     cycle=cycle,
-                    candidate_labels=llm_candidates,
+                    candidate_labels=attention_candidates,
                     similar_patterns=patterns[:8],
                 )
-            except Exception as llm_error:
-                logger.debug("Local LLM review failed: %s", llm_error)
-                llm_result = None
+            except Exception as attention_error:
+                logger.debug("Local attention review failed: %s", attention_error)
+                attention_result = None
 
-        if llm_result is not None and llm_result.confidence >= self._local_llm.min_confidence:
-            llm_label = str(llm_result.label or "unknown")
-            if llm_label not in {"", "unknown", "unbekannt"}:
-                if llm_label == str(final_label):
-                    confidence = max(confidence, min(0.98, (confidence * 0.65) + (llm_result.confidence * 0.35)))
-                    source = "hybrid_local_llm_agreement"
-                    decision_reason = "local_llm_agrees"
-                elif llm_result.confidence >= max(0.78, confidence + 0.10):
-                    final_label = llm_label
-                    confidence = min(0.95, (confidence * 0.35) + (llm_result.confidence * 0.65))
-                    source = "hybrid_local_llm_override"
-                    decision_reason = "local_llm_strong_override"
+        if attention_result is not None and attention_result.confidence >= self._attention_reviewer.min_confidence:
+            attention_label = str(attention_result.label or "unknown")
+            if attention_label not in {"", "unknown", "unbekannt"}:
+                if attention_label == str(final_label):
+                    confidence = max(confidence, min(0.98, (confidence * 0.65) + (attention_result.confidence * 0.35)))
+                    source = "hybrid_attention_agreement"
+                    decision_reason = "attention_agrees"
+                elif attention_result.confidence >= max(0.78, confidence + 0.10):
+                    final_label = attention_label
+                    confidence = min(0.95, (confidence * 0.35) + (attention_result.confidence * 0.65))
+                    source = "hybrid_attention_override"
+                    decision_reason = "attention_strong_override"
 
         ensemble_votes = {
             "prototype": (best_label, prototype_confidence),
             "shape": (best_label, shape_confidence),
             "ml": (ml_label, ml_conf),
             "attention": (
-                str(llm_result.label or "unknown") if llm_result else "unknown",
-                float(llm_result.confidence or 0.0) if llm_result else 0.0,
+                str(attention_result.label or "unknown") if attention_result else "unknown",
+                float(attention_result.confidence or 0.0) if attention_result else 0.0,
             ),
             "temporal": (
                 staged_label,
@@ -6298,12 +6298,12 @@ class SQLiteStore:
                 "decision_reason": decision_reason,
                 "attention": (
                     {
-                        "label": llm_result.label,
-                        "confidence": round(float(llm_result.confidence), 4),
-                        "device_family": llm_result.device_family,
-                        "evidence": llm_result.evidence,
+                        "label": attention_result.label,
+                        "confidence": round(float(attention_result.confidence), 4),
+                        "device_family": attention_result.device_family,
+                        "evidence": attention_result.evidence,
                     }
-                    if llm_result
+                    if attention_result
                     else None
                 ),
                 "ensemble": (
