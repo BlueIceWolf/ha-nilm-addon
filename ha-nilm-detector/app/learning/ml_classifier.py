@@ -5,7 +5,7 @@ from __future__ import annotations
 from dataclasses import dataclass
 from typing import Any, Dict, List, Sequence, Tuple
 
-from app.learning.feature_vector_v2 import build_feature_vector_v2
+from app.learning.feature_vector_v2 import FEATURE_NAMES, build_feature_vector_v2
 from app.learning.model_lifecycle import RandomForestLifecycle
 from app.utils.logging import get_logger
 
@@ -104,11 +104,27 @@ class LocalMLClassifier:
         top_n = [{"label": str(label), "score": float(score)} for label, score in indexed[:5]]
         best_label, best_score = indexed[0]
         status = self._lifecycle.status
+        importances = []
+        try:
+            raw_importances = list(getattr(self._model, "feature_importances_", []) or [])
+            importances = sorted(
+                (
+                    {"feature": FEATURE_NAMES[idx], "importance": round(float(value), 4)}
+                    for idx, value in enumerate(raw_importances)
+                    if idx < len(FEATURE_NAMES)
+                ),
+                key=lambda item: item["importance"],
+                reverse=True,
+            )[:8]
+        except Exception:
+            importances = []
+
         info = {
             "champion_score": round(float(status.champion_score), 4),
             "challenger_score": round(float(status.challenger_score), 4),
             "promoted": bool(status.promoted),
             "active_model": status.champion_name,
+            "feature_importance": importances,
         }
 
         if float(best_score) < confidence_threshold:
