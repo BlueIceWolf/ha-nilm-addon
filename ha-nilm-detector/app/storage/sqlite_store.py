@@ -4175,8 +4175,8 @@ class SQLiteStore:
                        COALESCE(final_label, '')
                 FROM events
                 WHERE phase = ?
-                  AND COALESCE(start_time, start_ts) = ?
-                  AND COALESCE(end_time, end_ts) = ?
+                  AND start_ts = ?
+                  AND end_ts = ?
                 ORDER BY event_id ASC
                 LIMIT 1
                 """,
