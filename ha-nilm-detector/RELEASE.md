@@ -4,6 +4,22 @@
 
 ---
 
+# Release 0.7.0 (BETA)
+
+## Store Kurztext
+- **Lokale LLM-gestützte NILM-Bewertung**: unsichere, technisch sauber segmentierte Events können optional von einem lokal laufenden Ollama-Modell geprüft werden. Klassische Pattern-/Shape-/ML-Logik bleibt der primäre Pfad.
+
+## Highlights
+- Strukturierte LLM-Ausgabe über JSON Schema
+- nur lokale/private Modell-Endpunkte zulässig
+- kompakte Eventmerkmale statt vollständiger Home-Assistant-Rohdaten
+- konservatives Override-Gating gegen Fehlklassifikationen
+- reproduzierbarer Containerstart ohne Runtime-Paketinstallation
+- korrekte Release-Version im Container
+- Repository-Cleanup alter Entwicklungshelfer
+
+---
+
 # Release 0.6.44 (BETA)
 
 ## Store Kurztext
