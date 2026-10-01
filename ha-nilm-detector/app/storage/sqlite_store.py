@@ -6119,13 +6119,13 @@ class SQLiteStore:
             ]
             attention_candidates.extend(
                 self._device_group_key(pattern)
-                for pattern in patterns[:20]
+                for pattern in patterns[:40]
             )
             try:
                 attention_result = self._attention_reviewer.classify(
                     cycle=cycle,
                     candidate_labels=attention_candidates,
-                    similar_patterns=patterns[:8],
+                    similar_patterns=patterns[:40],
                 )
             except Exception as attention_error:
                 logger.debug("Local attention review failed: %s", attention_error)
