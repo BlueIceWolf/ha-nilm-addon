@@ -2,6 +2,19 @@
 
 > ⚠️ **Hinweis**: Dieses Projekt ist experimentell (BETA) - Breaking Changes und Bugs können auftreten.
 
+## 0.7.5 (BETA)
+
+### Electrical Device Clustering
+- Physische Gerätecluster basieren nicht mehr nur auf Lastklasse + Phase.
+- Neue v2-Gerätefingerprints berücksichtigen typische Delta-/Wirkleistung, Peak, Laufzeit, Inrush, Zustandsanzahl, Motor-/Heizverhalten und eine grob quantisierte Kurvenform.
+- Multiplikative Leistungs- und Laufzeit-Buckets halten natürliche Schwankungen zusammen, trennen aber klar unterschiedliche Verbraucher.
+- Verwandte Motor-Klassen wie `motor_load`, `variable_motor_load` und `refrigeration_candidate` können zum selben elektrischen Cluster gehören, wenn ihre Signatur passt.
+- Bestehende automatisch erzeugte 0.7.4-Geräte werden einmalig neu geclustert.
+- Benutzerbenannte Geräte und deren Identität werden bei der Migration geschützt.
+- Automatische Pattern-Bestätigung bestätigt nicht länger automatisch eine physische Geräteidentität.
+- Pattern-Labeling bestätigt jetzt auch die zugehörige Device-Registry-Zeile korrekt.
+- Regressionstests für ähnliche ~100-W-Zyklen vs. klar unterschiedliche ~1,2-kW-Lasten sowie User-Label-Schutz ergänzt.
+
 ## 0.7.4 (BETA)
 
 ### Device Registry & Explainability

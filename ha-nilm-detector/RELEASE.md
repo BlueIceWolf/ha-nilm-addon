@@ -4,6 +4,18 @@
 
 ---
 
+# Release 0.7.5 (BETA)
+
+## Electrical Device Clustering
+- elektrische Fingerprints statt Klasse+Phase als Geräte-ID-Grundlage
+- Leistung, Peak, Laufzeit, Inrush, Zustände und grobe Kurvenform im Cluster-Key
+- ähnliche natürliche Zyklen bleiben zusammen, deutlich andere Lasten werden getrennt
+- sichere Einmal-Migration bestehender automatischer Geräte
+- Benutzerlabels bleiben geschützt
+- automatische Pattern-Confidence wird nicht mehr mit bestätigter Geräteidentität verwechselt
+
+---
+
 # Release 0.7.4 (BETA)
 
 ## Device Registry & Explainability

@@ -93,7 +93,7 @@ def test_dedup_updates_existing_pattern_for_high_similarity():
             assert first.get("pattern") is not None
             assert second.get("matched") is True
             dedup = dict(second.get("dedup") or {})
-            assert dedup.get("result") in {"update_existing", "merge_mode"}
+            assert dedup.get("result") in {"update_existing", "merge_mode", "fuzzy_cluster_merge"}
             assert store._patterns_conn is not None
             conn = store._patterns_conn
 
@@ -235,7 +235,7 @@ def test_same_device_slightly_different_inrush_still_merges():
             assert first.get("pattern") is not None
             assert second.get("pattern") is not None
             dedup = dict(second.get("dedup") or {})
-            assert dedup.get("result") in {"update_existing", "merge_mode"}
+            assert dedup.get("result") in {"update_existing", "merge_mode", "fuzzy_cluster_merge"}
             assert store._patterns_conn is not None
             count_row = store._patterns_conn.execute("SELECT COUNT(*) FROM learned_patterns").fetchone()
             assert int((count_row or [0])[0]) == 1

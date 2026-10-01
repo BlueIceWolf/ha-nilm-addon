@@ -411,6 +411,7 @@ class SQLiteStore:
             self._maybe_backfill_normalized_tables()
             self._maybe_backfill_patterns_mirror()
             self._maybe_backfill_inrush_runtime_schema()
+            self._maybe_recluster_device_registry_v2()
             self._maybe_repair_pattern_timestamps()
             self.cleanup_old_data()
             self._log_startup_diagnostics(stage="post-init")
@@ -527,6 +528,151 @@ class SQLiteStore:
 
         # Keep an explicit normalized patterns table in sync (separate from learned_patterns).
         self._maybe_backfill_patterns_mirror()
+
+    def _maybe_recluster_device_registry_v2(self) -> None:
+        """Rebuild only automatic physical-device assignments using the v2 fingerprint.
+
+        User-named devices are preserved. Automatic pattern confirmation is not
+        treated as confirmation of a physical appliance identity.
+        """
+        if not self._patterns_conn:
+            return
+
+        event_key = "physical_device_registry_recluster:v2"
+        if self._migration_applied(self._patterns_conn, event_key):
+            return
+        if not self._table_exists(self._patterns_conn, "learned_patterns"):
+            self._record_migration(self._patterns_conn, event_key, "learned_patterns missing")
+            return
+
+        try:
+            patterns = self.list_patterns(limit=10000)
+            if not patterns:
+                self._record_migration(self._patterns_conn, event_key, "no patterns")
+                return
+
+            protected_device_ids = {
+                int(p.get("device_id", 0) or 0)
+                for p in patterns
+                if str(p.get("user_label") or "").strip() and int(p.get("device_id", 0) or 0) > 0
+            }
+
+            auto_device_ids = []
+            if self._table_exists(self._patterns_conn, "devices"):
+                rows = self._patterns_conn.execute(
+                    """
+                    SELECT device_id
+                    FROM devices
+                    WHERE user_label IS NULL OR TRIM(user_label) = ''
+                    """
+                ).fetchall()
+                auto_device_ids = [
+                    int(row[0])
+                    for row in rows
+                    if int(row[0] or 0) > 0 and int(row[0] or 0) not in protected_device_ids
+                ]
+
+            # Old device_cycles were aggregated under the coarse label+phase grouping
+            # and cannot be safely split. Rebuild them from the re-assigned patterns.
+            with self._patterns_conn:
+                if auto_device_ids:
+                    marks = ",".join(["?"] * len(auto_device_ids))
+                    if self._table_exists(self._patterns_conn, "device_cycles"):
+                        self._patterns_conn.execute(
+                            f"DELETE FROM device_cycles WHERE device_id IN ({marks})",
+                            tuple(auto_device_ids),
+                        )
+                    self._patterns_conn.execute(
+                        f"DELETE FROM devices WHERE device_id IN ({marks})",
+                        tuple(auto_device_ids),
+                    )
+
+            reassigned = 0
+            groups: set[str] = set()
+            for pattern in patterns:
+                pattern_id = int(pattern.get("id", 0) or 0)
+                if pattern_id <= 0:
+                    continue
+
+                user_label = str(pattern.get("user_label") or "").strip()
+                existing_device_id = int(pattern.get("device_id", 0) or 0)
+                if user_label:
+                    # A user label is the authority for physical identity.
+                    if existing_device_id > 0 and self._table_exists(self._patterns_conn, "devices"):
+                        with self._patterns_conn:
+                            self._patterns_conn.execute(
+                                """
+                                UPDATE devices
+                                SET user_label = ?, final_label = ?, confirmed = 1,
+                                    updated_at = ?
+                                WHERE device_id = ?
+                                """,
+                                (user_label, user_label, datetime.now().isoformat(), existing_device_id),
+                            )
+                    continue
+
+                label = str(
+                    pattern.get("refined_label")
+                    or pattern.get("suggestion_type")
+                    or pattern.get("candidate_name")
+                    or "unknown_load"
+                )
+                phase = str(pattern.get("phase") or "L1")
+                group_key = self._device_group_id(label, pattern)
+                groups.add(group_key)
+                confidence_raw = float(pattern.get("confidence_score", 0.0) or 0.0)
+                confidence = confidence_raw / 100.0 if confidence_raw > 1.0 else confidence_raw
+
+                device_id = self._get_or_create_device(
+                    label=label,
+                    phase=phase,
+                    confidence=max(0.0, min(confidence, 1.0)),
+                    confirmed=False,
+                    group_key=group_key,
+                )
+                if not device_id:
+                    continue
+
+                with self._patterns_conn:
+                    self._patterns_conn.execute(
+                        """
+                        UPDATE learned_patterns
+                        SET device_id = ?, device_group_id = ?, updated_at = ?
+                        WHERE id = ?
+                        """,
+                        (int(device_id), group_key, datetime.now().isoformat(), pattern_id),
+                    )
+                    if self._table_exists(self._patterns_conn, "events"):
+                        self._patterns_conn.execute(
+                            """
+                            UPDATE events
+                            SET assigned_device_id = ?
+                            WHERE assigned_pattern_id = ? OR matched_pattern_id = ?
+                            """,
+                            (int(device_id), pattern_id, pattern_id),
+                        )
+
+                rebuilt_pattern = dict(pattern)
+                rebuilt_pattern["device_id"] = int(device_id)
+                rebuilt_pattern["device_group_id"] = group_key
+                self._upsert_device_cycle(
+                    device_id=int(device_id),
+                    pattern_id=pattern_id,
+                    cycle=rebuilt_pattern,
+                    phase_rows=[],
+                    final_label=label,
+                )
+                self._upsert_patterns_mirror(rebuilt_pattern)
+                reassigned += 1
+
+            details = (
+                f"patterns={len(patterns)} reassigned={reassigned} "
+                f"groups={len(groups)} protected_devices={len(protected_device_ids)}"
+            )
+            self._record_migration(self._patterns_conn, event_key, details)
+            logger.info("Reclustered automatic device registry with v2 electrical fingerprint: %s", details)
+        except Exception as e:
+            logger.warning("Device registry v2 recluster failed: %s", e)
 
     def _maybe_backfill_patterns_mirror(self) -> None:
         if not self._patterns_conn:
@@ -3514,7 +3660,7 @@ class SQLiteStore:
             label=suggestion_seed,
             phase=str(cycle.get("phase", "L1")),
             confidence=confidence_score_norm,
-            confirmed=auto_confirmed,
+            confirmed=False,
             group_key=device_group_id,
         )
         device_subclass = self._derive_device_subclass(suggestion_seed, cycle)
@@ -4284,10 +4430,103 @@ class SQLiteStore:
         return f"{phase_mode}:{substates}:{duration_bucket}:{duty_bucket}"
 
     @staticmethod
-    def _device_group_id(label: str, cycle: Dict[str, Any]) -> str:
-        clean = SQLiteStore._normalize_pattern_name(label)
-        phase = str(cycle.get("phase") or "L1")
-        return f"{clean or 'unknown'}:{phase}"
+    def _device_behavior_family(label: str) -> str:
+        """Collapse classifier labels into broad electrical behaviour families."""
+        clean = SQLiteStore._normalize_pattern_name(label).replace(" ", "_")
+        motor = {
+            "motor_load", "variable_motor_load", "motor_start_candidate",
+            "refrigeration_candidate", "pump_candidate", "motor_candidate",
+            "compressor_candidate", "compressor_small", "compressor_large",
+            "small_pump_motor", "large_pump_motor", "pump", "motor",
+        }
+        heating = {
+            "resistive_heater", "heating_load", "heater", "space_heater",
+            "immersion_heater", "hot_water_tank",
+        }
+        electronics = {
+            "low_power_electronics", "permanent_low_power_load",
+            "electronics_cluster", "electronics", "always_on_low_power",
+            "psu_constant_load",
+        }
+        if clean in motor:
+            return "motor"
+        if clean in heating:
+            return "heating"
+        if clean in electronics:
+            return "electronics"
+        if clean == "multistate_appliance":
+            return "multistate"
+        if clean == "steady_on_off_load":
+            return "steady"
+        if clean == "variable_load":
+            return "variable"
+        if clean == "short_pulse_load":
+            return "pulse"
+        return clean or "unknown"
+
+    @staticmethod
+    def _log_bucket(value: float, ratio: float, floor: float = 1.0) -> int:
+        """Bucket positive values by multiplicative distance instead of fixed watts."""
+        v = max(float(value or 0.0), float(floor))
+        r = max(float(ratio), 1.01)
+        try:
+            return int(round(math.log(v / float(floor), r)))
+        except Exception:
+            return 0
+
+    @classmethod
+    def _coarse_shape_bucket(cls, cycle: Dict[str, Any]) -> str:
+        """Small, noise-tolerant shape hash used only for physical device grouping."""
+        points = cls._normalize_profile_points(cycle.get("delta_profile_points", []))
+        if len(points) < 6:
+            points = cls._normalize_profile_points(cycle.get("profile_points", []))
+        if len(points) < 6:
+            return "noshape"
+        vec = cls._resample_profile_points(points, sample_count=10)
+        if not vec:
+            return "noshape"
+        peak = max((abs(float(v)) for v in vec), default=0.0)
+        if peak <= 1.0:
+            return "flat"
+        # Quantize to 20% steps. This keeps the 94-110 W refrigeration cycles
+        # together while still separating genuinely different state sequences.
+        q = [int(round(max(-1.5, min(1.5, float(v) / peak)) * 5.0)) for v in vec]
+        raw = ",".join(str(v) for v in q)
+        return hashlib.sha1(raw.encode("utf-8")).hexdigest()[:8]
+
+    @classmethod
+    def _device_group_id(cls, label: str, cycle: Dict[str, Any]) -> str:
+        """Build an electrical fingerprint for a physical-device candidate.
+
+        The key intentionally uses broad multiplicative buckets. It is conservative:
+        clearly different powers/durations cannot collapse merely because the
+        classifier assigned the same behaviour label and phase.
+        """
+        family = cls._device_behavior_family(label)
+        phase = str(cycle.get("phase") or "L1").upper()
+        avg = cls._safe_float(cycle.get("delta_avg_power_w"), 0.0)
+        if avg <= 1.0:
+            avg = cls._safe_float(cycle.get("avg_power_w"), 0.0)
+        peak = cls._safe_float(cycle.get("delta_peak_power_w"), 0.0)
+        if peak <= 1.0:
+            peak = cls._safe_float(cycle.get("peak_power_w"), 0.0)
+        duration = cls._safe_float(cycle.get("duration_s"), cls._safe_float(cycle.get("avg_duration_s"), 0.0))
+        inrush_ratio = cls._safe_float(cycle.get("inrush_ratio"), cls._safe_float(cycle.get("peak_to_avg_ratio"), 1.0))
+        substates = min(max(int(cycle.get("num_substates", cycle.get("plateau_count", 0)) or 0), 0), 5)
+        motor = 1 if bool(cycle.get("has_motor_pattern", False)) else 0
+        heating = 1 if bool(cycle.get("has_heating_pattern", False)) else 0
+
+        power_bucket = cls._log_bucket(avg, ratio=1.35, floor=8.0)
+        peak_bucket = cls._log_bucket(peak, ratio=1.45, floor=10.0)
+        duration_bucket = cls._log_bucket(duration, ratio=1.60, floor=8.0)
+        inrush_bucket = int(round(max(0.0, min(inrush_ratio, 5.0)) / 0.35))
+        shape_bucket = cls._coarse_shape_bucket(cycle)
+
+        return (
+            f"v2:{family}:{phase}:p{power_bucket}:pk{peak_bucket}:"
+            f"d{duration_bucket}:i{inrush_bucket}:s{substates}:"
+            f"m{motor}:h{heating}:sh{shape_bucket}"
+        )
 
     @classmethod
     def _dedup_similarity(cls, existing: Dict[str, Any], candidate: Dict[str, Any]) -> float:
@@ -8159,7 +8398,7 @@ class SQLiteStore:
                     label=final_label,
                     phase=phase,
                     confidence=confidence_score_norm,
-                    confirmed=bool(user_label) or bool(best.get("is_confirmed", False)) or auto_confirm_update,
+                    confirmed=bool(user_label),
                     group_key=str(cycle.get("device_group_id") or best.get("device_group_id") or self._device_group_id(final_label, cycle)),
                 )
                 device_subclass = self._derive_device_subclass(final_label, cycle)
@@ -8598,6 +8837,16 @@ class SQLiteStore:
                 confirmed=True,
                 group_key=str((existing_device_row[1] if existing_device_row else "") or f"user:{self._normalize_pattern_name(clean_label)}:{phase}"),
             )
+            if device_id and self._table_exists(self._patterns_conn, "devices"):
+                with self._patterns_conn:
+                    self._patterns_conn.execute(
+                        """
+                        UPDATE devices
+                        SET user_label = ?, final_label = ?, confirmed = 1, updated_at = ?
+                        WHERE device_id = ?
+                        """,
+                        (clean_label, clean_label, datetime.now().isoformat(), int(device_id)),
+                    )
             with self._patterns_conn:
                 self._patterns_conn.execute(
                     """
