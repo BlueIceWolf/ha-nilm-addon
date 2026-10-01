@@ -7192,15 +7192,42 @@ class SQLiteStore:
 
         now = datetime.now().isoformat()
         patterns = self.list_patterns(limit=500)
+        legacy_context_missing = not bool(
+            cycle.get("profile_points")
+            or cycle.get("waveform_points")
+            or cycle.get("sample_count")
+            or cycle.get("pre_roll_samples")
+            or cycle.get("post_roll_samples")
+        )
         cycle = self._enrich_cycle_for_learning(cycle, fallback=suggestion_seed, patterns=patterns)
         suggestion_seed = str(cycle.get("refined_label") or suggestion_seed or "unknown")
         legacy_tier = self._determine_learning_tier(cycle)
         filter_decision = self._learning_filter_v2.evaluate(cycle)
         tier_rank = {"blocked": 0, "provisional": 1, "stable": 2}
-        learning_tier = min(
-            (legacy_tier, filter_decision.tier),
-            key=lambda value: tier_rank.get(value, 0),
-        )
+        hard_filter_reasons = {"probable_multi_device_overlap", "invalid_event_metrics"}
+        if not legacy_context_missing:
+            hard_filter_reasons.add("too_few_samples")
+
+        if (
+            legacy_tier == "blocked"
+            and legacy_context_missing
+            and float(cycle.get("duration_s", 0.0) or 0.0) >= float(self.learning_min_event_duration_s)
+            and float(cycle.get("avg_power_w", 0.0) or 0.0) > 0.0
+        ):
+            learning_tier = "provisional"
+            cycle["legacy_context_fallback"] = True
+        elif (
+            legacy_tier == "provisional"
+            and filter_decision.tier == "blocked"
+            and not hard_filter_reasons.intersection(filter_decision.reasons)
+        ):
+            learning_tier = "provisional"
+        else:
+            learning_tier = min(
+                (legacy_tier, filter_decision.tier),
+                key=lambda value: tier_rank.get(value, 0),
+            )
+
         cycle["learning_filter_score"] = round(float(filter_decision.score), 4)
         cycle["learning_filter_reasons"] = list(filter_decision.reasons)
         cycle["learning_tier"] = learning_tier
