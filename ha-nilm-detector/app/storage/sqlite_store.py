@@ -412,6 +412,7 @@ class SQLiteStore:
             self._maybe_backfill_patterns_mirror()
             self._maybe_backfill_inrush_runtime_schema()
             self._maybe_recluster_device_registry_v2()
+            self._maybe_recluster_device_registry_v3()
             self._maybe_repair_pattern_timestamps()
             self.cleanup_old_data()
             self._log_startup_diagnostics(stage="post-init")
@@ -487,6 +488,7 @@ class SQLiteStore:
                     confidence=confidence,
                     confirmed=bool(pattern.get("user_label")),
                     group_key=str(pattern.get("device_group_id") or pattern.get("cluster_id") or ""),
+                    cycle=pattern,
                 )
                 if device_id:
                     linked_devices += 1
@@ -673,6 +675,131 @@ class SQLiteStore:
             logger.info("Reclustered automatic device registry with v2 electrical fingerprint: %s", details)
         except Exception as e:
             logger.warning("Device registry v2 recluster failed: %s", e)
+
+    def _maybe_recluster_device_registry_v3(self) -> None:
+        """Recluster automatic devices by prototype similarity.
+
+        v2 used the electrical fingerprint as an exact device identity. Real data
+        showed that this over-fragmented natural variations: one appliance could
+        become dozens of one-pattern devices. v3 keeps the fingerprint only as a
+        seed and assigns later patterns by continuous prototype similarity.
+        """
+        if not self._patterns_conn:
+            return
+        event_key = "physical_device_registry_recluster:v3"
+        if self._migration_applied(self._patterns_conn, event_key):
+            return
+        try:
+            patterns = self.list_patterns(limit=10000)
+            if not patterns:
+                self._record_migration(self._patterns_conn, event_key, "no patterns")
+                return
+
+            protected_ids = {
+                int(p.get("device_id", 0) or 0)
+                for p in patterns
+                if str(p.get("user_label") or "").strip() and int(p.get("device_id", 0) or 0) > 0
+            }
+            auto_ids = [
+                int(r[0])
+                for r in self._patterns_conn.execute(
+                    """
+                    SELECT device_id FROM devices
+                    WHERE confirmed = 0 AND (user_label IS NULL OR TRIM(user_label) = '')
+                    """
+                ).fetchall()
+                if int(r[0] or 0) > 0 and int(r[0] or 0) not in protected_ids
+            ]
+
+            with self._patterns_conn:
+                if auto_ids:
+                    marks = ",".join(["?"] * len(auto_ids))
+                    if self._table_exists(self._patterns_conn, "device_cycles"):
+                        self._patterns_conn.execute(
+                            f"DELETE FROM device_cycles WHERE device_id IN ({marks})",
+                            tuple(auto_ids),
+                        )
+                    self._patterns_conn.execute(
+                        f"DELETE FROM devices WHERE device_id IN ({marks})",
+                        tuple(auto_ids),
+                    )
+
+            # Strong/repeated patterns become prototypes first.
+            auto_patterns = [
+                p for p in patterns
+                if not str(p.get("user_label") or "").strip()
+            ]
+            auto_patterns.sort(
+                key=lambda p: (
+                    -int(p.get("seen_count", 0) or 0),
+                    -float(p.get("quality_score_avg", 0.0) or 0.0),
+                    int(p.get("id", 0) or 0),
+                )
+            )
+
+            reassigned = 0
+            for pattern in auto_patterns:
+                pid = int(pattern.get("id", 0) or 0)
+                if pid <= 0:
+                    continue
+                label = str(pattern.get("refined_label") or pattern.get("suggestion_type") or "unknown_load")
+                phase = str(pattern.get("phase") or "L1")
+                seed_key = self._device_group_id(label, pattern)
+                conf_raw = float(pattern.get("confidence_score", 0.0) or 0.0)
+                conf = conf_raw / 100.0 if conf_raw > 1.0 else conf_raw
+
+                device_id = self._get_or_create_device(
+                    label=label,
+                    phase=phase,
+                    confidence=max(0.0, min(conf, 1.0)),
+                    confirmed=False,
+                    group_key=seed_key,
+                    cycle=pattern,
+                )
+                if not device_id:
+                    continue
+
+                with self._patterns_conn:
+                    self._patterns_conn.execute(
+                        """
+                        UPDATE learned_patterns
+                        SET device_id = ?, updated_at = ?
+                        WHERE id = ?
+                        """,
+                        (int(device_id), datetime.now().isoformat(), pid),
+                    )
+                    if self._table_exists(self._patterns_conn, "events"):
+                        self._patterns_conn.execute(
+                            """
+                            UPDATE events SET assigned_device_id = ?
+                            WHERE assigned_pattern_id = ? OR matched_pattern_id = ?
+                            """,
+                            (int(device_id), pid, pid),
+                        )
+
+                rebuilt = dict(pattern)
+                rebuilt["device_id"] = int(device_id)
+                self._upsert_device_cycle(
+                    device_id=int(device_id),
+                    pattern_id=pid,
+                    cycle=rebuilt,
+                    phase_rows=[],
+                    final_label=label,
+                )
+                self._upsert_patterns_mirror(rebuilt)
+                reassigned += 1
+
+            device_count = self._patterns_conn.execute(
+                "SELECT COUNT(*) FROM devices WHERE active = 1"
+            ).fetchone()[0]
+            details = (
+                f"patterns={len(auto_patterns)} reassigned={reassigned} "
+                f"active_devices={int(device_count or 0)} protected={len(protected_ids)}"
+            )
+            self._record_migration(self._patterns_conn, event_key, details)
+            logger.info("Reclustered automatic device registry with prototype similarity: %s", details)
+        except Exception as e:
+            logger.warning("Device registry v3 recluster failed: %s", e)
 
     def _maybe_backfill_patterns_mirror(self) -> None:
         if not self._patterns_conn:
@@ -3662,6 +3789,7 @@ class SQLiteStore:
             confidence=confidence_score_norm,
             confirmed=False,
             group_key=device_group_id,
+            cycle=cycle,
         )
         device_subclass = self._derive_device_subclass(suggestion_seed, cycle)
 
@@ -4871,6 +4999,162 @@ class SQLiteStore:
             "candidate_labels": json.loads(str(row[17] or "[]")) if len(row) > 17 else [],
         }
 
+    @classmethod
+    def _device_identity_similarity(
+        cls,
+        existing: Dict[str, Any],
+        candidate: Dict[str, Any],
+        existing_label: str,
+        candidate_label: str,
+    ) -> float:
+        """Similarity for physical-device assignment, not event deduplication.
+
+        This deliberately tolerates natural cycle drift. The v2 fingerprint is too
+        specific to be a physical identity because tiny shape/bucket changes create
+        a new key. Here we compare continuous features and use the best known
+        pattern of a device as its prototype.
+        """
+        if str(existing.get("phase") or "").upper() != str(candidate.get("phase") or "").upper():
+            return 0.0
+
+        family_a = cls._device_behavior_family(existing_label)
+        family_b = cls._device_behavior_family(candidate_label)
+        if family_a != family_b:
+            compatible = {family_a, family_b} <= {"motor", "multistate"}
+            if not compatible:
+                return 0.0
+
+        def rel_sim(a: float, b: float, floor: float = 1.0) -> float:
+            aa = abs(cls._safe_float(a, 0.0))
+            bb = abs(cls._safe_float(b, 0.0))
+            base = max(aa, bb, float(floor))
+            return max(0.0, 1.0 - abs(aa - bb) / base)
+
+        avg_a = cls._safe_float(existing.get("delta_avg_power_w"), 0.0)
+        avg_b = cls._safe_float(candidate.get("delta_avg_power_w"), 0.0)
+        if abs(avg_a) < 8.0:
+            avg_a = cls._safe_float(existing.get("avg_power_w"), 0.0)
+        if abs(avg_b) < 8.0:
+            avg_b = cls._safe_float(candidate.get("avg_power_w"), 0.0)
+
+        peak_a = cls._safe_float(existing.get("delta_peak_power_w"), 0.0)
+        peak_b = cls._safe_float(candidate.get("delta_peak_power_w"), 0.0)
+        if abs(peak_a) < 8.0:
+            peak_a = cls._safe_float(existing.get("peak_power_w"), 0.0)
+        if abs(peak_b) < 8.0:
+            peak_b = cls._safe_float(candidate.get("peak_power_w"), 0.0)
+
+        duration_a = cls._safe_float(existing.get("duration_s"), cls._safe_float(existing.get("avg_duration_s"), 0.0))
+        duration_b = cls._safe_float(candidate.get("duration_s"), cls._safe_float(candidate.get("avg_duration_s"), 0.0))
+        inrush_a = cls._safe_float(existing.get("inrush_ratio"), cls._safe_float(existing.get("peak_to_avg_ratio"), 1.0))
+        inrush_b = cls._safe_float(candidate.get("inrush_ratio"), cls._safe_float(candidate.get("peak_to_avg_ratio"), 1.0))
+
+        shape_distance = cls._profile_shape_distance(existing, candidate)
+        shape_sim = 0.50 if shape_distance is None else max(0.0, min(1.0, 1.0 - float(shape_distance)))
+
+        state_a = int(existing.get("num_substates", existing.get("plateau_count", 0)) or 0)
+        state_b = int(candidate.get("num_substates", candidate.get("plateau_count", 0)) or 0)
+        state_sim = max(0.0, 1.0 - (abs(state_a - state_b) / max(state_a, state_b, 2)))
+
+        motor_a = bool(existing.get("has_motor_pattern", False))
+        motor_b = bool(candidate.get("has_motor_pattern", False))
+        heat_a = bool(existing.get("has_heating_pattern", False))
+        heat_b = bool(candidate.get("has_heating_pattern", False))
+        behavior_sim = 1.0
+        if motor_a != motor_b:
+            behavior_sim -= 0.12
+        if heat_a != heat_b:
+            behavior_sim -= 0.18
+
+        score = (
+            shape_sim * 0.34
+            + rel_sim(avg_a, avg_b, 20.0) * 0.24
+            + rel_sim(duration_a, duration_b, 30.0) * 0.16
+            + rel_sim(peak_a, peak_b, 30.0) * 0.10
+            + rel_sim(inrush_a, inrush_b, 1.0) * 0.06
+            + state_sim * 0.05
+            + behavior_sim * 0.05
+        )
+
+        # Hard guards prevent absurd merges even when shape is coincidentally similar.
+        avg_ratio = max(abs(avg_a), abs(avg_b), 1.0) / max(min(abs(avg_a), abs(avg_b)), 1.0)
+        duration_ratio = max(duration_a, duration_b, 1.0) / max(min(duration_a, duration_b), 1.0)
+        if avg_ratio > 2.2:
+            score -= 0.35
+        if duration_ratio > 4.0:
+            score -= 0.20
+        return max(0.0, min(1.0, score))
+
+    def _find_similar_auto_device(
+        self,
+        label: str,
+        phase: str,
+        cycle: Dict[str, Any],
+        threshold: float = 0.76,
+    ) -> tuple[int | None, float]:
+        """Return best matching unconfirmed device on the same phase."""
+        if not self._patterns_conn or not self._table_exists(self._patterns_conn, "learned_patterns"):
+            return (None, 0.0)
+
+        rows = self._patterns_conn.execute(
+            """
+            SELECT p.device_id, p.phase,
+                   COALESCE(p.refined_label, p.suggestion_type, 'unknown_load'),
+                   p.avg_power_w, p.peak_power_w, p.duration_s,
+                   COALESCE(p.delta_avg_power_w, 0.0), COALESCE(p.delta_peak_power_w, 0.0),
+                   COALESCE(p.peak_to_avg_ratio, 1.0), COALESCE(p.num_substates, 0),
+                   COALESCE(p.has_motor_pattern, 0), COALESCE(p.has_heating_pattern, 0),
+                   COALESCE(p.profile_points_json, '[]'), COALESCE(p.delta_profile_points_json, '[]'),
+                   COALESCE(p.plateau_count, p.num_substates, 0),
+                   COALESCE(p.seen_count, 1)
+            FROM learned_patterns p
+            JOIN devices d ON d.device_id = p.device_id
+            WHERE p.device_id IS NOT NULL
+              AND UPPER(COALESCE(p.phase, '')) = UPPER(?)
+              AND d.active = 1
+              AND d.confirmed = 0
+              AND (d.user_label IS NULL OR TRIM(d.user_label) = '')
+            ORDER BY COALESCE(p.seen_count, 1) DESC, p.id ASC
+            LIMIT 1500
+            """,
+            (str(phase or ""),),
+        ).fetchall()
+
+        best_device: int | None = None
+        best_score = 0.0
+        for row in rows:
+            try:
+                existing = {
+                    "phase": str(row[1] or ""),
+                    "avg_power_w": float(row[3] or 0.0),
+                    "peak_power_w": float(row[4] or 0.0),
+                    "duration_s": float(row[5] or 0.0),
+                    "delta_avg_power_w": float(row[6] or 0.0),
+                    "delta_peak_power_w": float(row[7] or 0.0),
+                    "peak_to_avg_ratio": float(row[8] or 1.0),
+                    "num_substates": int(row[9] or 0),
+                    "has_motor_pattern": bool(row[10]),
+                    "has_heating_pattern": bool(row[11]),
+                    "profile_points": json.loads(str(row[12] or "[]")),
+                    "delta_profile_points": json.loads(str(row[13] or "[]")),
+                    "plateau_count": int(row[14] or 0),
+                }
+                score = self._device_identity_similarity(
+                    existing=existing,
+                    candidate=cycle,
+                    existing_label=str(row[2] or "unknown_load"),
+                    candidate_label=str(label or "unknown_load"),
+                )
+                if score > best_score:
+                    best_score = score
+                    best_device = int(row[0] or 0) or None
+            except Exception:
+                continue
+
+        if best_device and best_score >= float(threshold):
+            return (best_device, best_score)
+        return (None, best_score)
+
     def _get_or_create_device(
         self,
         label: str,
@@ -4878,6 +5162,7 @@ class SQLiteStore:
         confidence: float,
         confirmed: bool = False,
         group_key: str | None = None,
+        cycle: Dict[str, Any] | None = None,
     ) -> int | None:
         """Return a stable device registry id for one electrical cluster.
 
@@ -4923,6 +5208,38 @@ class SQLiteStore:
                         (now, seen, conf_avg, 1 if (confirmed or bool(row[3])) else 0, clean_label, device_id),
                     )
                 return device_id
+
+            if cycle and not confirmed:
+                matched_device_id, matched_score = self._find_similar_auto_device(
+                    label=clean_label,
+                    phase=clean_phase,
+                    cycle=cycle,
+                )
+                if matched_device_id:
+                    matched_row = self._patterns_conn.execute(
+                        "SELECT times_seen_total, confidence_avg FROM devices WHERE device_id = ?",
+                        (int(matched_device_id),),
+                    ).fetchone()
+                    seen = int((matched_row or [0, 0.0])[0] or 0) + 1
+                    prev_conf = float((matched_row or [0, 0.0])[1] or 0.0)
+                    conf_avg = ((prev_conf * max(seen - 1, 0)) + float(confidence)) / float(max(seen, 1))
+                    with self._patterns_conn:
+                        self._patterns_conn.execute(
+                            """
+                            UPDATE devices
+                            SET updated_at = ?, times_seen_total = ?, confidence_avg = ?,
+                                notes = ?
+                            WHERE device_id = ?
+                            """,
+                            (
+                                now,
+                                seen,
+                                conf_avg,
+                                f"prototype matched score={matched_score:.3f}",
+                                int(matched_device_id),
+                            ),
+                        )
+                    return int(matched_device_id)
 
             with self._patterns_conn:
                 cur = self._patterns_conn.execute(
@@ -7722,6 +8039,7 @@ class SQLiteStore:
             confidence=confidence_score_norm,
             confirmed=False,
             group_key=str(cycle.get("device_group_id") or self._device_group_id(learning_label, cycle)),
+            cycle=cycle,
         )
         
         device_subclass = self._derive_device_subclass(learning_label, cycle)
@@ -8400,6 +8718,7 @@ class SQLiteStore:
                     confidence=confidence_score_norm,
                     confirmed=bool(user_label),
                     group_key=str(cycle.get("device_group_id") or best.get("device_group_id") or self._device_group_id(final_label, cycle)),
+                    cycle=cycle,
                 )
                 device_subclass = self._derive_device_subclass(final_label, cycle)
 
