@@ -224,22 +224,13 @@ The optional export functions can create:
 Exports happen only when explicitly requested by the user. Depending on the selected export type, an export can include detailed measurements and timestamps, so review the generated file before sharing it.
 
 
-## Local LLM review (optional)
+## Built-in AI classification
 
-Version 0.7.0 adds an optional local LLM reviewer for ambiguous completed events. The deterministic NILM pipeline still performs segmentation, feature extraction and pattern matching first.
+Version 0.7.0 keeps the complete recognition stack inside the add-on. No Ollama instance, external AI server or cloud API is required.
 
-```yaml
-learning:
-  local_llm:
-    enabled: true
-    url: http://192.168.1.20:11434
-    model: qwen3:4b
-    timeout_seconds: 20
-    min_confidence: 0.65
-    review_below_confidence: 0.78
-```
+The classifier combines deterministic event segmentation, waveform/shape matching, local RandomForest ML and an attention-style prototype classifier. The attention stage compares an event feature vector with learned patterns and aggregates similarities using softmax weighting.
 
-Only local endpoints are accepted. The model receives compact event features, candidate labels and a small set of similar learned patterns. Structured JSON output is used and the model may only return an allowed candidate label or `unknown`.
+The system therefore remains fully offline and self-contained.
 
 ## Version
 
