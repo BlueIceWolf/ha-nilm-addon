@@ -1,3 +1,12 @@
+## 0.7.8 (BETA)
+
+**Regression and release hardening**
+- Fixed the provisional-pattern regression fixture so it follows the same segmentation and baseline-quality rules as production.
+- Test data now contains realistic pre-event and post-event baselines instead of contradictory synthetic values.
+- Provisional persistence tests are deterministic even after classifier enrichment recalculates segmentation and waveform confidence.
+- Production learning thresholds and baseline protection remain unchanged.
+- Keeps the 0.7.7 protection against learning non-positive delta / switch-off artefacts.
+
 ## 0.7.7 (BETA)
 
 **Training data quality repair**
