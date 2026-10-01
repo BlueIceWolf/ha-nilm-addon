@@ -43,6 +43,8 @@ def test_provisional_pattern_in_learned_patterns():
             store.configure_learning_policy(
                 min_event_duration_s=5.0,
                 min_samples_for_learning=4,
+                segmentation_threshold=0.30,
+                stable_segmentation_threshold=0.70,
                 min_waveform_score_for_provisional=0.15,
                 min_waveform_score_for_final=0.45,
                 merge_similarity_threshold=0.86,
@@ -55,6 +57,10 @@ def test_provisional_pattern_in_learned_patterns():
                 "end_ts": (base_time + timedelta(seconds=30)).isoformat(),
                 "avg_power_w": 200.0,
                 "peak_power_w": 280.0,
+                "baseline_before_w": 100.0,
+                "baseline_after_w": 102.0,
+                "delta_avg_power_w": 100.0,
+                "delta_peak_power_w": 180.0,
                 "energy_wh": 1.7,
                 "duration_s": 30.0,
                 "sample_count": 30,
@@ -90,10 +96,14 @@ def test_provisional_pattern_in_learned_patterns():
             
             log.info(f"\n[2] Learn result:")
             log.info(f"    Matched: {result.get('matched')}")
-            log.info(f"    Pattern ID: {result.get('pattern', {}).get('id')}")
+            pattern_result = result.get("pattern") or {}
+            log.info(f"    Pattern ID: {pattern_result.get('id')}")
             log.info(f"    Learning tier: {result.get('learning_tier')}")
             log.info(f"    Pattern: {bool(result.get('pattern'))}")
             
+            assert result.get("learning_tier") == "provisional", result
+            assert result.get("pattern") is not None, result
+
             # Check learned_patterns table
             log.info(f"\n[3] Checking learned_patterns table...")
             patterns = store.list_patterns(limit=100)
