@@ -97,12 +97,7 @@ class NILMDetectionSystem:
                     online_learning_enabled=self.config.online_learning_enabled,
                     pattern_match_threshold=self.config.pattern_match_threshold,
                     ml_confidence_threshold=self.config.ml_confidence_threshold,
-                    local_llm_enabled=self.config.local_llm_enabled,
-                    local_llm_url=self.config.local_llm_url,
-                    local_llm_model=self.config.local_llm_model,
-                    local_llm_timeout_seconds=self.config.local_llm_timeout_seconds,
-                    local_llm_min_confidence=self.config.local_llm_min_confidence,
-                    local_llm_review_below_confidence=self.config.local_llm_review_below_confidence,
+                    attention_enabled=True,
                 )
                 self.storage.configure_learning_policy(
                     segmentation_threshold=self.config.learning_segmentation_threshold,
