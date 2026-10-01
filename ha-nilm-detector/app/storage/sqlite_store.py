@@ -203,6 +203,10 @@ class SQLiteStore:
             timeout=10,
         )
         conn.execute("PRAGMA journal_mode=WAL;")
+        # New databases reclaim freed pages incrementally instead of growing forever.
+        # On existing databases SQLite keeps the current auto_vacuum mode until a
+        # one-time VACUUM migration is performed, so this is backwards-compatible.
+        conn.execute("PRAGMA auto_vacuum=INCREMENTAL;")
         # FULL is slower than NORMAL but safer for abrupt power loss/container crash.
         conn.execute("PRAGMA synchronous=FULL;")
         conn.execute("PRAGMA wal_autocheckpoint=1000;")
@@ -5300,6 +5304,17 @@ class SQLiteStore:
                         float(pattern.get("quality_score_avg", 0.0) or 0.0),
                     ),
                 )
+                self._patterns_conn.execute(
+                    """
+                    DELETE FROM pattern_history
+                    WHERE pattern_id = ? AND id NOT IN (
+                        SELECT id FROM pattern_history
+                        WHERE pattern_id = ?
+                        ORDER BY id DESC LIMIT 24
+                    )
+                    """,
+                    (pattern_id, pattern_id),
+                )
         except Exception as e:
             logger.debug("_record_pattern_history_snapshot failed: %s", e)
 
@@ -5749,6 +5764,11 @@ class SQLiteStore:
             }
 
     def cleanup_old_data(self) -> None:
+        """Apply bounded retention to raw/runtime data without deleting learned knowledge.
+
+        Learned/confirmed patterns are intentionally kept. Large event waveforms and
+        diagnostic history are disposable because they can be rebuilt from HA history.
+        """
         if not self._conn:
             return
 
@@ -5757,11 +5777,115 @@ class SQLiteStore:
             with self._conn:
                 self._conn.execute("DELETE FROM power_readings WHERE ts < ?", (cutoff,))
                 self._conn.execute("DELETE FROM detections WHERE ts < ?", (cutoff,))
+
             if self._patterns_conn:
                 with self._patterns_conn:
-                    self._patterns_conn.execute("DELETE FROM learned_patterns WHERE last_seen < ?", (cutoff,))
+                    # Delete child rows before their parent event.
+                    if self._table_exists(self._patterns_conn, "event_phases"):
+                        self._patterns_conn.execute(
+                            """
+                            DELETE FROM event_phases
+                            WHERE event_id IN (
+                                SELECT event_id FROM events WHERE created_at < ?
+                            )
+                            """,
+                            (cutoff,),
+                        )
+                    for table_name, time_column in (
+                        ("classification_log", "created_at"),
+                        ("training_log", "created_at"),
+                        ("pattern_history", "snapshot_ts"),
+                        ("pattern_features", "created_at"),
+                    ):
+                        if self._table_exists(self._patterns_conn, table_name):
+                            self._patterns_conn.execute(
+                                f"DELETE FROM {table_name} WHERE {time_column} < ?",
+                                (cutoff,),
+                            )
+                    if self._table_exists(self._patterns_conn, "events"):
+                        self._patterns_conn.execute("DELETE FROM events WHERE created_at < ?", (cutoff,))
+                    if self._table_exists(self._patterns_conn, "provisional_patterns"):
+                        self._patterns_conn.execute(
+                            "DELETE FROM provisional_patterns WHERE last_seen < ?",
+                            (cutoff,),
+                        )
+
+                    # Hard caps protect against pathological high-event-rate installations.
+                    # Keep the newest diagnostics even when retention has not elapsed.
+                    if self._table_exists(self._patterns_conn, "classification_log"):
+                        self._patterns_conn.execute(
+                            """
+                            DELETE FROM classification_log
+                            WHERE id NOT IN (
+                                SELECT id FROM classification_log ORDER BY id DESC LIMIT 20000
+                            )
+                            """
+                        )
+                    if self._table_exists(self._patterns_conn, "training_log"):
+                        self._patterns_conn.execute(
+                            """
+                            DELETE FROM training_log
+                            WHERE id NOT IN (
+                                SELECT id FROM training_log ORDER BY id DESC LIMIT 20000
+                            )
+                            """
+                        )
+                    if self._table_exists(self._patterns_conn, "events"):
+                        self._patterns_conn.execute(
+                            """
+                            DELETE FROM event_phases
+                            WHERE event_id NOT IN (SELECT event_id FROM events)
+                            """
+                        )
+
+                # Checkpoint stale WAL pages and let incremental-auto-vacuum databases
+                # return free pages without a blocking full VACUUM.
+                try:
+                    self._patterns_conn.execute("PRAGMA wal_checkpoint(PASSIVE);")
+                    self._patterns_conn.execute("PRAGMA incremental_vacuum(2048);")
+                except Exception as reclaim_error:
+                    logger.debug("Pattern DB incremental reclaim skipped: %s", reclaim_error)
+
+            try:
+                self._conn.execute("PRAGMA wal_checkpoint(PASSIVE);")
+                self._conn.execute("PRAGMA incremental_vacuum(1024);")
+            except Exception as reclaim_error:
+                logger.debug("Live DB incremental reclaim skipped: %s", reclaim_error)
         except Exception as e:
             logger.error(f"Failed to clean old SQLite data: {e}", exc_info=True)
+
+    def prepare_database_download(self, kind: str) -> Dict[str, Any]:
+        """Return a checkpointed DB path for UI download without copying multi-GB files."""
+        normalized = str(kind or "").strip().lower()
+        if normalized == "patterns":
+            conn = self._patterns_conn
+            path = self.patterns_db_path
+            filename = "nilm_patterns.sqlite3"
+        elif normalized == "live":
+            conn = self._conn
+            path = self.db_path
+            filename = "nilm_live.sqlite3"
+        else:
+            return {"ok": False, "error": "kind must be 'patterns' or 'live'"}
+
+        if not conn or not os.path.exists(path):
+            return {"ok": False, "error": "database not available"}
+
+        try:
+            # FULL checkpoint makes the main DB contain all committed WAL changes.
+            # It may briefly wait for active writers but avoids creating a second
+            # potentially multi-gigabyte snapshot on disk.
+            conn.execute("PRAGMA wal_checkpoint(FULL);")
+        except Exception as checkpoint_error:
+            logger.warning("DB download checkpoint failed for %s: %s", normalized, checkpoint_error)
+
+        return {
+            "ok": True,
+            "kind": normalized,
+            "path": path,
+            "filename": filename,
+            "size_bytes": int(os.path.getsize(path)),
+        }
 
     def flush_debug_data(self, reset_patterns: bool = True) -> Dict:
         """Delete runtime data for debugging and return deletion statistics."""
@@ -8312,6 +8436,11 @@ class SQLiteStore:
                     self._patterns_conn.execute(f"DELETE FROM {table_name}")
             self._learning_session_keys.clear()
             self._learning_session_windows.clear()
+            try:
+                self._patterns_conn.execute("PRAGMA wal_checkpoint(TRUNCATE);")
+                self._patterns_conn.execute("PRAGMA incremental_vacuum;")
+            except Exception as reclaim_error:
+                logger.debug("Pattern DB reclaim after reset skipped: %s", reclaim_error)
             logger.info("Cleared learned patterns and derived artifacts (live readings preserved): %s", deleted_counts)
             return {"ok": True, "cleared": "patterns", "deleted": deleted_counts}
         except Exception as e:
