@@ -12,6 +12,9 @@ from typing import Any, Dict, List, Optional, Tuple
 
 from app.learning.ml_classifier import LocalMLClassifier
 from app.learning.local_llm import LocalLLMClassifier
+from app.learning.learning_filter_v2 import LearningFilterV2
+from app.learning.drift_monitor import DriftMonitor
+from app.learning.ensemble import EnsembleClassifier
 from app.learning.online_learning import build_pattern_dataset_rows
 from app.learning.pattern_matching import HybridPatternMatcher
 from app.learning.classification_pipeline import (
@@ -87,6 +90,9 @@ class SQLiteStore:
         self.ml_confidence_threshold = 0.60
         self._ml_classifier = LocalMLClassifier()
         self._local_llm = LocalLLMClassifier()
+        self._learning_filter_v2 = LearningFilterV2()
+        self._drift_monitor = DriftMonitor()
+        self._ensemble_classifier = EnsembleClassifier()
         self._pattern_matcher = HybridPatternMatcher(
             match_threshold=self.pattern_match_threshold,
             shape_matching_enabled=self.shape_matching_enabled,
