@@ -41,8 +41,12 @@ jobs:
 
       - name: Smoke-test Python runtime
         run: |
-          docker run --rm --entrypoint python3 ha-nilm-addon:test -c "import numpy, scipy, sklearn; import app.main; print('runtime imports ok')"
+          docker run --rm --entrypoint python3 ha-nilm-addon:test -c "import numpy, scipy, sklearn, requests, paho.mqtt.client; import app.main; print('runtime imports ok')"
 
-      - name: Verify add-on entrypoint starts
+      - name: Verify release version is embedded
         run: |
-          docker run --rm --entrypoint /bin/sh ha-nilm-addon:test -c "test -x /run.sh && test -f /app/main.py && echo 'entrypoint files ok'"
+          docker run --rm --entrypoint python3 ha-nilm-addon:test -c "from app.version import get_app_version; version=get_app_version(); print('version=' + version); assert version != 'dev'"
+
+      - name: Verify add-on entrypoint
+        run: |
+          docker run --rm --entrypoint /bin/sh ha-nilm-addon:test -c "test -x /run.sh && test -f /app/main.py && test -f /app/config.yaml && echo 'entrypoint files ok'"
