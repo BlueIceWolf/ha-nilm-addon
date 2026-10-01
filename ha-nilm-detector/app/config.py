@@ -62,12 +62,6 @@ class Config:
         self.online_learning_enabled = True
         self.pattern_match_threshold = 0.45
         self.ml_confidence_threshold = 0.60
-        self.local_llm_enabled = False
-        self.local_llm_url = ""
-        self.local_llm_model = ""
-        self.local_llm_timeout_seconds = 20
-        self.local_llm_min_confidence = 0.65
-        self.local_llm_review_below_confidence = 0.78
         self.learning_segmentation_threshold = 0.40
         self.learning_stable_segmentation_threshold = 0.70
         self.learning_provisional_promotion_count = 3
@@ -215,25 +209,6 @@ class Config:
         )
         self.ml_confidence_threshold = float(
             learning_config.get('ml_confidence_threshold', self.ml_confidence_threshold)
-        )
-        local_llm_config = learning_config.get('local_llm', {})
-        self.local_llm_enabled = bool(local_llm_config.get('enabled', self.local_llm_enabled))
-        self.local_llm_url = str(local_llm_config.get('url', self.local_llm_url)).strip()
-        self.local_llm_model = str(local_llm_config.get('model', self.local_llm_model)).strip()
-        self.local_llm_timeout_seconds = max(
-            2,
-            min(int(local_llm_config.get('timeout_seconds', self.local_llm_timeout_seconds)), 120),
-        )
-        self.local_llm_min_confidence = max(
-            0.0,
-            min(float(local_llm_config.get('min_confidence', self.local_llm_min_confidence)), 1.0),
-        )
-        self.local_llm_review_below_confidence = max(
-            0.0,
-            min(
-                float(local_llm_config.get('review_below_confidence', self.local_llm_review_below_confidence)),
-                1.0,
-            ),
         )
         self.learning_segmentation_threshold = float(
             learning_config.get('segmentation_threshold', self.learning_segmentation_threshold)
