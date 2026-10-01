@@ -1,9 +1,8 @@
 ARG BUILD_FROM=alpine:3.20
 FROM ${BUILD_FROM}
 
-# Fast dependency install path for HA add-on updates:
-# - use Alpine system Python + prebuilt py3-* packages for heavy deps
-# - keep pip only for small pure-Python extras
+# Keep runtime dependencies in the image. The container should never install
+# packages at startup because Home Assistant add-ons must start deterministically.
 RUN apk add --no-cache \
     python3 \
     py3-requests \
@@ -12,18 +11,15 @@ RUN apk add --no-cache \
     py3-scipy \
     py3-scikit-learn
 
-# Set working directory
 WORKDIR /app
 
-# All runtime dependencies are installed with apk for fast addon builds and
-# to avoid PEP 668 restrictions on system Python pip installs.
-
-# Copy application sources after dependencies
-# Keep the Python package structure so `/app/main.py` can import `app.*`.
+# config.yaml is copied intentionally: app.version reads the add-on manifest
+# at runtime so the Web UI can show the real release version.
+COPY config.yaml /app/config.yaml
 COPY app/ /app/app
 COPY main.py /app/main.py
 COPY run.sh /run.sh
 
-RUN chmod a+x /run.sh
+RUN chmod 0755 /run.sh
 
-CMD [ "/run.sh" ]
+CMD ["/run.sh"]
