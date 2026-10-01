@@ -485,6 +485,7 @@ class SQLiteStore:
                     phase=phase,
                     confidence=confidence,
                     confirmed=bool(pattern.get("user_label")),
+                    group_key=str(pattern.get("device_group_id") or pattern.get("cluster_id") or ""),
                 )
                 if device_id:
                     linked_devices += 1
@@ -2521,6 +2522,10 @@ class SQLiteStore:
             self._ensure_column(self._patterns_conn, "devices", "device_subclass", "TEXT")
             self._ensure_column(self._patterns_conn, "devices", "baseline_range_min_w", "REAL")
             self._ensure_column(self._patterns_conn, "devices", "baseline_range_max_w", "REAL")
+            self._ensure_column(self._patterns_conn, "devices", "group_key", "TEXT")
+            self._patterns_conn.execute(
+                "CREATE INDEX IF NOT EXISTS idx_devices_group_phase ON devices(group_key, phase, active)"
+            )
 
             self._patterns_conn.execute(
                 """
@@ -3497,6 +3502,7 @@ class SQLiteStore:
             phase=str(cycle.get("phase", "L1")),
             confidence=confidence_score_norm,
             confirmed=auto_confirmed,
+            group_key=device_group_id,
         )
         device_subclass = self._derive_device_subclass(suggestion_seed, cycle)
 
@@ -4613,23 +4619,41 @@ class SQLiteStore:
             "candidate_labels": json.loads(str(row[17] or "[]")) if len(row) > 17 else [],
         }
 
-    def _get_or_create_device(self, label: str, phase: str, confidence: float, confirmed: bool = False) -> int | None:
-        """Return device_id for label/phase pair, creating it if needed."""
+    def _get_or_create_device(
+        self,
+        label: str,
+        phase: str,
+        confidence: float,
+        confirmed: bool = False,
+        group_key: str | None = None,
+    ) -> int | None:
+        """Return a stable device registry id for one electrical cluster.
+
+        A behaviour label such as motor_load is not a physical device identity.
+        Prefer device_group_id/cluster information as the registry key so multiple
+        similar appliances on the same phase remain separate.
+        """
         if not self._patterns_conn:
             return None
 
-        clean_label = str(label or "").strip() or "unknown"
+        clean_label = str(label or "").strip() or "unknown_load"
+        clean_phase = str(phase or "")
+        clean_group = str(group_key or "").strip()
+        if not clean_group:
+            clean_group = f"legacy:{self._normalize_pattern_name(clean_label)}:{clean_phase}"
         now = datetime.now().isoformat()
         try:
             row = self._patterns_conn.execute(
                 """
                 SELECT device_id, times_seen_total, confidence_avg, confirmed
                 FROM devices
-                WHERE final_label = ? AND COALESCE(phase, '') = ? AND active = 1
+                WHERE COALESCE(group_key, '') = ?
+                  AND COALESCE(phase, '') = ?
+                  AND active = 1
                 ORDER BY device_id ASC
                 LIMIT 1
                 """,
-                (clean_label, str(phase or "")),
+                (clean_group, clean_phase),
             ).fetchone()
             if row:
                 device_id = int(row[0])
@@ -4640,10 +4664,11 @@ class SQLiteStore:
                     self._patterns_conn.execute(
                         """
                         UPDATE devices
-                        SET updated_at = ?, times_seen_total = ?, confidence_avg = ?, confirmed = ?
+                        SET updated_at = ?, times_seen_total = ?, confidence_avg = ?,
+                            confirmed = ?, predicted_label = COALESCE(NULLIF(predicted_label, ''), ?)
                         WHERE device_id = ?
                         """,
-                        (now, seen, conf_avg, 1 if (confirmed or bool(row[3])) else 0, device_id),
+                        (now, seen, conf_avg, 1 if (confirmed or bool(row[3])) else 0, clean_label, device_id),
                     )
                 return device_id
 
@@ -4652,28 +4677,29 @@ class SQLiteStore:
                     """
                     INSERT INTO devices (
                         created_at, updated_at, phase, predicted_label, user_label,
-                        final_label, confirmed, confidence_avg, times_seen_total, notes, active
-                    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                        final_label, confirmed, confidence_avg, times_seen_total, notes, active,
+                        group_key
+                    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                     """,
                     (
                         now,
                         now,
-                        str(phase or ""),
+                        clean_phase,
                         clean_label,
                         clean_label if confirmed else None,
                         clean_label,
                         1 if confirmed else 0,
                         float(confidence),
                         1,
-                        "auto-created from pattern learning",
+                        "auto-created from electrical pattern cluster",
                         1,
+                        clean_group,
                     ),
                 )
                 return int(cur.lastrowid or 0)
         except Exception as e:
             logger.debug("_get_or_create_device failed: %s", e)
             return None
-
     def _record_cycle_event(
         self,
         cycle: Dict,
@@ -7443,6 +7469,7 @@ class SQLiteStore:
             phase=str(cycle.get("phase", "L1")),
             confidence=confidence_score_norm,
             confirmed=False,
+            group_key=str(cycle.get("device_group_id") or self._device_group_id(learning_label, cycle)),
         )
         
         device_subclass = self._derive_device_subclass(learning_label, cycle)
@@ -8120,6 +8147,7 @@ class SQLiteStore:
                     phase=phase,
                     confidence=confidence_score_norm,
                     confirmed=bool(user_label) or bool(best.get("is_confirmed", False)) or auto_confirm_update,
+                    group_key=str(cycle.get("device_group_id") or best.get("device_group_id") or self._device_group_id(final_label, cycle)),
                 )
                 device_subclass = self._derive_device_subclass(final_label, cycle)
 
@@ -8545,11 +8573,17 @@ class SQLiteStore:
             if old_row:
                 old_label = str(old_row[0] or old_row[1] or "")
                 phase = str(old_row[2] or "L1")
-            device_id = self._get_or_create_device(
+            existing_device_row = self._patterns_conn.execute(
+                "SELECT device_id, device_group_id FROM learned_patterns WHERE id = ?",
+                (int(pattern_id),),
+            ).fetchone()
+            existing_device_id = int(existing_device_row[0] or 0) if existing_device_row else 0
+            device_id = existing_device_id or self._get_or_create_device(
                 label=clean_label,
                 phase=phase,
                 confidence=1.0,
                 confirmed=True,
+                group_key=str((existing_device_row[1] if existing_device_row else "") or f"user:{self._normalize_pattern_name(clean_label)}:{phase}"),
             )
             with self._patterns_conn:
                 self._patterns_conn.execute(
