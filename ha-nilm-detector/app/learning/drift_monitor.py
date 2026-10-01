@@ -16,7 +16,7 @@ class DriftResult:
 
 
 class DriftMonitor:
-    def __init__(self, warning_threshold: float = 0.18, critical_threshold: float = 0.34):
+    def __init__(self, warning_threshold: float = 0.14, critical_threshold: float = 0.28):
         self.warning_threshold = warning_threshold
         self.critical_threshold = critical_threshold
 
