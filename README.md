@@ -11,7 +11,7 @@
 
 <p align="center">
   <img src="https://img.shields.io/badge/status-beta-orange" alt="Beta">
-  <img src="https://img.shields.io/badge/version-0.7.0-blue" alt="Version 0.6.44">
+  <img src="https://img.shields.io/badge/version-0.7.2-blue" alt="Version 0.6.44">
   <img src="https://img.shields.io/badge/Home%20Assistant-Add--on-41BDF5" alt="Home Assistant Add-on">
   <img src="https://img.shields.io/badge/license-MIT-green" alt="MIT">
 </p>
@@ -25,7 +25,7 @@ HA NILM Detector beobachtet einen oder mehrere Leistungssensoren aus Home Assist
 
 Du brauchst dafür **keinen separaten Sensor an jedem Gerät**. Für den Einstieg reicht ein Leistungssensor auf einer Phase. Mit getrennten Sensoren für L1, L2 und L3 kann die Erkennung zusätzlich phasenbezogen arbeiten.
 
-### Aktueller Stand in v0.7.0
+### Aktueller Stand in v0.7.2
 
 - lokale Verarbeitung ohne Cloud-Zwang
 - L1/L2/L3 einzeln nutzbar

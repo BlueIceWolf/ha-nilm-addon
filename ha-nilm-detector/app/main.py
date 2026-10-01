@@ -1,4 +1,5 @@
 """Entry point wiring together the modular NILM detection stack."""
+import math
 import os
 import signal
 import sys
@@ -598,7 +599,17 @@ class NILMDetectionSystem:
         replay_summary = {"cycles_detected": 0, "points_processed": 0}
         if self.pattern_learner:
             try:
-                replay_hours = 48 if source == "manual_web" else 24
+                if source == "manual_web":
+                    replay_hours = 48
+                elif source == "nightly":
+                    replay_hours = 24
+                else:
+                    # The automatic pipeline runs frequently. Replaying a full day
+                    # every 30 minutes wastes CPU and repeatedly revisits the same
+                    # cycles. Keep a small overlap window; persistent event dedup in
+                    # storage prevents double-learning inside that overlap.
+                    interval_minutes = max(5, int(self.config.learning_auto_pipeline_interval_minutes))
+                    replay_hours = max(2, int(math.ceil(interval_minutes / 60.0)) + 1)
                 replay_summary = self._replay_learning_from_storage(hours=replay_hours)
             except Exception as e:
                 logger.error("Manual learning replay failed: %s", e, exc_info=True)
@@ -770,9 +781,13 @@ class NILMDetectionSystem:
                         heuristic_suggestion = learner.suggest_device_type(cycle)
                         model_suggestion = self.storage.suggest_cycle_label(cycle_payload, fallback=heuristic_suggestion)
                         suggestion = str(model_suggestion.get("label") or heuristic_suggestion)
-                        self.storage.learn_cycle_pattern(cycle=cycle_payload, suggestion_type=suggestion)
-                        cycles_detected_local += 1
-                        cycles_by_phase_local[phase_name] = cycles_by_phase_local.get(phase_name, 0) + 1
+                        learning_result = self.storage.learn_cycle_pattern(
+                            cycle=cycle_payload,
+                            suggestion_type=suggestion,
+                        )
+                        if not bool(learning_result.get("skipped", False)):
+                            cycles_detected_local += 1
+                            cycles_by_phase_local[phase_name] = cycles_by_phase_local.get(phase_name, 0) + 1
                 except Exception as point_error:
                     logger.debug("Skipping replay point due to error: %s", point_error)
                     continue
@@ -941,8 +956,11 @@ class NILMDetectionSystem:
                     cycle_payload.setdefault("post_roll_duration_s", 0.0)
                     model_suggestion = self.storage.suggest_cycle_label(cycle_payload, fallback="unknown")
                     suggestion = str(model_suggestion.get("label") or "unknown")
-                    self.storage.learn_cycle_pattern(cycle=cycle_payload, suggestion_type=suggestion)
-                    return True
+                    learning_result = self.storage.learn_cycle_pattern(
+                        cycle=cycle_payload,
+                        suggestion_type=suggestion,
+                    )
+                    return not bool(learning_result.get("skipped", False))
 
                 for ts, power in series:
                     if not in_cycle:

@@ -2338,6 +2338,9 @@ class SQLiteStore:
             self._patterns_conn.execute(
                 "CREATE INDEX IF NOT EXISTS idx_events_pattern ON events(assigned_pattern_id)"
             )
+            self._patterns_conn.execute(
+                "CREATE INDEX IF NOT EXISTS idx_events_phase_window ON events(phase, start_ts, end_ts)"
+            )
             self._ensure_column(self._patterns_conn, "events", "baseline_before_w", "REAL")
             self._ensure_column(self._patterns_conn, "events", "baseline_after_w", "REAL")
             self._ensure_column(self._patterns_conn, "events", "delta_avg_power_w", "REAL")
@@ -4144,6 +4147,52 @@ class SQLiteStore:
         if b1 < b0:
             b0, b1 = b1, b0
         return max(a0, b0) <= min(a1, b1)
+
+    def _find_persisted_cycle_event(self, cycle: Dict[str, Any]) -> Dict[str, Any] | None:
+        """Return an already persisted event for the exact cycle window.
+
+        Periodic/manual replay intentionally re-reads historical power data. Without
+        a persistent guard the same cycle is learned again after every replay or
+        process restart, inflating pattern counts and the pattern database.
+        Clearing learned patterns also clears events, so operators can still force a
+        complete re-evaluation when desired.
+        """
+        if not self._patterns_conn or not self._table_exists(self._patterns_conn, "events"):
+            return None
+
+        phase = str(cycle.get("phase") or "L1")
+        start_ts = str(cycle.get("start_ts") or "").strip()
+        end_ts = str(cycle.get("end_ts") or "").strip()
+        if not start_ts or not end_ts:
+            return None
+
+        try:
+            row = self._patterns_conn.execute(
+                """
+                SELECT event_id,
+                       COALESCE(assigned_pattern_id, matched_pattern_id),
+                       COALESCE(dedup_result, ''),
+                       COALESCE(final_label, '')
+                FROM events
+                WHERE phase = ?
+                  AND start_ts = ?
+                  AND end_ts = ?
+                ORDER BY event_id ASC
+                LIMIT 1
+                """,
+                (phase, start_ts, end_ts),
+            ).fetchone()
+            if not row:
+                return None
+            return {
+                "event_id": int(row[0] or 0),
+                "pattern_id": int(row[1] or 0) or None,
+                "dedup_result": str(row[2] or ""),
+                "label": str(row[3] or ""),
+            }
+        except Exception as e:
+            logger.debug("Persisted cycle lookup failed: %s", e)
+            return None
 
     def _is_session_duplicate(self, cycle: Dict[str, Any], label: str) -> bool:
         start_ts = str(cycle.get("start_ts") or "")
@@ -6548,9 +6597,20 @@ class SQLiteStore:
                 b = active[jdx]
                 if (a.get("phase_mode") or "unknown") != (b.get("phase_mode") or "unknown"):
                     continue
+
+                # Never auto-merge two explicitly different user labels.
+                a_user = str(a.get("user_label") or "").strip().lower()
+                b_user = str(b.get("user_label") or "").strip().lower()
+                if a_user and b_user and a_user != b_user:
+                    continue
+
                 dist = self._pattern_distance(a, b)
-                if dist <= merge_tolerance:
-                    pairs.append((a, b, dist))
+                fuzzy_match = self._fuzzy_cluster_merge_match(a, b)
+                if dist <= merge_tolerance or fuzzy_match:
+                    # Keep scalar ordering deterministic; fuzzy-only pairs are
+                    # intentionally ranked just behind direct distance matches.
+                    rank_distance = dist if dist <= merge_tolerance else max(merge_tolerance, 0.205)
+                    pairs.append((a, b, rank_distance))
 
         if not pairs:
             return {"ok": True, "merged": 0, "patterns_considered": len(active)}
@@ -7282,6 +7342,31 @@ class SQLiteStore:
         quality_score = float(prepared.quality_score)
         cycle = dict(prepared.cycle)
         suggestion_seed = str(prepared.suggestion_seed)
+
+        persisted_event = self._find_persisted_cycle_event(cycle)
+        if persisted_event:
+            self._learning_stats["rejected_session_dup"] = self._learning_stats.get("rejected_session_dup", 0.0) + 1.0
+            logger.debug(
+                "Skipping persisted replay cycle: event_id=%s pattern_id=%s phase=%s start=%s end=%s",
+                persisted_event.get("event_id"),
+                persisted_event.get("pattern_id"),
+                str(cycle.get("phase") or "L1"),
+                str(cycle.get("start_ts") or ""),
+                str(cycle.get("end_ts") or ""),
+            )
+            return {
+                "matched": bool(persisted_event.get("pattern_id")),
+                "pattern": None,
+                "skipped": True,
+                "reason": "persisted_duplicate_cycle",
+                "dedup": {
+                    "result": "persistent_replay_skip",
+                    "matched_pattern_id": persisted_event.get("pattern_id"),
+                    "similarity_score": 1.0,
+                    "reason": "same_cycle_window_already_persisted",
+                },
+                "event_id": persisted_event.get("event_id"),
+            }
 
         if prepared.skipped_reason == "low_quality_cycle":
             event_id = self._record_cycle_event(
