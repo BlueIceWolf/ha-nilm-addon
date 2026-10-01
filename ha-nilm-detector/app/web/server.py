@@ -464,12 +464,15 @@ def _html_page(default_language: str = "de", build_info: Optional[Dict[str, str]
         <button id=\"geraeteRefreshBtn\">Aktualisieren</button>
         <span id=\"geraeteCount\" class=\"muted\" style=\"font-size:0.83rem;\"></span>
       </div>
+      <div class=\"muted\" style=\"font-size:0.84rem;margin-bottom:8px;\">
+        Gerätename = bestätigte Identität. Lastklasse = technische Einordnung aus dem Stromprofil.
+      </div>
       <table>
         <thead>
           <tr>
-            <th>Name / Label</th><th>Typ</th><th>Phase</th>
-            <th>Ø Leistung (W)</th><th>Peak (W)</th><th>Dauer (s)</th>
-            <th>Gesehen</th><th>Konfidenz</th><th>Bestätigt</th>
+            <th>Gerät</th><th>Lastklasse</th><th>Phase</th>
+            <th>Typisch</th><th>Betriebsarten</th><th>Confidence</th>
+            <th>Warum?</th><th>Status</th><th>Aktion</th>
           </tr>
         </thead>
         <tbody id=\"geraeteRows\"></tbody>
@@ -1250,6 +1253,20 @@ function fmt(v, suffix='') {
   const n = Number(v);
   if (!Number.isFinite(n)) return '-';
   return `${n.toFixed(1)}${suffix}`;
+}
+
+function escapeHtml(value) {
+  return String(value ?? '')
+    .replace(/&/g, '&amp;')
+    .replace(/</g, '&lt;')
+    .replace(/>/g, '&gt;')
+    .replace(/"/g, '&quot;')
+    .replace(/'/g, '&#039;');
+}
+
+function pct(value) {
+  const n = Number(value);
+  return Number.isFinite(n) ? `${Math.round(Math.max(0, Math.min(1, n)) * 100)}%` : '-';
 }
 
 function setStatus(message) {
@@ -3093,44 +3110,107 @@ const eventsRefreshBtn = document.getElementById('eventsRefreshBtn');
 if (eventsRefreshBtn) eventsRefreshBtn.addEventListener('click', loadEventsTab);
 
 // ── Geräte tab ─────────────────────────────────────────────────────────────
+async function updateDeviceIdentity(deviceId, currentName) {
+  const proposed = prompt(
+    currentLanguage === 'en' ? 'Physical device name:' : 'Name des echten Geräts:',
+    currentName && !String(currentName).startsWith('Unbekanntes Gerät') ? currentName : ''
+  );
+  if (proposed === null) return;
+  const name = String(proposed || '').trim();
+  if (!name) {
+    alert(currentLanguage === 'en' ? 'Name is required.' : 'Bitte einen Namen eingeben.');
+    return;
+  }
+
+  try {
+    const response = await fetch(apiPath(`api/devices/${deviceId}/identity`), {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ display_name: name, confirmed: true })
+    });
+    const payload = await response.json();
+    if (!response.ok || !payload.ok) {
+      throw new Error(payload.error || `HTTP ${response.status}`);
+    }
+    await loadGeraeteTab();
+    await refresh();
+  } catch (err) {
+    alert(currentLanguage === 'en' ? `Could not save device: ${err}` : `Gerät konnte nicht gespeichert werden: ${err}`);
+  }
+}
+
+// ── Geräte tab ─────────────────────────────────────────────────────────────
 async function loadGeraeteTab() {
   const tbody = document.getElementById('geraeteRows');
   if (!tbody) return;
   tbody.innerHTML = '<tr><td colspan="9" style="text-align:center">Lade…</td></tr>';
   try {
-    const devices = await fetchJson('api/devices?limit=200');
+    const devices = await fetchJson('api/devices?limit=500');
     tbody.innerHTML = '';
     const arr = Array.isArray(devices) ? devices : [];
     const countEl = document.getElementById('geraeteCount');
-    if (countEl) countEl.textContent = `${arr.length} Einträge`;
+    if (countEl) {
+      const confirmed = arr.filter(d => Number(d.confirmed || 0) > 0).length;
+      countEl.textContent = `${arr.length} Geräte · ${confirmed} bestätigt`;
+    }
     if (!arr.length) {
-      tbody.innerHTML = '<tr><td colspan="9">Keine Geräte erkannt</td></tr>';
+      tbody.innerHTML = '<tr><td colspan="9">Noch keine Gerätecluster vorhanden</td></tr>';
       return;
     }
+
     arr.forEach(d => {
       const tr = document.createElement('tr');
+      const conf = (d.confidence && typeof d.confidence === 'object') ? d.confidence : {};
+      const modes = Array.isArray(d.modes) ? d.modes : [];
+      const explanations = Array.isArray(d.explanation) ? d.explanation : [];
 
-      const name = d.final_label || d.user_label || d.predicted_label || `device_${d.device_id ?? '-'}`;
-      const typ = d.device_subclass || '-';
-      const phase = d.phase || '-';
+      const name = escapeHtml(d.display_name || `Unbekanntes Gerät ${d.device_id ?? '-'}`);
+      const behavior = escapeHtml(d.behavior_class || d.predicted_label || 'unknown_load');
+      const phase = escapeHtml(d.phase || '-');
+      const typicalPower = Number(d.avg_power_w) > 0 ? fmt(d.avg_power_w, ' W') : '-';
+      const typicalDuration = Number(d.avg_duration_s) > 0
+        ? (Number(d.avg_duration_s) >= 120 ? `${(Number(d.avg_duration_s) / 60).toFixed(1)} min` : fmt(d.avg_duration_s, ' s'))
+        : '-';
+      const typical = `<strong>${typicalPower}</strong><div class="muted" style="font-size:.78rem">${typicalDuration} · ${d.times_seen_total || 0}× gesehen</div>`;
 
-      const minW = Number(d.baseline_range_min_w);
-      const maxW = Number(d.baseline_range_max_w);
-      const avgW = (Number.isFinite(minW) && Number.isFinite(maxW) && (minW > 0 || maxW > 0))
-        ? ((minW + maxW) / 2)
-        : null;
-      const peakW = Number.isFinite(maxW) && maxW > 0 ? maxW : null;
+      const modeHtml = modes.length
+        ? modes.slice(0, 4).map(m => {
+            const p = Number(m.run_power_w) > 0 ? `${Math.round(Number(m.run_power_w))} W` : '';
+            const dur = Number(m.duration_s) > 0 ? `${Math.round(Number(m.duration_s))} s` : '';
+            const details = [p, dur, `${m.seen_count || 0}×`].filter(Boolean).join(' · ');
+            return `<div><strong>${escapeHtml(m.name || m.type || 'Betriebsart')}</strong><div class="muted" style="font-size:.76rem">${escapeHtml(details)}</div></div>`;
+          }).join('')
+        : '<span class="muted">noch keine getrennten Betriebsarten</span>';
 
-      const seen = d.times_seen_total ?? '-';
-      const confRaw = Number(d.confidence_avg);
-      const confNorm = Number.isFinite(confRaw) ? (confRaw > 1 ? confRaw / 100.0 : confRaw) : null;
-      const confirmed = Number(d.confirmed || 0) > 0 ? '✓' : '';
+      const confHtml = [
+        ['Pattern', conf.pattern_match],
+        ['Klasse', conf.device_class],
+        ['Segment.', conf.segmentation],
+        ['Wiederh.', conf.recurrence],
+      ].map(([label, value]) => `<div style="white-space:nowrap"><span class="muted">${label}</span> <strong>${pct(value)}</strong></div>`).join('');
 
-      tr.innerHTML = `<td>${name}</td><td>${typ}</td><td>${phase}</td><td>${fmt(avgW,' W')}</td><td>${fmt(peakW,' W')}</td><td>-</td><td>${seen}</td><td>${fmt(confNorm,'')}</td><td>${confirmed}</td>`;
+      const whyHtml = explanations.length
+        ? '<ul style="margin:0;padding-left:17px;font-size:.78rem">' + explanations.slice(0, 5).map(x => `<li>${escapeHtml(x)}</li>`).join('') + '</ul>'
+        : '<span class="muted">noch zu wenig Evidenz</span>';
+
+      const confirmed = Number(d.confirmed || 0) > 0;
+      const statusHtml = confirmed
+        ? '<strong>✓ bestätigt</strong>'
+        : `<span class="muted">unbestätigt</span><div class="muted" style="font-size:.74rem">${d.pattern_count || 0} Pattern</div>`;
+
+      const action = `<button class="device-name-btn" data-device-id="${Number(d.device_id)}" data-device-name="${escapeHtml(d.display_name || '')}">${confirmed ? 'Umbenennen' : 'Gerät benennen'}</button>`;
+
+      tr.innerHTML = `<td><strong>${name}</strong><div class="muted" style="font-size:.75rem">ID ${Number(d.device_id || 0)}</div></td><td>${behavior}</td><td>${phase}</td><td>${typical}</td><td>${modeHtml}</td><td>${confHtml}</td><td>${whyHtml}</td><td>${statusHtml}</td><td>${action}</td>`;
       tbody.appendChild(tr);
     });
+
+    tbody.querySelectorAll('.device-name-btn').forEach(btn => {
+      btn.addEventListener('click', () => {
+        updateDeviceIdentity(Number(btn.dataset.deviceId), String(btn.dataset.deviceName || ''));
+      });
+    });
   } catch (err) {
-    tbody.innerHTML = `<tr><td colspan="9">Fehler: ${err}</td></tr>`;
+    tbody.innerHTML = `<tr><td colspan="9">Fehler: ${escapeHtml(err)}</td></tr>`;
   }
 }
 const geraeteRefreshBtn = document.getElementById('geraeteRefreshBtn');
@@ -3815,6 +3895,38 @@ class StatsWebServer:
                         return
 
                     self._send_json(result)
+                    return
+
+                if parsed.path.startswith("/api/devices/") and parsed.path.endswith("/identity"):
+                    if not parent.storage or not hasattr(parent.storage, "update_device_identity"):
+                        self._send_json({"error": "device registry not available"}, status=400)
+                        return
+
+                    parts = [part for part in parsed.path.split("/") if part]
+                    if len(parts) != 4:
+                        self._send_json({"error": "invalid path"}, status=400)
+                        return
+                    try:
+                        device_id = int(parts[2])
+                    except ValueError:
+                        self._send_json({"error": "invalid device id"}, status=400)
+                        return
+
+                    length = int(self.headers.get("Content-Length", "0") or 0)
+                    raw = self.rfile.read(length) if length > 0 else b"{}"
+                    try:
+                        payload = json.loads(raw.decode("utf-8")) if raw else {}
+                    except json.JSONDecodeError:
+                        self._send_json({"error": "invalid json"}, status=400)
+                        return
+
+                    result = parent.storage.update_device_identity(
+                        device_id=device_id,
+                        display_name=str(payload.get("display_name", "")).strip(),
+                        confirmed=bool(payload.get("confirmed", True)),
+                        notes=payload.get("notes"),
+                    )
+                    self._send_json(result, status=200 if result.get("ok") else 400)
                     return
 
                 if parsed.path.startswith("/api/patterns/") and parsed.path.endswith("/label"):
