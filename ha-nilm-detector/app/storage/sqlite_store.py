@@ -5262,6 +5262,17 @@ class SQLiteStore:
                         datetime.now().isoformat(),
                     ),
                 )
+                self._patterns_conn.execute(
+                    """
+                    DELETE FROM pattern_features
+                    WHERE pattern_id = ? AND id NOT IN (
+                        SELECT id FROM pattern_features
+                        WHERE pattern_id = ?
+                        ORDER BY id DESC LIMIT 24
+                    )
+                    """,
+                    (pattern_id, pattern_id),
+                )
                 logger.debug(
                     "Pattern features recorded: pattern_id=%d version=%s substates=%d steps=%d",
                     pattern_id, feature_version,
@@ -6486,6 +6497,10 @@ class SQLiteStore:
         """
         if not self._patterns_conn:
             return {"ok": False, "error": "storage not connected"}
+
+        # Retention is enforced on every scheduled/manual consolidation pass, not
+        # only at process startup, so long-running add-ons remain bounded.
+        self.cleanup_old_data()
 
         patterns = self.list_patterns(limit=max_patterns)
         active = [p for p in patterns if p.get("status") == "active"]
