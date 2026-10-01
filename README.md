@@ -11,7 +11,7 @@
 
 <p align="center">
   <img src="https://img.shields.io/badge/status-beta-orange" alt="Beta">
-  <img src="https://img.shields.io/badge/version-0.6.44-blue" alt="Version 0.6.44">
+  <img src="https://img.shields.io/badge/version-0.7.0-blue" alt="Version 0.6.44">
   <img src="https://img.shields.io/badge/Home%20Assistant-Add--on-41BDF5" alt="Home Assistant Add-on">
   <img src="https://img.shields.io/badge/license-MIT-green" alt="MIT">
 </p>
@@ -25,7 +25,7 @@ HA NILM Detector beobachtet einen oder mehrere Leistungssensoren aus Home Assist
 
 Du brauchst dafür **keinen separaten Sensor an jedem Gerät**. Für den Einstieg reicht ein Leistungssensor auf einer Phase. Mit getrennten Sensoren für L1, L2 und L3 kann die Erkennung zusätzlich phasenbezogen arbeiten.
 
-### Aktueller Stand in v0.6.44
+### Aktueller Stand in v0.7.0
 
 - lokale Verarbeitung ohne Cloud-Zwang
 - L1/L2/L3 einzeln nutzbar
@@ -132,6 +132,26 @@ Muster mit schwächerer Segmentierung können zunächst als **provisional** gesa
 
 NILM ist keine direkte Gerätemessung. Zwei Geräte mit sehr ähnlichen Lastprofilen können deshalb verwechselt werden.
 
+
+## Lokales LLM-Review (optional)
+
+Ab **0.7.0** kann ein lokal laufendes Ollama-kompatibles Modell unsichere, bereits vollständig segmentierte Events zusätzlich bewerten. Die klassische NILM-Pipeline bleibt dabei führend; das LLM darf nur zwischen zulässigen Kandidaten wählen oder `unknown` zurückgeben.
+
+Beispiel:
+
+```yaml
+learning:
+  local_llm:
+    enabled: true
+    url: http://192.168.1.20:11434
+    model: qwen3:4b
+    timeout_seconds: 20
+    min_confidence: 0.65
+    review_below_confidence: 0.78
+```
+
+Der Endpunkt muss lokal sein (private IP, `localhost`, `.local` oder lokaler Hostname). Gesendet werden nur kompakte Event-Merkmale, Kandidatenlabels und wenige ähnliche bekannte Patterns. Starke deterministische Matches werden nicht unnötig durch das Modell ersetzt.
+
 ## Web-UI
 
 Die Weboberfläche wird über Home Assistant Ingress geöffnet und trennt den Workflow in mehrere Bereiche:
@@ -202,7 +222,7 @@ storage:
 
 ### Zu viele ähnliche Patterns
 
-Das kann bei variablen Lasten oder unvollständig erfassten Zyklen passieren. v0.6.44 enthält bereits verbessertes fuzzy Merging und strengere Segmentierungsbewertung, trotzdem bleibt das ein aktiver Entwicklungsbereich.
+Das kann bei variablen Lasten oder unvollständig erfassten Zyklen passieren. v0.7.0 enthält bereits verbessertes fuzzy Merging und strengere Segmentierungsbewertung, trotzdem bleibt das ein aktiver Entwicklungsbereich.
 
 ### Web-UI wirkt nach Update alt
 
@@ -251,7 +271,7 @@ Unter Windows:
 
 ## Projektstatus
 
-Version **0.6.44** wurde laut Release-Dokumentation mit dem vollständigen `ha-nilm-detector`-Testlauf validiert (`35 passed`). Das Projekt bleibt trotzdem Beta, weil reale Häuser und Lastprofile deutlich vielfältiger sind als synthetische Tests.
+Version **0.7.0** wurde laut Release-Dokumentation mit dem vollständigen `ha-nilm-detector`-Testlauf validiert (`35 passed`). Das Projekt bleibt trotzdem Beta, weil reale Häuser und Lastprofile deutlich vielfältiger sind als synthetische Tests.
 
 ## Mitmachen
 
