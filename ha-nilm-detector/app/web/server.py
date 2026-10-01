@@ -1397,7 +1397,13 @@ async function importHistoryFromHA() {
       throw new Error(payload.error || `HTTP ${response.status}`);
     }
 
-    alert(t('importSuccess', { imported: payload.imported || 0, skipped: payload.skipped_non_positive || 0 }));
+    const sources = payload.sources || {};
+    const sourceSummary = ['L1', 'L2', 'L3']
+      .filter(phase => Object.prototype.hasOwnProperty.call(sources, phase))
+      .map(phase => `${phase}: ${sources[phase] || 0}`)
+      .join(', ');
+    const baseMessage = t('importSuccess', { imported: payload.imported || 0, skipped: payload.skipped_non_positive || 0 });
+    alert(sourceSummary ? `${baseMessage}\nHA History: ${sourceSummary}` : baseMessage);
     await refresh();
   } catch (err) {
     alert(t('importFailed', { err }));
