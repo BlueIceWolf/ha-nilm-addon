@@ -81,7 +81,22 @@ def test_provisional_pattern_in_learned_patterns():
                 "quality_score": 0.35,
                 "truncated_start": False,
                 "truncated_end": False,
-                "profile_points": [{"t_s": float(i), "power_w": 200.0 + (i % 5) * 10} for i in range(30)],
+                # Include real pre/post baseline samples around the active section.
+                # The baseline-quality gate compares the profile head/tail with
+                # baseline_before_w / baseline_after_w.
+                "profile_points": [
+                    {
+                        "t_s": float(i),
+                        "power_w": (
+                            100.0 + (i % 2)
+                            if i < 6
+                            else 102.0 + (i % 2)
+                            if i >= 24
+                            else 200.0 + (i % 5) * 10
+                        ),
+                    }
+                    for i in range(30)
+                ],
                 "pre_roll_samples": [],
                 "post_roll_samples": [],
                 "operating_modes": [],
