@@ -11,7 +11,7 @@ from datetime import datetime, timedelta, timezone
 from typing import Any, Dict, List, Optional, Tuple
 
 from app.learning.ml_classifier import LocalMLClassifier
-from app.learning.attention_classifier import LocalAttentionClassifier
+from app.learning.local_llm import LocalLLMClassifier
 from app.learning.online_learning import build_pattern_dataset_rows
 from app.learning.pattern_matching import HybridPatternMatcher
 from app.learning.classification_pipeline import (
@@ -86,8 +86,7 @@ class SQLiteStore:
         self.pattern_match_threshold = 0.45
         self.ml_confidence_threshold = 0.60
         self._ml_classifier = LocalMLClassifier()
-        self._attention_classifier = LocalAttentionClassifier()
-        self.attention_enabled = True
+        self._local_llm = LocalLLMClassifier()
         self._pattern_matcher = HybridPatternMatcher(
             match_threshold=self.pattern_match_threshold,
             shape_matching_enabled=self.shape_matching_enabled,
