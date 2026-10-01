@@ -411,6 +411,7 @@ class SQLiteStore:
             self._maybe_backfill_normalized_tables()
             self._maybe_backfill_patterns_mirror()
             self._maybe_backfill_inrush_runtime_schema()
+            self._maybe_recluster_device_registry_v2()
             self._maybe_repair_pattern_timestamps()
             self.cleanup_old_data()
             self._log_startup_diagnostics(stage="post-init")
@@ -527,6 +528,151 @@ class SQLiteStore:
 
         # Keep an explicit normalized patterns table in sync (separate from learned_patterns).
         self._maybe_backfill_patterns_mirror()
+
+    def _maybe_recluster_device_registry_v2(self) -> None:
+        """Rebuild only automatic physical-device assignments using the v2 fingerprint.
+
+        User-named devices are preserved. Automatic pattern confirmation is not
+        treated as confirmation of a physical appliance identity.
+        """
+        if not self._patterns_conn:
+            return
+
+        event_key = "physical_device_registry_recluster:v2"
+        if self._migration_applied(self._patterns_conn, event_key):
+            return
+        if not self._table_exists(self._patterns_conn, "learned_patterns"):
+            self._record_migration(self._patterns_conn, event_key, "learned_patterns missing")
+            return
+
+        try:
+            patterns = self.list_patterns(limit=10000)
+            if not patterns:
+                self._record_migration(self._patterns_conn, event_key, "no patterns")
+                return
+
+            protected_device_ids = {
+                int(p.get("device_id", 0) or 0)
+                for p in patterns
+                if str(p.get("user_label") or "").strip() and int(p.get("device_id", 0) or 0) > 0
+            }
+
+            auto_device_ids = []
+            if self._table_exists(self._patterns_conn, "devices"):
+                rows = self._patterns_conn.execute(
+                    """
+                    SELECT device_id
+                    FROM devices
+                    WHERE user_label IS NULL OR TRIM(user_label) = ''
+                    """
+                ).fetchall()
+                auto_device_ids = [
+                    int(row[0])
+                    for row in rows
+                    if int(row[0] or 0) > 0 and int(row[0] or 0) not in protected_device_ids
+                ]
+
+            # Old device_cycles were aggregated under the coarse label+phase grouping
+            # and cannot be safely split. Rebuild them from the re-assigned patterns.
+            with self._patterns_conn:
+                if auto_device_ids:
+                    marks = ",".join(["?"] * len(auto_device_ids))
+                    if self._table_exists(self._patterns_conn, "device_cycles"):
+                        self._patterns_conn.execute(
+                            f"DELETE FROM device_cycles WHERE device_id IN ({marks})",
+                            tuple(auto_device_ids),
+                        )
+                    self._patterns_conn.execute(
+                        f"DELETE FROM devices WHERE device_id IN ({marks})",
+                        tuple(auto_device_ids),
+                    )
+
+            reassigned = 0
+            groups: set[str] = set()
+            for pattern in patterns:
+                pattern_id = int(pattern.get("id", 0) or 0)
+                if pattern_id <= 0:
+                    continue
+
+                user_label = str(pattern.get("user_label") or "").strip()
+                existing_device_id = int(pattern.get("device_id", 0) or 0)
+                if user_label:
+                    # A user label is the authority for physical identity.
+                    if existing_device_id > 0 and self._table_exists(self._patterns_conn, "devices"):
+                        with self._patterns_conn:
+                            self._patterns_conn.execute(
+                                """
+                                UPDATE devices
+                                SET user_label = ?, final_label = ?, confirmed = 1,
+                                    updated_at = ?
+                                WHERE device_id = ?
+                                """,
+                                (user_label, user_label, datetime.now().isoformat(), existing_device_id),
+                            )
+                    continue
+
+                label = str(
+                    pattern.get("refined_label")
+                    or pattern.get("suggestion_type")
+                    or pattern.get("candidate_name")
+                    or "unknown_load"
+                )
+                phase = str(pattern.get("phase") or "L1")
+                group_key = self._device_group_id(label, pattern)
+                groups.add(group_key)
+                confidence_raw = float(pattern.get("confidence_score", 0.0) or 0.0)
+                confidence = confidence_raw / 100.0 if confidence_raw > 1.0 else confidence_raw
+
+                device_id = self._get_or_create_device(
+                    label=label,
+                    phase=phase,
+                    confidence=max(0.0, min(confidence, 1.0)),
+                    confirmed=False,
+                    group_key=group_key,
+                )
+                if not device_id:
+                    continue
+
+                with self._patterns_conn:
+                    self._patterns_conn.execute(
+                        """
+                        UPDATE learned_patterns
+                        SET device_id = ?, device_group_id = ?, updated_at = ?
+                        WHERE id = ?
+                        """,
+                        (int(device_id), group_key, datetime.now().isoformat(), pattern_id),
+                    )
+                    if self._table_exists(self._patterns_conn, "events"):
+                        self._patterns_conn.execute(
+                            """
+                            UPDATE events
+                            SET assigned_device_id = ?
+                            WHERE assigned_pattern_id = ? OR matched_pattern_id = ?
+                            """,
+                            (int(device_id), pattern_id, pattern_id),
+                        )
+
+                rebuilt_pattern = dict(pattern)
+                rebuilt_pattern["device_id"] = int(device_id)
+                rebuilt_pattern["device_group_id"] = group_key
+                self._upsert_device_cycle(
+                    device_id=int(device_id),
+                    pattern_id=pattern_id,
+                    cycle=rebuilt_pattern,
+                    phase_rows=[],
+                    final_label=label,
+                )
+                self._upsert_patterns_mirror(rebuilt_pattern)
+                reassigned += 1
+
+            details = (
+                f"patterns={len(patterns)} reassigned={reassigned} "
+                f"groups={len(groups)} protected_devices={len(protected_device_ids)}"
+            )
+            self._record_migration(self._patterns_conn, event_key, details)
+            logger.info("Reclustered automatic device registry with v2 electrical fingerprint: %s", details)
+        except Exception as e:
+            logger.warning("Device registry v2 recluster failed: %s", e)
 
     def _maybe_backfill_patterns_mirror(self) -> None:
         if not self._patterns_conn:
@@ -8691,6 +8837,16 @@ class SQLiteStore:
                 confirmed=True,
                 group_key=str((existing_device_row[1] if existing_device_row else "") or f"user:{self._normalize_pattern_name(clean_label)}:{phase}"),
             )
+            if device_id and self._table_exists(self._patterns_conn, "devices"):
+                with self._patterns_conn:
+                    self._patterns_conn.execute(
+                        """
+                        UPDATE devices
+                        SET user_label = ?, final_label = ?, confirmed = 1, updated_at = ?
+                        WHERE device_id = ?
+                        """,
+                        (clean_label, clean_label, datetime.now().isoformat(), int(device_id)),
+                    )
             with self._patterns_conn:
                 self._patterns_conn.execute(
                     """
