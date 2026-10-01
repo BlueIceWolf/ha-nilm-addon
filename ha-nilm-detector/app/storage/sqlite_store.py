@@ -5842,10 +5842,43 @@ class SQLiteStore:
                             """
                         )
                     if self._table_exists(self._patterns_conn, "events"):
+                        # Raw event payloads are the largest rows in the pattern DB.
+                        # Keep a bounded diagnostic/training window; long-term learned
+                        # knowledge lives in learned_patterns/devices instead.
+                        if self._table_exists(self._patterns_conn, "event_phases"):
+                            self._patterns_conn.execute(
+                                """
+                                DELETE FROM event_phases
+                                WHERE event_id NOT IN (
+                                    SELECT event_id FROM events
+                                    ORDER BY event_id DESC LIMIT 10000
+                                )
+                                """
+                            )
                         self._patterns_conn.execute(
                             """
-                            DELETE FROM event_phases
-                            WHERE event_id NOT IN (SELECT event_id FROM events)
+                            DELETE FROM events
+                            WHERE event_id NOT IN (
+                                SELECT event_id FROM events
+                                ORDER BY event_id DESC LIMIT 10000
+                            )
+                            """
+                        )
+                        if self._table_exists(self._patterns_conn, "event_phases"):
+                            self._patterns_conn.execute(
+                                """
+                                DELETE FROM event_phases
+                                WHERE event_id NOT IN (SELECT event_id FROM events)
+                                """
+                            )
+                    if self._table_exists(self._patterns_conn, "provisional_patterns"):
+                        self._patterns_conn.execute(
+                            """
+                            DELETE FROM provisional_patterns
+                            WHERE id NOT IN (
+                                SELECT id FROM provisional_patterns
+                                ORDER BY id DESC LIMIT 5000
+                            )
                             """
                         )
 
@@ -8430,6 +8463,7 @@ class SQLiteStore:
             deleted_counts: Dict[str, int] = {}
             learning_tables = [
                 "event_phases",
+                "provisional_patterns",
                 "device_cycles",
                 "classification_log",
                 "user_labels",
