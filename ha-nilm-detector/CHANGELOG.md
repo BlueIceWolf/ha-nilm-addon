@@ -2,6 +2,22 @@
 
 > ⚠️ **Hinweis**: Dieses Projekt ist experimentell (BETA) - Breaking Changes und Bugs können auftreten.
 
+## 0.7.0 (BETA)
+
+### Added
+- Optionaler **lokaler LLM-Reviewer** über einen Ollama-kompatiblen `/api/chat`-Endpunkt.
+- Strukturierte JSON-Ausgabe mit festem Schema, `temperature: 0` und begrenzten Kandidatenlabels.
+- LLM bekommt nur kompakte NILM-Eventmerkmale und ähnliche gelernte Muster statt kompletter HA-Rohdaten.
+- Lokale Endpunkte werden auf private/Loopback/lokale Hostnamen beschränkt.
+- LLM greift nur bei unsicheren Klassifikationen ein und kann starke deterministische Matches nicht leicht überschreiben.
+
+### Changed
+- Containerstart ist deterministisch; fehlende Python-Abhängigkeiten werden nicht mehr zur Laufzeit nachinstalliert.
+- `config.yaml` wird ins Image kopiert, damit die Web-UI zuverlässig die Release-Version statt `dev` anzeigt.
+- Docker-CI prüft Runtime-Imports und die eingebettete Versionsnummer.
+- Veraltete Entwicklungsdateien und ungenutzter `AutoDetector` entfernt.
+
+
 ## 0.6.44 (BETA)
 
 ### Fixes
