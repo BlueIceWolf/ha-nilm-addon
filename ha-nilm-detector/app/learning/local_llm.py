@@ -8,9 +8,11 @@ events using a local Ollama-compatible HTTP API and structured JSON output.
 from __future__ import annotations
 
 import hashlib
+import ipaddress
 import json
 from dataclasses import dataclass
 from typing import Any, Dict, Iterable, List, Optional, Sequence
+from urllib.parse import urlparse
 
 import requests
 
@@ -49,9 +51,34 @@ class LocalLLMClassifier:
         self.review_below_confidence = max(0.0, min(float(review_below_confidence), 1.0))
         self._cache: Dict[str, LocalLLMResult] = {}
 
+    @staticmethod
+    def _is_local_url(value: str) -> bool:
+        try:
+            parsed = urlparse(str(value or ""))
+            if parsed.scheme not in {"http", "https"}:
+                return False
+            host = str(parsed.hostname or "").lower()
+            if not host:
+                return False
+            if host in {"localhost", "host.docker.internal"} or host.endswith(".local"):
+                return True
+            if "." not in host:
+                return True
+            try:
+                return ipaddress.ip_address(host).is_private or ipaddress.ip_address(host).is_loopback
+            except ValueError:
+                return False
+        except Exception:
+            return False
+
     @property
     def ready(self) -> bool:
-        return self.enabled and bool(self.base_url) and bool(self.model)
+        return (
+            self.enabled
+            and bool(self.base_url)
+            and bool(self.model)
+            and self._is_local_url(self.base_url)
+        )
 
     @staticmethod
     def _safe_float(value: Any, default: float = 0.0) -> float:
