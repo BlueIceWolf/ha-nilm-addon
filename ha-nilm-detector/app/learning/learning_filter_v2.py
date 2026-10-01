@@ -37,7 +37,7 @@ class LearningFilterV2:
         checks = [
             (bool(event.get("truncated_start")), 0.24, "truncated_start"),
             (bool(event.get("truncated_end")), 0.20, "truncated_end"),
-            (sample_count < 6, 0.22, "too_few_samples"),
+            (sample_count < 4, 0.22, "too_few_samples"),
             (seg < 0.40, 0.30, "weak_segmentation"),
             (wave < 0.35, 0.22, "incomplete_waveform"),
             (baseline < 0.25, 0.24, "unstable_baseline"),
