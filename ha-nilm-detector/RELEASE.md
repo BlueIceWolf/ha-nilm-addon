@@ -1,3 +1,11 @@
+## 0.7.8
+
+### Highlights
+- Hardens the 0.7.7 learning-quality release with corrected regression tests.
+- Provisional-pattern persistence is now tested with realistic baseline samples.
+- The test explicitly stays below final-learning thresholds after classifier enrichment, so the provisional path is exercised deterministically.
+- No production learning thresholds were weakened; baseline and non-positive-delta protection remain active.
+
 ## 0.7.7
 
 ### Highlights
