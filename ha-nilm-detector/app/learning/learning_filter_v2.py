@@ -54,6 +54,17 @@ class LearningFilterV2:
             score -= 0.35
             reasons.append("invalid_event_metrics")
 
+        # A NILM appliance activation must add power relative to the pre-event
+        # baseline.  Negative deltas are normally switch-off edges or baseline
+        # contamination and must never become stable device prototypes.
+        if event.get("delta_avg_power_w") is not None:
+            delta = self._f(event.get("delta_avg_power_w"))
+            if delta <= 0.0:
+                return LearningDecision("blocked", 0.0, False, reasons + ["non_positive_delta_power"])
+            if delta < 30.0:
+                score -= 0.35
+                reasons.append("delta_power_too_small")
+
         score = max(0.0, min(score, 1.0))
         if score >= self.stable_threshold:
             return LearningDecision("stable", score, True, reasons or ["clean_event"])

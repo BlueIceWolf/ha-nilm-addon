@@ -23,7 +23,16 @@ def is_valid_training_event(event: Dict[str, Any]) -> Tuple[bool, Optional[str]]
         used in ``NILMPipeline._stage_classification``.
     """
     # --- Power guard --------------------------------------------------------
-    delta_power = float(event.get("avg_power_w") or event.get("delta_avg_power_w") or 0.0)
+    # Prefer the baseline-corrected delta whenever it is available.  Using the
+    # aggregate average first allowed falling edges / baseline drift to be learned
+    # as appliances simply because the total phase power was still > 30 W.
+    if event.get("delta_avg_power_w") is not None:
+        delta_power = float(event.get("delta_avg_power_w") or 0.0)
+    else:
+        delta_power = float(event.get("avg_power_w") or 0.0)
+
+    if delta_power <= 0.0:
+        return False, "non_positive_delta_power"
     if delta_power < 30.0:
         return False, "delta_power_too_small"
 

@@ -1,3 +1,14 @@
+## 0.7.7
+
+### Highlights
+- Stops switch-off edges and baseline drift from being learned as appliances.
+- Repairs already affected automatic device-registry entries on the next start.
+- Corrects inverted baseline ranges in device metadata.
+- Keeps user-confirmed devices and labels untouched.
+
+### Data observed in the real-world sample
+The uploaded pattern database contained a large number of one-off patterns and several non-positive delta signatures. 0.7.7 specifically targets that failure mode so the device registry converges on repeated physical loads instead of transient baseline artefacts.
+
 # Release Notes
 
 > ⚠️ **EXPERIMENTELLES PROJEKT**: Dieses Add-on ist in aktiver Entwicklung (BETA-Status). Features können unvollständig sein, Breaking Changes auftreten. Nutze es zum Experimentieren und Testen, nicht für kritische Produktionsumgebungen.
