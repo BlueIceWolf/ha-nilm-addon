@@ -197,3 +197,106 @@ def test_device_registry_keeps_separate_electrical_clusters_on_same_phase():
             assert int(again) == int(first)
         finally:
             store.close()
+
+
+
+def test_electrical_device_fingerprint_groups_similar_cycles_and_splits_different_loads():
+    base = _build_cycle()
+    base["phase"] = "L3"
+    base["avg_power_w"] = 102.0
+    base["peak_power_w"] = 145.0
+    base["duration_s"] = 900.0
+    base["delta_avg_power_w"] = 95.0
+    base["delta_peak_power_w"] = 135.0
+    base["has_motor_pattern"] = True
+    base["num_substates"] = 1
+    base["profile_points"] = [
+        {"t_s": 0.0, "t_norm": 0.0, "power_w": 8.0},
+        {"t_s": 20.0, "t_norm": 0.02, "power_w": 145.0},
+        {"t_s": 120.0, "t_norm": 0.13, "power_w": 108.0},
+        {"t_s": 450.0, "t_norm": 0.50, "power_w": 103.0},
+        {"t_s": 780.0, "t_norm": 0.87, "power_w": 101.0},
+        {"t_s": 900.0, "t_norm": 1.0, "power_w": 8.0},
+    ]
+
+    similar = dict(base)
+    similar["avg_power_w"] = 109.0
+    similar["peak_power_w"] = 150.0
+    similar["duration_s"] = 980.0
+    similar["delta_avg_power_w"] = 101.0
+    similar["delta_peak_power_w"] = 140.0
+
+    very_different = dict(base)
+    very_different["avg_power_w"] = 1250.0
+    very_different["peak_power_w"] = 1900.0
+    very_different["duration_s"] = 7200.0
+    very_different["delta_avg_power_w"] = 1180.0
+    very_different["delta_peak_power_w"] = 1800.0
+
+    first_key = SQLiteStore._device_group_id("motor_load", base)
+    similar_key = SQLiteStore._device_group_id("variable_motor_load", similar)
+    different_key = SQLiteStore._device_group_id("motor_load", very_different)
+
+    assert first_key == similar_key
+    assert first_key != different_key
+
+
+def test_device_recluster_migration_preserves_user_named_identity():
+    with TemporaryDirectory() as tmpdir:
+        live_db = os.path.join(tmpdir, "live.sqlite3")
+        patterns_db = os.path.join(tmpdir, "patterns.sqlite3")
+        store = SQLiteStore(db_path=live_db, patterns_db_path=patterns_db)
+        try:
+            assert store.connect() is True
+
+            named = _build_cycle()
+            named["device_group_id"] = "old:coarse:L1"
+            named_result = store.learn_cycle_pattern(named, suggestion_type="motor_load")
+            named_pattern_id = int(named_result["pattern"]["id"])
+            assert store.label_pattern(named_pattern_id, "Kühlschrank Küche") is True
+
+            other = _build_cycle()
+            other["start_ts"] = (datetime(2026, 3, 29, 14, 0, 0)).isoformat()
+            other["end_ts"] = (datetime(2026, 3, 29, 16, 0, 0)).isoformat()
+            other["avg_power_w"] = 1200.0
+            other["peak_power_w"] = 1900.0
+            other["duration_s"] = 7200.0
+            other["delta_avg_power_w"] = 1100.0
+            other["delta_peak_power_w"] = 1800.0
+            other["device_group_id"] = "old:coarse:L1"
+            other_result = store.learn_cycle_pattern(other, suggestion_type="motor_load")
+            other_pattern_id = int(other_result["pattern"]["id"])
+
+            # Force the new migration to execute in this fresh test DB.
+            with store._patterns_conn:
+                store._patterns_conn.execute(
+                    "DELETE FROM migration_events WHERE event_key = ?",
+                    ("physical_device_registry_recluster:v2",),
+                )
+            store._maybe_recluster_device_registry_v2()
+
+            named_row = store._patterns_conn.execute(
+                "SELECT device_id, user_label FROM learned_patterns WHERE id = ?",
+                (named_pattern_id,),
+            ).fetchone()
+            other_row = store._patterns_conn.execute(
+                "SELECT device_id, user_label, device_group_id FROM learned_patterns WHERE id = ?",
+                (other_pattern_id,),
+            ).fetchone()
+
+            assert named_row is not None
+            assert named_row[1] == "Kühlschrank Küche"
+            assert other_row is not None
+            assert not str(other_row[1] or "")
+            assert int(named_row[0]) != int(other_row[0])
+            assert str(other_row[2]).startswith("v2:")
+
+            device_row = store._patterns_conn.execute(
+                "SELECT user_label, confirmed FROM devices WHERE device_id = ?",
+                (int(named_row[0]),),
+            ).fetchone()
+            assert device_row is not None
+            assert device_row[0] == "Kühlschrank Küche"
+            assert int(device_row[1] or 0) == 1
+        finally:
+            store.close()
