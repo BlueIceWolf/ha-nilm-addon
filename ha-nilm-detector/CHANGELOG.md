@@ -2,6 +2,17 @@
 
 > ⚠️ **Hinweis**: Dieses Projekt ist experimentell (BETA) - Breaking Changes und Bugs können auftreten.
 
+## 0.7.3 (BETA)
+
+### Hierarchical appliance classification
+- Klassifikation auf verhaltensbasierte NILM-Taxonomie umgestellt: Ein/Aus, mehrstufig/FSM, Motorlast, Heizlast, variable Last und stabile Kleinlast.
+- Konkrete Gerätenamen werden nur noch bei ausreichend unterscheidbarer Evidenz vergeben; unsichere Fälle bleiben bewusst generisch.
+- Niedrige stabile Motorlasten werden nicht mehr vorschnell als Elektronik/Pumpe bezeichnet.
+- Wiederkehrende kleine Motorzyklen werden als `refrigeration_candidate` statt automatisch als Kühlschrank/Gefrierschrank behandelt.
+- `normalized_variance` mathematisch korrigiert auf Varianz / Mittelwert² und alle betroffenen Schwellen neu kalibriert.
+- Alte Sammellabel wie `electronics_cluster`, `unknown_multistage` und aggressive `pump_candidate`-Heuristiken aus dem Hauptpfad entfernt.
+- Confidence beschreibt jetzt vorsichtiger die Evidenz für die Lastklasse statt eine scheinbar sichere physische Geräteidentität vorzutäuschen.
+
 ## 0.7.2 (BETA)
 
 ### Efficiency & Replay Dedup
