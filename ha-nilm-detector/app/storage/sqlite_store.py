@@ -11,6 +11,7 @@ from datetime import datetime, timedelta, timezone
 from typing import Any, Dict, List, Optional, Tuple
 
 from app.learning.ml_classifier import LocalMLClassifier
+from app.learning.local_llm import LocalLLMClassifier
 from app.learning.online_learning import build_pattern_dataset_rows
 from app.learning.pattern_matching import HybridPatternMatcher
 from app.learning.classification_pipeline import (
@@ -85,6 +86,7 @@ class SQLiteStore:
         self.pattern_match_threshold = 0.45
         self.ml_confidence_threshold = 0.60
         self._ml_classifier = LocalMLClassifier()
+        self._local_llm = LocalLLMClassifier()
         self._pattern_matcher = HybridPatternMatcher(
             match_threshold=self.pattern_match_threshold,
             shape_matching_enabled=self.shape_matching_enabled,
@@ -139,8 +141,14 @@ class SQLiteStore:
         online_learning_enabled: bool = True,
         pattern_match_threshold: float = 0.45,
         ml_confidence_threshold: float = 0.60,
+        local_llm_enabled: bool = False,
+        local_llm_url: str = "",
+        local_llm_model: str = "",
+        local_llm_timeout_seconds: int = 20,
+        local_llm_min_confidence: float = 0.65,
+        local_llm_review_below_confidence: float = 0.78,
     ) -> None:
-        """Configure hybrid AI scoring behavior at runtime."""
+        """Configure deterministic, ML and optional local-LLM scoring."""
         self.ai_enabled = bool(ai_enabled)
         self.ml_enabled = bool(ml_enabled)
         self.shape_matching_enabled = bool(shape_matching_enabled)
@@ -150,6 +158,14 @@ class SQLiteStore:
         self._pattern_matcher = HybridPatternMatcher(
             match_threshold=self.pattern_match_threshold,
             shape_matching_enabled=self.shape_matching_enabled,
+        )
+        self._local_llm = LocalLLMClassifier(
+            enabled=local_llm_enabled,
+            base_url=local_llm_url,
+            model=local_llm_model,
+            timeout_seconds=local_llm_timeout_seconds,
+            min_confidence=local_llm_min_confidence,
+            review_below_confidence=local_llm_review_below_confidence,
         )
 
     def configure_learning_policy(
@@ -6091,6 +6107,48 @@ class SQLiteStore:
 
         confidence = max(0.0, min(1.0, float(final_confidence)))
 
+        # A local LLM is only used as a reviewer for ambiguous, already segmented
+        # events. It may choose only from deterministic candidates / learned labels.
+        llm_result = None
+        if self._local_llm.should_review(
+            current_label=str(final_label or ""),
+            current_confidence=confidence,
+        ):
+            llm_candidates = [
+                final_label,
+                staged_label,
+                best_label,
+                best_group,
+                fallback,
+                *list(cycle.get("candidate_labels", []) or []),
+            ]
+            llm_candidates.extend(
+                self._device_group_key(pattern)
+                for pattern in patterns[:20]
+            )
+            try:
+                llm_result = self._local_llm.classify(
+                    cycle=cycle,
+                    candidate_labels=llm_candidates,
+                    similar_patterns=patterns[:8],
+                )
+            except Exception as llm_error:
+                logger.debug("Local LLM review failed: %s", llm_error)
+                llm_result = None
+
+        if llm_result is not None and llm_result.confidence >= self._local_llm.min_confidence:
+            llm_label = str(llm_result.label or "unknown")
+            if llm_label not in {"", "unknown", "unbekannt"}:
+                if llm_label == str(final_label):
+                    confidence = max(confidence, min(0.98, (confidence * 0.65) + (llm_result.confidence * 0.35)))
+                    source = "hybrid_local_llm_agreement"
+                    decision_reason = "local_llm_agrees"
+                elif llm_result.confidence >= max(0.78, confidence + 0.10):
+                    final_label = llm_label
+                    confidence = min(0.95, (confidence * 0.35) + (llm_result.confidence * 0.65))
+                    source = "hybrid_local_llm_override"
+                    decision_reason = "local_llm_strong_override"
+
         normalized_final_label = self._normalize_pattern_name(str(final_label or ""))
         label_lock_phase = str(phase_locks.get(normalized_final_label) or "")
         if label_lock_phase in {"L1", "L2", "L3"} and cycle_phase in {"L1", "L2", "L3"} and label_lock_phase != cycle_phase:
@@ -6215,6 +6273,16 @@ class SQLiteStore:
             "explain": {
                 **dict(matcher_result.explain),
                 "decision_reason": decision_reason,
+                "local_llm": (
+                    {
+                        "label": llm_result.label,
+                        "confidence": round(float(llm_result.confidence), 4),
+                        "device_family": llm_result.device_family,
+                        "evidence": llm_result.evidence,
+                    }
+                    if llm_result
+                    else None
+                ),
                 "candidate_labels": list(cycle.get("candidate_labels", [])),
                 "derived_features": dict(cycle.get("derived_features", {})),
                 "temporal_features": dict(cycle.get("temporal_features", {})),
