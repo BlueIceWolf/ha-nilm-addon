@@ -41,3 +41,12 @@ def test_learning_filter_blocks_negative_delta():
     assert decision.accepted is False
     assert decision.tier == "blocked"
     assert "non_positive_delta_power" in decision.reasons
+
+
+def test_learning_filter_blocks_sub_30w_delta():
+    decision = LearningFilterV2().evaluate(
+        _event(avg_power_w=180.0, delta_avg_power_w=20.0)
+    )
+    assert decision.accepted is False
+    assert decision.tier == "blocked"
+    assert "delta_power_too_small" in decision.reasons
