@@ -3514,7 +3514,7 @@ class SQLiteStore:
             label=suggestion_seed,
             phase=str(cycle.get("phase", "L1")),
             confidence=confidence_score_norm,
-            confirmed=auto_confirmed,
+            confirmed=False,
             group_key=device_group_id,
         )
         device_subclass = self._derive_device_subclass(suggestion_seed, cycle)
@@ -4284,10 +4284,103 @@ class SQLiteStore:
         return f"{phase_mode}:{substates}:{duration_bucket}:{duty_bucket}"
 
     @staticmethod
-    def _device_group_id(label: str, cycle: Dict[str, Any]) -> str:
+    def _device_behavior_family(label: str) -> str:
+        """Collapse classifier labels into broad electrical behaviour families."""
         clean = SQLiteStore._normalize_pattern_name(label)
-        phase = str(cycle.get("phase") or "L1")
-        return f"{clean or 'unknown'}:{phase}"
+        motor = {
+            "motor_load", "variable_motor_load", "motor_start_candidate",
+            "refrigeration_candidate", "pump_candidate", "motor_candidate",
+            "compressor_candidate", "compressor_small", "compressor_large",
+            "small_pump_motor", "large_pump_motor", "pump", "motor",
+        }
+        heating = {
+            "resistive_heater", "heating_load", "heater", "space_heater",
+            "immersion_heater", "hot_water_tank",
+        }
+        electronics = {
+            "low_power_electronics", "permanent_low_power_load",
+            "electronics_cluster", "electronics", "always_on_low_power",
+            "psu_constant_load",
+        }
+        if clean in motor:
+            return "motor"
+        if clean in heating:
+            return "heating"
+        if clean in electronics:
+            return "electronics"
+        if clean == "multistate_appliance":
+            return "multistate"
+        if clean == "steady_on_off_load":
+            return "steady"
+        if clean == "variable_load":
+            return "variable"
+        if clean == "short_pulse_load":
+            return "pulse"
+        return clean or "unknown"
+
+    @staticmethod
+    def _log_bucket(value: float, ratio: float, floor: float = 1.0) -> int:
+        """Bucket positive values by multiplicative distance instead of fixed watts."""
+        v = max(float(value or 0.0), float(floor))
+        r = max(float(ratio), 1.01)
+        try:
+            return int(round(math.log(v / float(floor), r)))
+        except Exception:
+            return 0
+
+    @classmethod
+    def _coarse_shape_bucket(cls, cycle: Dict[str, Any]) -> str:
+        """Small, noise-tolerant shape hash used only for physical device grouping."""
+        points = cls._normalize_profile_points(cycle.get("delta_profile_points", []))
+        if len(points) < 6:
+            points = cls._normalize_profile_points(cycle.get("profile_points", []))
+        if len(points) < 6:
+            return "noshape"
+        vec = cls._resample_profile_points(points, sample_count=10)
+        if not vec:
+            return "noshape"
+        peak = max((abs(float(v)) for v in vec), default=0.0)
+        if peak <= 1.0:
+            return "flat"
+        # Quantize to 20% steps. This keeps the 94-110 W refrigeration cycles
+        # together while still separating genuinely different state sequences.
+        q = [int(round(max(-1.5, min(1.5, float(v) / peak)) * 5.0)) for v in vec]
+        raw = ",".join(str(v) for v in q)
+        return hashlib.sha1(raw.encode("utf-8")).hexdigest()[:8]
+
+    @classmethod
+    def _device_group_id(cls, label: str, cycle: Dict[str, Any]) -> str:
+        """Build an electrical fingerprint for a physical-device candidate.
+
+        The key intentionally uses broad multiplicative buckets. It is conservative:
+        clearly different powers/durations cannot collapse merely because the
+        classifier assigned the same behaviour label and phase.
+        """
+        family = cls._device_behavior_family(label)
+        phase = str(cycle.get("phase") or "L1").upper()
+        avg = cls._safe_float(cycle.get("delta_avg_power_w"), 0.0)
+        if avg <= 1.0:
+            avg = cls._safe_float(cycle.get("avg_power_w"), 0.0)
+        peak = cls._safe_float(cycle.get("delta_peak_power_w"), 0.0)
+        if peak <= 1.0:
+            peak = cls._safe_float(cycle.get("peak_power_w"), 0.0)
+        duration = cls._safe_float(cycle.get("duration_s"), cls._safe_float(cycle.get("avg_duration_s"), 0.0))
+        inrush_ratio = cls._safe_float(cycle.get("inrush_ratio"), cls._safe_float(cycle.get("peak_to_avg_ratio"), 1.0))
+        substates = min(max(int(cycle.get("num_substates", cycle.get("plateau_count", 0)) or 0), 0), 5)
+        motor = 1 if bool(cycle.get("has_motor_pattern", False)) else 0
+        heating = 1 if bool(cycle.get("has_heating_pattern", False)) else 0
+
+        power_bucket = cls._log_bucket(avg, ratio=1.35, floor=8.0)
+        peak_bucket = cls._log_bucket(peak, ratio=1.45, floor=10.0)
+        duration_bucket = cls._log_bucket(duration, ratio=1.60, floor=8.0)
+        inrush_bucket = int(round(max(0.0, min(inrush_ratio, 5.0)) / 0.35))
+        shape_bucket = cls._coarse_shape_bucket(cycle)
+
+        return (
+            f"v2:{family}:{phase}:p{power_bucket}:pk{peak_bucket}:"
+            f"d{duration_bucket}:i{inrush_bucket}:s{substates}:"
+            f"m{motor}:h{heating}:sh{shape_bucket}"
+        )
 
     @classmethod
     def _dedup_similarity(cls, existing: Dict[str, Any], candidate: Dict[str, Any]) -> float:
@@ -8159,7 +8252,7 @@ class SQLiteStore:
                     label=final_label,
                     phase=phase,
                     confidence=confidence_score_norm,
-                    confirmed=bool(user_label) or bool(best.get("is_confirmed", False)) or auto_confirm_update,
+                    confirmed=bool(user_label),
                     group_key=str(cycle.get("device_group_id") or best.get("device_group_id") or self._device_group_id(final_label, cycle)),
                 )
                 device_subclass = self._derive_device_subclass(final_label, cycle)
