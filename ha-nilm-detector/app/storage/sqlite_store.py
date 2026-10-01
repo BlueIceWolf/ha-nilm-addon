@@ -7351,6 +7351,12 @@ class SQLiteStore:
         best_distance = float(match_result.best_distance)
         best_similarity = float(match_result.best_similarity)
 
+        drift_result = self._drift_monitor.compare(best, cycle) if best else None
+        if drift_result is not None:
+            cycle["drift_score"] = round(float(drift_result.score), 4)
+            cycle["drift_level"] = str(drift_result.level)
+            cycle["drift_changed_features"] = list(drift_result.changed_features)
+
         dedup_decision = decide_dedup_action(
             best=best,
             cycle=cycle,
@@ -7375,6 +7381,10 @@ class SQLiteStore:
             if best and dedup_decision.force_match:
                 seen_count = int(best.get("seen_count", 1) or 1) + 1
                 alpha = 1.0 / max(seen_count, 1)
+                if drift_result is not None and drift_result.level == "warning":
+                    alpha = min(alpha, 0.12)
+                elif drift_result is not None and drift_result.level == "critical":
+                    alpha = min(alpha, 0.05)
                 self._learning_stats["patterns_merged"] = self._learning_stats.get("patterns_merged", 0.0) + 1.0
 
                 def blend(existing_key: str, cycle_key: str, default: float = 0.0) -> float:
