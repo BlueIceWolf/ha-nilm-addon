@@ -7153,7 +7153,15 @@ class SQLiteStore:
         patterns = self.list_patterns(limit=500)
         cycle = self._enrich_cycle_for_learning(cycle, fallback=suggestion_seed, patterns=patterns)
         suggestion_seed = str(cycle.get("refined_label") or suggestion_seed or "unknown")
-        learning_tier = self._determine_learning_tier(cycle)
+        legacy_tier = self._determine_learning_tier(cycle)
+        filter_decision = self._learning_filter_v2.evaluate(cycle)
+        tier_rank = {"blocked": 0, "provisional": 1, "stable": 2}
+        learning_tier = min(
+            (legacy_tier, filter_decision.tier),
+            key=lambda value: tier_rank.get(value, 0),
+        )
+        cycle["learning_filter_score"] = round(float(filter_decision.score), 4)
+        cycle["learning_filter_reasons"] = list(filter_decision.reasons)
         cycle["learning_tier"] = learning_tier
         cycle["learning_allowed"] = learning_tier != "blocked"
         learning_label = self._candidate_learning_label(cycle, suggestion_seed)
