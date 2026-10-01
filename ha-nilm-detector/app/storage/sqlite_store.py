@@ -485,6 +485,7 @@ class SQLiteStore:
                     phase=phase,
                     confidence=confidence,
                     confirmed=bool(pattern.get("user_label")),
+                    group_key=str(pattern.get("device_group_id") or pattern.get("cluster_id") or ""),
                 )
                 if device_id:
                     linked_devices += 1
@@ -1443,9 +1444,16 @@ class SQLiteStore:
         }
 
     def list_devices(self, limit: int = 500) -> List[Dict[str, Any]]:
+        """Return the device registry enriched with modes and explainable confidence.
+
+        Device identity is intentionally separate from the electrical behaviour
+        class. Until a user confirms a physical device name, the UI receives a
+        neutral stable display name ("Unbekanntes Gerät N").
+        """
         if not self._patterns_conn or not self._table_exists(self._patterns_conn, "devices"):
             return []
         try:
+            safe_limit = int(max(1, min(limit, 2000)))
             rows = self._patterns_conn.execute(
                 """
                 SELECT device_id, created_at, updated_at, phase, predicted_label,
@@ -1453,34 +1461,255 @@ class SQLiteStore:
                        times_seen_total, notes, active,
                        device_subclass, baseline_range_min_w, baseline_range_max_w
                 FROM devices
-                ORDER BY times_seen_total DESC, updated_at DESC
+                WHERE active = 1
+                ORDER BY confirmed DESC, times_seen_total DESC, updated_at DESC
                 LIMIT ?
                 """,
-                (int(max(limit, 1)),),
+                (safe_limit,),
             ).fetchall()
-            return [
-                {
-                    "device_id": int(r[0]),
-                    "created_at": r[1],
-                    "updated_at": r[2],
-                    "phase": r[3],
-                    "predicted_label": r[4],
-                    "user_label": r[5],
-                    "final_label": r[6],
-                    "confirmed": int(r[7] or 0),
-                    "confidence_avg": float(r[8] or 0.0),
-                    "times_seen_total": int(r[9] or 0),
-                    "notes": r[10],
-                    "active": int(r[11] or 0),
-                    "device_subclass": str(r[12] or ""),
-                    "baseline_range_min_w": float(r[13] or 0.0),
-                    "baseline_range_max_w": float(r[14] or 0.0),
-                }
-                for r in rows
-            ]
+
+            pattern_rows = []
+            if self._table_exists(self._patterns_conn, "learned_patterns"):
+                pattern_rows = self._patterns_conn.execute(
+                    """
+                    SELECT device_id, id, phase, suggestion_type, user_label, status,
+                           seen_count, avg_power_w, peak_power_w, duration_s,
+                           COALESCE(shape_confidence, 0.0),
+                           COALESCE(temporal_confidence, 0.0),
+                           COALESCE(final_confidence, 0.0),
+                           COALESCE(derived_features_json, '{}'),
+                           COALESCE(reason_text, ''),
+                           COALESCE(last_seen, updated_at)
+                    FROM learned_patterns
+                    WHERE device_id IS NOT NULL
+                    """
+                ).fetchall()
+
+            mode_rows = []
+            if self._table_exists(self._patterns_conn, "device_cycles"):
+                mode_rows = self._patterns_conn.execute(
+                    """
+                    SELECT device_id, cycle_id, cycle_name, cycle_type, seen_count,
+                           avg_total_duration_s, avg_delta_power_w,
+                           avg_inrush_peak_w, avg_run_power_w, updated_at
+                    FROM device_cycles
+                    ORDER BY seen_count DESC, updated_at DESC
+                    """
+                ).fetchall()
+
+            patterns_by_device: Dict[int, List[Any]] = {}
+            for p in pattern_rows:
+                did = int(p[0] or 0)
+                if did > 0:
+                    patterns_by_device.setdefault(did, []).append(p)
+
+            modes_by_device: Dict[int, List[Dict[str, Any]]] = {}
+            for m in mode_rows:
+                did = int(m[0] or 0)
+                if did <= 0:
+                    continue
+                modes_by_device.setdefault(did, []).append(
+                    {
+                        "cycle_id": int(m[1] or 0),
+                        "name": str(m[2] or "Betriebsart"),
+                        "type": str(m[3] or "unknown"),
+                        "seen_count": int(m[4] or 0),
+                        "duration_s": float(m[5] or 0.0),
+                        "delta_power_w": float(m[6] or 0.0),
+                        "inrush_peak_w": float(m[7] or 0.0),
+                        "run_power_w": float(m[8] or 0.0),
+                        "updated_at": m[9],
+                    }
+                )
+
+            result: List[Dict[str, Any]] = []
+            for r in rows:
+                device_id = int(r[0] or 0)
+                confirmed = int(r[7] or 0)
+                user_label = str(r[5] or "").strip()
+                predicted_label = str(r[4] or r[6] or "unknown_load").strip() or "unknown_load"
+                behavior_class = str(r[12] or predicted_label or "unknown_load").strip() or "unknown_load"
+                patterns = patterns_by_device.get(device_id, [])
+                modes = modes_by_device.get(device_id, [])[:8]
+
+                total_weight = sum(max(int(p[6] or 1), 1) for p in patterns) or 1
+                def weighted(col: int) -> float:
+                    return sum(float(p[col] or 0.0) * max(int(p[6] or 1), 1) for p in patterns) / float(total_weight) if patterns else 0.0
+
+                avg_power = weighted(7)
+                peak_power = weighted(8)
+                avg_duration = weighted(9)
+                shape_conf = weighted(10)
+                recurrence_conf = weighted(11)
+                class_conf = weighted(12) if patterns else float(r[8] or 0.0)
+                segmentation_conf = 0.0
+                if patterns:
+                    seg_sum = 0.0
+                    seg_weight = 0
+                    for p in patterns:
+                        weight = max(int(p[6] or 1), 1)
+                        try:
+                            derived = json.loads(str(p[13] or "{}"))
+                            seg_value = float(derived.get("segmentation_confidence", 0.0) or 0.0)
+                        except Exception:
+                            seg_value = 0.0
+                        seg_sum += seg_value * weight
+                        seg_weight += weight
+                    segmentation_conf = seg_sum / float(max(seg_weight, 1))
+
+                seen_total = sum(max(int(p[6] or 0), 0) for p in patterns)
+                if seen_total <= 0:
+                    seen_total = int(r[9] or 0)
+
+                phase_set = sorted({str(p[2] or "") for p in patterns if str(p[2] or "").strip()})
+                phase = "/".join(phase_set) if phase_set else str(r[3] or "-")
+                last_seen_candidates = [str(p[15]) for p in patterns if p[15]]
+                last_seen = max(last_seen_candidates) if last_seen_candidates else str(r[2] or "")
+
+                explanation: List[str] = []
+                if shape_conf >= 0.85:
+                    explanation.append("Kurvenform passt sehr gut zu bereits bekannten Zyklen")
+                elif shape_conf >= 0.60:
+                    explanation.append("Kurvenform ist ähnlich zu bekannten Zyklen")
+                if recurrence_conf >= 0.70:
+                    explanation.append("wiederholt sich zeitlich sehr regelmäßig")
+                elif recurrence_conf >= 0.45:
+                    explanation.append("wiederholt sich mit ähnlicher Laufzeit")
+                if segmentation_conf >= 0.75:
+                    explanation.append("Start und Ende des Zyklus sind sauber erfasst")
+                elif segmentation_conf < 0.50 and patterns:
+                    explanation.append("Zyklusgrenzen sind noch unsicher")
+                if len(modes) >= 2:
+                    explanation.append(f"{len(modes)} unterschiedliche Betriebsarten erkannt")
+                if phase and phase != "-":
+                    explanation.append(f"tritt auf {phase} auf")
+                if avg_power > 0:
+                    explanation.append(f"typische Leistung etwa {avg_power:.0f} W")
+                if avg_duration > 0:
+                    if avg_duration >= 120:
+                        explanation.append(f"typische Laufzeit etwa {avg_duration / 60.0:.1f} min")
+                    else:
+                        explanation.append(f"typische Laufzeit etwa {avg_duration:.0f} s")
+
+                display_name = user_label if user_label else f"Unbekanntes Gerät {device_id}"
+                result.append(
+                    {
+                        "device_id": device_id,
+                        "created_at": r[1],
+                        "updated_at": r[2],
+                        "last_seen": last_seen,
+                        "display_name": display_name,
+                        "phase": phase,
+                        "predicted_label": predicted_label,
+                        "behavior_class": behavior_class,
+                        "user_label": user_label or None,
+                        "final_label": str(r[6] or predicted_label),
+                        "confirmed": confirmed,
+                        "times_seen_total": seen_total,
+                        "pattern_count": len(patterns),
+                        "mode_count": len(modes),
+                        "modes": modes,
+                        "avg_power_w": avg_power,
+                        "peak_power_w": peak_power,
+                        "avg_duration_s": avg_duration,
+                        "confidence_avg": float(r[8] or 0.0),
+                        "confidence": {
+                            "pattern_match": max(0.0, min(shape_conf, 1.0)),
+                            "device_class": max(0.0, min(class_conf, 1.0)),
+                            "segmentation": max(0.0, min(segmentation_conf, 1.0)),
+                            "recurrence": max(0.0, min(recurrence_conf, 1.0)),
+                        },
+                        "explanation": explanation,
+                        "notes": r[10],
+                        "active": int(r[11] or 0),
+                        "device_subclass": behavior_class,
+                        "baseline_range_min_w": float(r[13] or 0.0),
+                        "baseline_range_max_w": float(r[14] or 0.0),
+                    }
+                )
+            return result
         except Exception as e:
             logger.warning("Failed to list devices: %s", e)
             return []
+
+    def update_device_identity(
+        self,
+        device_id: int,
+        display_name: str,
+        confirmed: bool = True,
+        notes: str | None = None,
+    ) -> Dict[str, Any]:
+        """Confirm or rename a physical device and propagate the identity to its patterns."""
+        if not self._patterns_conn or not self._table_exists(self._patterns_conn, "devices"):
+            return {"ok": False, "error": "devices_not_available"}
+
+        clean_name = str(display_name or "").strip()
+        if not clean_name:
+            return {"ok": False, "error": "display_name_required"}
+
+        row = self._patterns_conn.execute(
+            "SELECT device_id, user_label, final_label FROM devices WHERE device_id = ? LIMIT 1",
+            (int(device_id),),
+        ).fetchone()
+        if not row:
+            return {"ok": False, "error": "device_not_found"}
+
+        old_label = str(row[1] or row[2] or "")
+        now = datetime.now().isoformat()
+        try:
+            with self._patterns_conn:
+                self._patterns_conn.execute(
+                    """
+                    UPDATE devices
+                    SET user_label = ?, final_label = ?, confirmed = ?,
+                        notes = COALESCE(?, notes), updated_at = ?
+                    WHERE device_id = ?
+                    """,
+                    (
+                        clean_name,
+                        clean_name,
+                        1 if confirmed else 0,
+                        str(notes).strip() if notes is not None else None,
+                        now,
+                        int(device_id),
+                    ),
+                )
+                if self._table_exists(self._patterns_conn, "learned_patterns"):
+                    self._patterns_conn.execute(
+                        """
+                        UPDATE learned_patterns
+                        SET user_label = ?,
+                            candidate_name = ?,
+                            is_confirmed = ?,
+                            updated_at = ?
+                        WHERE device_id = ?
+                        """,
+                        (
+                            clean_name,
+                            self._normalize_pattern_name(clean_name),
+                            1 if confirmed else 0,
+                            now,
+                            int(device_id),
+                        ),
+                    )
+
+            if self._table_exists(self._patterns_conn, "user_labels"):
+                self._record_user_label_change(
+                    pattern_id=None,
+                    device_id=int(device_id),
+                    old_label=old_label,
+                    new_label=clean_name,
+                    comment="device registry identity update",
+                )
+            return {
+                "ok": True,
+                "device_id": int(device_id),
+                "display_name": clean_name,
+                "confirmed": bool(confirmed),
+            }
+        except Exception as e:
+            logger.error("Failed to update device identity %s: %s", device_id, e, exc_info=True)
+            return {"ok": False, "error": str(e)}
 
     def list_events(self, limit: int = 1000) -> List[Dict[str, Any]]:
         if not self._patterns_conn or not self._table_exists(self._patterns_conn, "events"):
@@ -2306,6 +2535,10 @@ class SQLiteStore:
             self._ensure_column(self._patterns_conn, "devices", "device_subclass", "TEXT")
             self._ensure_column(self._patterns_conn, "devices", "baseline_range_min_w", "REAL")
             self._ensure_column(self._patterns_conn, "devices", "baseline_range_max_w", "REAL")
+            self._ensure_column(self._patterns_conn, "devices", "group_key", "TEXT")
+            self._patterns_conn.execute(
+                "CREATE INDEX IF NOT EXISTS idx_devices_group_phase ON devices(group_key, phase, active)"
+            )
 
             self._patterns_conn.execute(
                 """
@@ -3282,6 +3515,7 @@ class SQLiteStore:
             phase=str(cycle.get("phase", "L1")),
             confidence=confidence_score_norm,
             confirmed=auto_confirmed,
+            group_key=device_group_id,
         )
         device_subclass = self._derive_device_subclass(suggestion_seed, cycle)
 
@@ -4398,23 +4632,41 @@ class SQLiteStore:
             "candidate_labels": json.loads(str(row[17] or "[]")) if len(row) > 17 else [],
         }
 
-    def _get_or_create_device(self, label: str, phase: str, confidence: float, confirmed: bool = False) -> int | None:
-        """Return device_id for label/phase pair, creating it if needed."""
+    def _get_or_create_device(
+        self,
+        label: str,
+        phase: str,
+        confidence: float,
+        confirmed: bool = False,
+        group_key: str | None = None,
+    ) -> int | None:
+        """Return a stable device registry id for one electrical cluster.
+
+        A behaviour label such as motor_load is not a physical device identity.
+        Prefer device_group_id/cluster information as the registry key so multiple
+        similar appliances on the same phase remain separate.
+        """
         if not self._patterns_conn:
             return None
 
-        clean_label = str(label or "").strip() or "unknown"
+        clean_label = str(label or "").strip() or "unknown_load"
+        clean_phase = str(phase or "")
+        clean_group = str(group_key or "").strip()
+        if not clean_group:
+            clean_group = f"legacy:{self._normalize_pattern_name(clean_label)}:{clean_phase}"
         now = datetime.now().isoformat()
         try:
             row = self._patterns_conn.execute(
                 """
                 SELECT device_id, times_seen_total, confidence_avg, confirmed
                 FROM devices
-                WHERE final_label = ? AND COALESCE(phase, '') = ? AND active = 1
+                WHERE COALESCE(group_key, '') = ?
+                  AND COALESCE(phase, '') = ?
+                  AND active = 1
                 ORDER BY device_id ASC
                 LIMIT 1
                 """,
-                (clean_label, str(phase or "")),
+                (clean_group, clean_phase),
             ).fetchone()
             if row:
                 device_id = int(row[0])
@@ -4425,10 +4677,11 @@ class SQLiteStore:
                     self._patterns_conn.execute(
                         """
                         UPDATE devices
-                        SET updated_at = ?, times_seen_total = ?, confidence_avg = ?, confirmed = ?
+                        SET updated_at = ?, times_seen_total = ?, confidence_avg = ?,
+                            confirmed = ?, predicted_label = COALESCE(NULLIF(predicted_label, ''), ?)
                         WHERE device_id = ?
                         """,
-                        (now, seen, conf_avg, 1 if (confirmed or bool(row[3])) else 0, device_id),
+                        (now, seen, conf_avg, 1 if (confirmed or bool(row[3])) else 0, clean_label, device_id),
                     )
                 return device_id
 
@@ -4437,28 +4690,29 @@ class SQLiteStore:
                     """
                     INSERT INTO devices (
                         created_at, updated_at, phase, predicted_label, user_label,
-                        final_label, confirmed, confidence_avg, times_seen_total, notes, active
-                    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                        final_label, confirmed, confidence_avg, times_seen_total, notes, active,
+                        group_key
+                    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                     """,
                     (
                         now,
                         now,
-                        str(phase or ""),
+                        clean_phase,
                         clean_label,
                         clean_label if confirmed else None,
                         clean_label,
                         1 if confirmed else 0,
                         float(confidence),
                         1,
-                        "auto-created from pattern learning",
+                        "auto-created from electrical pattern cluster",
                         1,
+                        clean_group,
                     ),
                 )
                 return int(cur.lastrowid or 0)
         except Exception as e:
             logger.debug("_get_or_create_device failed: %s", e)
             return None
-
     def _record_cycle_event(
         self,
         cycle: Dict,
@@ -5945,6 +6199,62 @@ class SQLiteStore:
                             """
                         )
 
+                    # Garbage-collect one-off, unconfirmed learning noise. A pattern
+                    # must be both stale and seen only once; confirmed/user-named
+                    # knowledge is never removed automatically.
+                    stale_pattern_cutoff = (datetime.now() - timedelta(days=14)).isoformat()
+                    if self._table_exists(self._patterns_conn, "learned_patterns"):
+                        stale_ids = [
+                            int(row[0])
+                            for row in self._patterns_conn.execute(
+                                """
+                                SELECT id
+                                FROM learned_patterns
+                                WHERE status = 'provisional'
+                                  AND COALESCE(is_confirmed, 0) = 0
+                                  AND (user_label IS NULL OR TRIM(user_label) = '')
+                                  AND COALESCE(seen_count, 0) <= 1
+                                  AND COALESCE(last_seen, updated_at, created_at) < ?
+                                LIMIT 2000
+                                """,
+                                (stale_pattern_cutoff,),
+                            ).fetchall()
+                        ]
+                        if stale_ids:
+                            marks = ",".join(["?"] * len(stale_ids))
+                            for child_table, child_col in (
+                                ("pattern_history", "pattern_id"),
+                                ("pattern_features", "pattern_id"),
+                                ("device_cycles", "pattern_id"),
+                            ):
+                                if self._table_exists(self._patterns_conn, child_table):
+                                    self._patterns_conn.execute(
+                                        f"DELETE FROM {child_table} WHERE {child_col} IN ({marks})",
+                                        tuple(stale_ids),
+                                    )
+                            self._patterns_conn.execute(
+                                f"DELETE FROM learned_patterns WHERE id IN ({marks})",
+                                tuple(stale_ids),
+                            )
+                            logger.info("Garbage-collected %s stale one-off provisional patterns", len(stale_ids))
+
+                    # Remove orphan auto-created device rows after the same grace
+                    # period. User-confirmed devices remain as stable registry entries.
+                    if self._table_exists(self._patterns_conn, "devices") and self._table_exists(self._patterns_conn, "learned_patterns"):
+                        self._patterns_conn.execute(
+                            """
+                            DELETE FROM devices
+                            WHERE confirmed = 0
+                              AND (user_label IS NULL OR TRIM(user_label) = '')
+                              AND updated_at < ?
+                              AND NOT EXISTS (
+                                  SELECT 1 FROM learned_patterns p
+                                  WHERE p.device_id = devices.device_id
+                              )
+                            """,
+                            (stale_pattern_cutoff,),
+                        )
+
                 # Checkpoint stale WAL pages and let incremental-auto-vacuum databases
                 # return free pages without a blocking full VACUUM.
                 try:
@@ -7172,6 +7482,7 @@ class SQLiteStore:
             phase=str(cycle.get("phase", "L1")),
             confidence=confidence_score_norm,
             confirmed=False,
+            group_key=str(cycle.get("device_group_id") or self._device_group_id(learning_label, cycle)),
         )
         
         device_subclass = self._derive_device_subclass(learning_label, cycle)
@@ -7849,6 +8160,7 @@ class SQLiteStore:
                     phase=phase,
                     confidence=confidence_score_norm,
                     confirmed=bool(user_label) or bool(best.get("is_confirmed", False)) or auto_confirm_update,
+                    group_key=str(cycle.get("device_group_id") or best.get("device_group_id") or self._device_group_id(final_label, cycle)),
                 )
                 device_subclass = self._derive_device_subclass(final_label, cycle)
 
@@ -8274,11 +8586,17 @@ class SQLiteStore:
             if old_row:
                 old_label = str(old_row[0] or old_row[1] or "")
                 phase = str(old_row[2] or "L1")
-            device_id = self._get_or_create_device(
+            existing_device_row = self._patterns_conn.execute(
+                "SELECT device_id, device_group_id FROM learned_patterns WHERE id = ?",
+                (int(pattern_id),),
+            ).fetchone()
+            existing_device_id = int(existing_device_row[0] or 0) if existing_device_row else 0
+            device_id = existing_device_id or self._get_or_create_device(
                 label=clean_label,
                 phase=phase,
                 confidence=1.0,
                 confirmed=True,
+                group_key=str((existing_device_row[1] if existing_device_row else "") or f"user:{self._normalize_pattern_name(clean_label)}:{phase}"),
             )
             with self._patterns_conn:
                 self._patterns_conn.execute(

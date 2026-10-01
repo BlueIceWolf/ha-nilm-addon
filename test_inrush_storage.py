@@ -111,3 +111,89 @@ def test_inrush_and_baseline_schema_persists_cycle_details():
             assert float(cycle_row[2]) > 70.0
         finally:
             store.close()
+
+
+def test_device_registry_is_neutral_explainable_and_user_confirmable():
+    with TemporaryDirectory() as tmpdir:
+        live_db = os.path.join(tmpdir, "live.sqlite3")
+        patterns_db = os.path.join(tmpdir, "patterns.sqlite3")
+        store = SQLiteStore(db_path=live_db, patterns_db_path=patterns_db)
+        try:
+            assert store.connect() is True
+
+            cycle = _build_cycle()
+            cycle["device_group_id"] = "cluster:l1:test_motor"
+            learned = store.learn_cycle_pattern(cycle, suggestion_type="motor_load")
+            assert learned["pattern"] is not None
+
+            devices = store.list_devices(limit=20)
+            assert devices
+            device = devices[0]
+            assert str(device["display_name"]).startswith("Unbekanntes Gerät ")
+            assert device["confirmed"] == 0
+            assert "confidence" in device
+            assert set(device["confidence"]) == {
+                "pattern_match",
+                "device_class",
+                "segmentation",
+                "recurrence",
+            }
+            assert isinstance(device["explanation"], list)
+            assert device["pattern_count"] >= 1
+
+            result = store.update_device_identity(
+                int(device["device_id"]),
+                "Kühlschrank Küche",
+                confirmed=True,
+            )
+            assert result["ok"] is True
+
+            updated_devices = store.list_devices(limit=20)
+            updated = next(d for d in updated_devices if int(d["device_id"]) == int(device["device_id"]))
+            assert updated["display_name"] == "Kühlschrank Küche"
+            assert updated["confirmed"] == 1
+
+            pattern_label = store._patterns_conn.execute(
+                "SELECT user_label, is_confirmed FROM learned_patterns WHERE device_id = ? LIMIT 1",
+                (int(device["device_id"]),),
+            ).fetchone()
+            assert pattern_label is not None
+            assert pattern_label[0] == "Kühlschrank Küche"
+            assert int(pattern_label[1] or 0) == 1
+        finally:
+            store.close()
+
+
+def test_device_registry_keeps_separate_electrical_clusters_on_same_phase():
+    with TemporaryDirectory() as tmpdir:
+        live_db = os.path.join(tmpdir, "live.sqlite3")
+        patterns_db = os.path.join(tmpdir, "patterns.sqlite3")
+        store = SQLiteStore(db_path=live_db, patterns_db_path=patterns_db)
+        try:
+            assert store.connect() is True
+
+            first = store._get_or_create_device(
+                label="motor_load",
+                phase="L3",
+                confidence=0.6,
+                group_key="cluster:l3:a",
+            )
+            second = store._get_or_create_device(
+                label="motor_load",
+                phase="L3",
+                confidence=0.6,
+                group_key="cluster:l3:b",
+            )
+            again = store._get_or_create_device(
+                label="motor_load",
+                phase="L3",
+                confidence=0.7,
+                group_key="cluster:l3:a",
+            )
+
+            assert first
+            assert second
+            assert int(first) != int(second)
+            assert int(again) == int(first)
+        finally:
+            store.close()

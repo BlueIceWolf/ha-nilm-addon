@@ -4,6 +4,19 @@
 
 ---
 
+# Release 0.7.4 (BETA)
+
+## Device Registry & Explainability
+- stabile Geräte-Registry auf Basis elektrischer Cluster statt reiner Klassennamen
+- neutrale unbestätigte Gerätenamen, damit Vermutungen nicht wie sichere Identitäten wirken
+- getrennte Confidence für Pattern, Geräteklasse, Segmentierung und Wiederholung
+- erklärbare "Warum?"-Hinweise direkt im Geräte-Tab
+- mehrere Betriebsarten pro Gerät
+- Benutzerbestätigung/Umbenennung direkt in der UI
+- automatische Bereinigung alter einmaliger Provisional-Patterns
+
+---
+
 # Release 0.7.0 (BETA)
 
 ## Learning Pipeline 2.0

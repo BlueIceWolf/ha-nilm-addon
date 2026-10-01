@@ -2,6 +2,19 @@
 
 > ⚠️ **Hinweis**: Dieses Projekt ist experimentell (BETA) - Breaking Changes und Bugs können auftreten.
 
+## 0.7.4 (BETA)
+
+### Device Registry & Explainability
+- Geräteidentität von technischer Lastklasse getrennt: unbestätigte Cluster heißen neutral `Unbekanntes Gerät N`.
+- Device Registry wird nach elektrischem Cluster (`device_group_id`) + Phase statt nur nach Label + Phase geführt, damit ähnliche Verbraucher nicht fälschlich zu einem Gerät zusammenfallen.
+- Geräte-Tab zeigt getrennte Confidence-Werte für Pattern-Match, Geräteklasse, Segmentierung und Wiederholung.
+- "Warum?"-Erklärung pro Gerät mit Kurvenähnlichkeit, Wiederholungsverhalten, Segmentierungsqualität, Phase, typischer Leistung und Laufzeit.
+- Mehrere erkannte Betriebsarten werden unter derselben Geräte-ID aus `device_cycles` zusammengeführt und angezeigt.
+- Geräte können direkt im UI benannt/bestätigt werden; der Name wird auf alle verknüpften Patterns übertragen.
+- Technische Klassen werden im UI lesbar dargestellt (z. B. "Kühl-/Kompressorlast" statt `refrigeration_candidate`).
+- Automatische Garbage Collection entfernt nur unbestätigte, einmalige Provisional-Patterns nach 14 Tagen; bestätigte oder benannte Geräte bleiben geschützt.
+- Neue Regressionstests für Registry-Trennung, Explainability und User-Bestätigung.
+
 ## 0.7.3 (BETA)
 
 ### Hierarchical appliance classification
