@@ -155,6 +155,7 @@ class SQLiteStore:
         self.shape_matching_enabled = bool(shape_matching_enabled)
         self.online_learning_enabled = bool(online_learning_enabled)
         self.attention_enabled = bool(attention_enabled)
+        self._attention_reviewer.enabled = self.attention_enabled
         self.pattern_match_threshold = max(0.05, min(float(pattern_match_threshold), 0.95))
         self.ml_confidence_threshold = max(0.05, min(float(ml_confidence_threshold), 0.99))
         self._pattern_matcher = HybridPatternMatcher(
