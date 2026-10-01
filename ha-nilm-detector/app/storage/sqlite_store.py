@@ -142,31 +142,19 @@ class SQLiteStore:
         online_learning_enabled: bool = True,
         pattern_match_threshold: float = 0.45,
         ml_confidence_threshold: float = 0.60,
-        local_llm_enabled: bool = False,
-        local_llm_url: str = "",
-        local_llm_model: str = "",
-        local_llm_timeout_seconds: int = 20,
-        local_llm_min_confidence: float = 0.65,
-        local_llm_review_below_confidence: float = 0.78,
+        attention_enabled: bool = True,
     ) -> None:
-        """Configure deterministic, ML and optional local-LLM scoring."""
+        """Configure the fully self-contained hybrid scoring pipeline."""
         self.ai_enabled = bool(ai_enabled)
         self.ml_enabled = bool(ml_enabled)
         self.shape_matching_enabled = bool(shape_matching_enabled)
         self.online_learning_enabled = bool(online_learning_enabled)
+        self.attention_enabled = bool(attention_enabled)
         self.pattern_match_threshold = max(0.05, min(float(pattern_match_threshold), 0.95))
         self.ml_confidence_threshold = max(0.05, min(float(ml_confidence_threshold), 0.99))
         self._pattern_matcher = HybridPatternMatcher(
             match_threshold=self.pattern_match_threshold,
             shape_matching_enabled=self.shape_matching_enabled,
-        )
-        self._local_llm = LocalLLMClassifier(
-            enabled=local_llm_enabled,
-            base_url=local_llm_url,
-            model=local_llm_model,
-            timeout_seconds=local_llm_timeout_seconds,
-            min_confidence=local_llm_min_confidence,
-            review_below_confidence=local_llm_review_below_confidence,
         )
 
     def configure_learning_policy(
