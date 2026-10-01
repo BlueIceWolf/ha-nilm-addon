@@ -6,6 +6,16 @@
 
 # Release 0.7.0 (BETA)
 
+## Learning Pipeline 2.0
+- Learning Filter v2 für harte Qualitäts-Gates vor jedem Training
+- 24-dimensionaler Feature Vector v2
+- RandomForest Champion/Challenger mit lokaler Cross-Validation
+- automatische, guarded Model Promotion bei messbarer Verbesserung
+- Drift-Erkennung mit langsamer Adaptation statt sofortigem Pattern-Split
+- Attention + Pattern + Shape + Temporal + ML als erklärbares Ensemble
+- komplett standalone im Add-on
+
+
 ## Store Kurztext
 - **Standalone KI-Erkennung**: die komplette NILM-Klassifikation läuft im Add-on selbst – mit Pattern-/Shape-Matching, lokalem RandomForest und neuem Attention-Klassifikator.
 
