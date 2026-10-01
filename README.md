@@ -133,24 +133,21 @@ Muster mit schwächerer Segmentierung können zunächst als **provisional** gesa
 NILM ist keine direkte Gerätemessung. Zwei Geräte mit sehr ähnlichen Lastprofilen können deshalb verwechselt werden.
 
 
-## Lokales LLM-Review (optional)
+## Eingebaute KI-Klassifikation
 
-Ab **0.7.0** kann ein lokal laufendes Ollama-kompatibles Modell unsichere, bereits vollständig segmentierte Events zusätzlich bewerten. Die klassische NILM-Pipeline bleibt dabei führend; das LLM darf nur zwischen zulässigen Kandidaten wählen oder `unknown` zurückgeben.
+Ab **0.7.0** läuft die zusätzliche KI-Bewertung vollständig im Add-on. Es wird **kein Ollama, kein externer KI-Server und keine Cloud-API** benötigt.
 
-Beispiel:
+Die Erkennung kombiniert:
 
-```yaml
-learning:
-  local_llm:
-    enabled: true
-    url: http://192.168.1.20:11434
-    model: qwen3:4b
-    timeout_seconds: 20
-    min_confidence: 0.65
-    review_below_confidence: 0.78
-```
+- Segmentierung und Waveform-Qualität
+- Pattern- und Shape-Matching
+- lokales RandomForest-ML
+- einen eingebauten Attention-Klassifikator
+- zeitliche Wiederholung und Phasenbindung
 
-Der Endpunkt muss lokal sein (private IP, `localhost`, `.local` oder lokaler Hostname). Gesendet werden nur kompakte Event-Merkmale, Kandidatenlabels und wenige ähnliche bekannte Patterns. Starke deterministische Matches werden nicht unnötig durch das Modell ersetzt.
+Der Attention-Klassifikator arbeitet ähnlich wie ein Query/Key/Value-Vergleich: Ein neues Event wird als Merkmalsvektor mit bereits gelernten Mustern verglichen. Ähnliche Muster erhalten per Softmax ein höheres Gewicht. Dadurch kann das System auch bei mehreren ähnlichen Kandidaten eine gewichtete Entscheidung treffen, ohne ein separates Sprachmodell zu benötigen.
+
+Alles läuft offline im Add-on-Container.
 
 ## Web-UI
 
