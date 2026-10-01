@@ -4,6 +4,16 @@
 
 ## 0.7.0 (BETA)
 
+### Learning Pipeline 2.0
+- Neuer zentraler `LearningFilterV2` blockiert schlechte Trainings-Events anhand von Segmentierung, Waveform-Vollständigkeit, Baseline, Sample-Anzahl, Truncation und Overlap.
+- Neuer `Feature Vector v2` mit 24 normalisierten NILM-Merkmalen für konsistente lokale ML-Modelle.
+- RandomForest nutzt jetzt **Champion/Challenger** mit lokaler Cross-Validation und guarded Promotion statt einer festen Parametrisierung.
+- Neuer `DriftMonitor` erkennt langfristige Profiländerungen und reduziert die Lernrate bei deutlicher Drift.
+- Neuer `EnsembleClassifier` fusioniert Pattern-, Shape-, ML-, Attention-, Temporal- und Rule-Signale.
+- Debug-Ausgabe zeigt Attention-Ergebnis, Ensemble-Ranking und Model-Lifecycle-Informationen.
+- Alle neuen Lerntechniken laufen vollständig lokal und ohne zusätzliche Dienste.
+
+
 ### Added
 - Eingebauter **Attention-Klassifikator** für gewichtete Ähnlichkeitsentscheidungen zwischen gelernten NILM-Mustern.
 - Query/Key/Value-artige Feature-Bewertung mit Softmax-Gewichtung, vollständig ohne externen Modellserver.
