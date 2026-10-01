@@ -1,3 +1,13 @@
+## 0.7.9 (BETA)
+
+**Learning guard hotfix from real-world DB analysis**
+- Fixed a legacy provisional fallback that could override `LearningFilterV2` and relearn blocked negative-delta events.
+- `delta_avg_power_w < 30 W` is now a hard learning reject, matching the configured 30 W activation floor.
+- Provisional device baseline min/max values are always stored in normalized order.
+- New one-time registry repair v5 removes unconfirmed/unlabelled learned prototypes below 30 W, cleans orphan automatic devices and repairs inverted baseline ranges.
+- Historical event rows remain available for diagnostics; user-confirmed labels/devices are protected.
+- Added regression coverage for sub-30 W delta rejection.
+
 ## 0.7.8 (BETA)
 
 **Regression and release hardening**
