@@ -1,3 +1,12 @@
+## 0.7.9
+
+### Highlights
+- Fixes the active replay/provisional path that could still recreate switch-off and low-delta artefacts after 0.7.8.
+- Hard-blocks appliance learning below 30 W baseline-corrected delta.
+- Repairs provisional device baseline ranges.
+- Runs a one-time v5 cleanup for invalid automatic prototypes created by the affected path.
+- Preserves user-confirmed devices and labels.
+
 ## 0.7.8
 
 ### Highlights
