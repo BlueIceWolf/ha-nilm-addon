@@ -1003,10 +1003,12 @@ class NILMDetectionSystem:
         client = HomeAssistantAPIClient(
             base_url=self.config.ha_url,
             token=token,
-            timeout_seconds=20,
+            timeout_seconds=60,
         )
 
-        now = datetime.now()
+        # HA history expects unambiguous ISO-8601 timestamps. Use UTC explicitly;
+        # naive local timestamps can lead to empty history responses on some setups.
+        now = datetime.now(timezone.utc)
         start_time = now - timedelta(hours=max(1, min(int(hours), 168)))
 
         # Build chronological phase events and reconstruct totals with carry-forward
@@ -1019,6 +1021,14 @@ class NILMDetectionSystem:
             for phase_name, entity_id in phase_entities.items():
                 events = client.get_entity_history(entity_id, start_time=start_time, end_time=now)
                 source_counts[phase_name] = len(events)
+                logger.info(
+                    "HA history import source: phase=%s entity=%s events=%s start=%s end=%s",
+                    phase_name,
+                    entity_id,
+                    len(events),
+                    start_time.isoformat(),
+                    now.isoformat(),
+                )
                 for event in events:
                     ts_raw = event.get("last_changed") or event.get("last_updated")
                     state_raw = event.get("state")
