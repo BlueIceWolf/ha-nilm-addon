@@ -1,3 +1,13 @@
+## 0.7.7 (BETA)
+
+**Training data quality repair**
+- Baseline-corrected `delta_avg_power_w` now takes precedence over aggregate phase power during training validation.
+- Falling edges and non-positive delta events are blocked from becoming learned appliance prototypes.
+- Physical-device matching ignores non-positive-delta prototypes.
+- One-time registry repair detaches invalid automatic prototypes, removes orphan automatic devices and fixes inverted baseline min/max ranges.
+- User-confirmed labels and devices are preserved.
+- Added regression tests for the delta-power training guard.
+
 # Changelog
 
 > ⚠️ **Hinweis**: Dieses Projekt ist experimentell (BETA) - Breaking Changes und Bugs können auftreten.
