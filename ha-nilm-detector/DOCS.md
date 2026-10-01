@@ -1,239 +1,239 @@
 # HA NILM Detector
 
-Non-Intrusive Load Monitoring (NILM) Add-on for Home Assistant. Automatically detects and monitors appliances based on their power consumption patterns.
+HA NILM Detector is an experimental Home Assistant add-on for **Non-Intrusive Load Monitoring (NILM)**. It observes one or more power sensors and learns recurring load patterns without requiring a dedicated sensor on every appliance.
 
-> ⚠️ **EXPERIMENTELLES PROJEKT (BETA)**: Dieses Add-on befindet sich in aktiver Entwicklung und ist **nicht production-ready**. Features können unvollständig sein, Bugs auftreten und Breaking Changes zwischen Versions passieren. Nutze es zum Experimentieren, aber nicht für kritische Systeme.
->
-> **v0.6.0 Spezifisch**: Diese Version enthält fundamentales Architektur-Redesign (Per-Phase Pattern Learning). Noch nicht ausführlich getestet - bei Problemen bitte auf v0.5.2.1 zurückrollen.
-
-## Features
-
-- **Automatic Device Detection**: Learns and identifies appliances from power consumption patterns
-- **Per-Phase Pattern Learning (v0.6.0+)**: Each phase (L1/L2/L3) tracks patterns independently - prevents interference
-- **Real-time Monitoring**: Continuous monitoring of power usage
-- **Home Assistant Integration**: Native MQTT Discovery integration
-- **Multiple Device Types**: Support for refrigerators, washing machines, dishwashers, and more
-- **Flexible Configuration**: Easy setup and customization
+> [!WARNING]
+> This project is currently **BETA**. Do not use detected device states as the only input for safety-critical or otherwise critical automations.
 
 ## Installation
 
-1. Add this repository to your Home Assistant Add-on Store:
-   ```
-   https://github.com/BlueIceWolf/ha-nilm-addon
-   ```
+Add this repository to the Home Assistant Add-on Store:
 
-2. Install the "HA NILM Detector" add-on
-
-3. Configure at least one power phase sensor (`home_assistant.phase_entities.l1/l2/l3`)
-
-4. Start the add-on
-
-## Configuration
-
-### Home Assistant Add-on UI setup
-
-The add-on UI is intentionally reduced for day-to-day use:
-
-- Active options focus on `home_assistant.phase_entities` (`l1`, `l2`, `l3`).
-- Learning runs automatically with internal defaults.
-- Advanced tuning options remain available as optional/unused fields in Home Assistant and can be set only when needed.
-
-### Minimal config (what you really need)
-
-For normal use, only these fields are required:
-
-- `home_assistant.phase_entities.l1: sensor.<your_l1_power_sensor>`
-- optional `home_assistant.phase_entities.l2`
-- optional `home_assistant.phase_entities.l3`
-
-Everything else can stay at defaults.
-
-Recommended defaults for simple setup:
-
-- `home_assistant.url: http://supervisor/core/api`
-- `home_assistant.token: ""` (automatic `SUPERVISOR_TOKEN` is used in normal add-on setups)
-- `learning.*`, `storage.*`, `update_interval_seconds`, `log_level` are optional and use built-in defaults until explicitly set
-
-### Add-on Web UI (Statistics)
-
-The add-on includes an embedded web server that is exposed via Home Assistant add-on ingress.
-
-- `ingress` is enabled in the add-on manifest.
-- Open the add-on and click **Open Web UI**.
-- UI shows:
-   - current power
-   - 24h summary (average/peak/readings)
-   - power trend chart from SQLite history
-   - live device states and confidence
-
-Relevant options:
-
-- `web.enabled`: enable or disable web UI server
-- `web.port`: server port inside container (must match ingress port; default `8099`)
-- `web.history_minutes`: reserved for trend window tuning
-
-### Automatic device suggestion and correction loop
-
-You can now give the add-on a single power sensor and it will learn recurring ON/OFF patterns.
-
-Flow:
-
-1. Add-on watches your total power sensor.
-2. It detects repeated cycles (duration, avg/peak power, energy).
-3. It creates suggested appliance classes (for example `fridge_like`).
-4. In Web UI, open **Gelernte Muster und Vorschlaege** and click **Korrigieren**.
-5. Enter your label (for example `kuehlschrank`).
-6. Future matching cycles are assigned to the same learned pattern and counter increases.
-
-Learning options:
-
-- `learning.enabled`: turns pattern learning on/off
-- `learning.on_threshold_w`: cycle start threshold
-- `learning.off_threshold_w`: cycle end threshold
-- `learning.min_cycle_seconds`: ignore very short spikes
-
-API for advanced usage:
-
-- `GET /api/patterns` returns learned patterns and suggestions
-- `POST /api/patterns/<id>/label` with JSON `{"label":"..."}` stores user correction
-
-### How to pass your power sensor to the add-on
-
-Set the following in add-on options:
-
-- `home_assistant.phase_entities.l1: sensor.<your_power_sensor>`
-- optional `home_assistant.phase_entities.l2` and `home_assistant.phase_entities.l3`
-- `home_assistant.url: http://supervisor/core/api` (default in add-on runtime)
-- `home_assistant.token`: can stay empty in most add-on setups because `SUPERVISOR_TOKEN` is used automatically
-
-If your sensor state is numeric (for example `432.5`), the add-on reads it directly.
-
-Automatic connection behavior:
-
-- Add-on uses Home Assistant API access (`homeassistant_api: true`).
-- If `home_assistant.token` is empty, the runtime token from `SUPERVISOR_TOKEN` is used.
-- At least one phase entity (`l1`, `l2`, `l3`) must be configured.
-
-### Do I need to create a token?
-
-Short answer: usually no.
-
-- Typical Home Assistant add-on setup:
-   - Leave `home_assistant.token` empty.
-   - The add-on uses `SUPERVISOR_TOKEN` automatically.
-   - Fallback for older environments: `HASSIO_TOKEN` is also checked.
-- You only need to create and set a manual token when:
-   - you access a different HA instance,
-   - or your setup does not provide `SUPERVISOR_TOKEN`.
-
-How to create a manual token in Home Assistant:
-
-1. Open your HA user profile (bottom-left user icon).
-2. Scroll to **Long-Lived Access Tokens**.
-3. Click **Create Token** and copy it.
-4. Paste it into add-on option `home_assistant.token`.
-
-Important: token is shown only once at creation time.
-
-### MQTT output optional
-
-MQTT is optional and can be disabled:
-
-- `mqtt.enabled: false` -> no MQTT connect attempt, analysis still runs
-- `mqtt.enabled: true` -> states are published and discovery can be used
-
-### Built-in database and learning
-
-Yes, the add-on now has its own local SQLite database:
-
-- Path: `storage.db_path` (default `/data/nilm.sqlite3`)
-- Stored data: raw power readings and detection events
-- Retention: `storage.retention_days`
-- Learning warm-start: `storage.learning_warmup_minutes`
-
-On startup, adaptive detectors are primed from recent stored readings so learning continues across restarts.
-
-Storage crash-safety details:
-
-- SQLite uses `WAL` journaling and `synchronous=FULL` for stronger durability on sudden restarts/power loss.
-- Writes are executed in atomic transactions.
-- On shutdown, a WAL checkpoint is attempted.
-- Database integrity is checked on startup; if corruption is detected, the file is quarantined (`*.corrupt.<timestamp>`) and a new DB is created automatically.
-
-Example for `devices_json`:
-
-```json
-{
-   "kitchen_fridge": {
-      "enabled": true,
-      "detector_type": "fridge",
-      "power_min_w": 10,
-      "power_max_w": 500,
-      "min_runtime_seconds": 30,
-      "min_pause_seconds": 60,
-      "startup_duration_seconds": 5
-   }
-}
+```text
+https://github.com/BlueIceWolf/ha-nilm-addon
 ```
 
-### Do I need a Home Assistant integration?
+Then install **HA NILM Detector**.
 
-Short answer: no, not required.
+## Required configuration
 
-- This add-on publishes via MQTT and supports Home Assistant MQTT Discovery.
-- With MQTT Discovery enabled, entities appear automatically without a custom integration.
-- A custom HA integration is only needed if you want a dedicated config flow/UI beyond add-on options (for example, wizard-based device onboarding).
+At least one phase sensor is required:
 
-### Power Data Source
-The add-on currently uses mock data for testing. To connect real power sensors:
+```yaml
+home_assistant:
+  phase_entities:
+    l1: sensor.power_l1
+    l2: ""
+    l3: ""
+```
 
-- Modify `app/collector/source.py` to read from your power sensors
-- Support for MQTT-based sensors (Shelly, Tasmota, etc.) can be added
+The configured Home Assistant entity must expose a numeric power value in watts.
 
-### Device Detection
-The system automatically learns device patterns during the initial learning phase (24 hours). After learning, it can detect:
+For three separately measured phases:
 
-- Refrigerators (100-300W)
-- Washing machines (500-2000W)
-- Dishwashers (1000-3000W)
-- Ovens (1500-4000W)
+```yaml
+home_assistant:
+  phase_entities:
+    l1: sensor.power_l1
+    l2: sensor.power_l2
+    l3: sensor.power_l3
+```
 
-## Usage
+The add-on uses the Home Assistant Supervisor API. In a normal add-on installation, a manual access token is not required.
 
-Once installed and configured, the add-on will:
+## Web UI
 
-1. **Learning Phase** (24 hours): Collect baseline power consumption
-2. **Detection Phase**: Automatically identify and monitor devices
-3. **Reporting**: Publish device states via MQTT to Home Assistant
+The add-on exposes its web interface through Home Assistant Ingress.
+
+Open the add-on and select **Open Web UI**.
+
+The interface contains dedicated areas for:
+
+- live power values
+- detected events
+- learned devices and patterns
+- learning decisions
+- debugging and pipeline information
+
+## Learning behavior
+
+The learning pipeline roughly follows this path:
+
+1. Read power values from Home Assistant.
+2. Detect changes and candidate events.
+3. Add pre-roll and post-roll context.
+4. Evaluate segmentation quality.
+5. Extract features such as power, duration, rise/fall rate, plateau behavior and shape.
+6. Match the event against existing patterns.
+7. Store it as stable or provisional learning data.
+8. Merge sufficiently similar patterns and refine classification.
+
+The default configuration is designed to work without manual tuning. Adjust thresholds only when you have a specific reason and can verify the effect in the event and debug views.
+
+## Important learning options
+
+```yaml
+learning:
+  auto_pipeline_enabled: true
+  auto_pipeline_interval_minutes: 30
+  start_threshold_w: 30.0
+  end_threshold_w: 12.0
+  baseline_window_s: 5.0
+  derivative_threshold_w_per_s: 120.0
+  slope_threshold: 90.0
+  hold_time_s: 6.0
+  stabilization_grace_s: 12.0
+  pre_roll_s: 20.0
+  post_roll_s: 30.0
+  ring_buffer_seconds: 10.0
+  max_gap_s: 6.0
+  pattern_match_threshold: 0.45
+  ml_confidence_threshold: 0.60
+  segmentation_threshold: 0.40
+  stable_segmentation_threshold: 0.70
+  min_samples_for_learning: 4
+  min_waveform_score_for_provisional: 0.20
+  min_waveform_score_for_final: 0.45
+  merge_similarity_threshold: 0.86
+  provisional_promotion_count: 3
+  learning_starvation_window: 8
+```
+
+## Logging
+
+Supported log levels:
+
+```text
+debug
+info
+warning
+error
+```
+
+For troubleshooting, use:
+
+```yaml
+log_level: debug
+```
+
+## Storage
+
+Default base path:
+
+```text
+/data/ha_nilm_detector
+```
+
+Default files:
+
+```text
+/data/ha_nilm_detector/nilm_live.sqlite3
+/data/ha_nilm_detector/nilm_patterns.sqlite3
+/data/ha_nilm_detector/nilm.log
+```
+
+The application also checks known legacy storage locations and migrates files when necessary.
+
+## Home Assistant connection
+
+The add-on is configured with:
+
+```yaml
+homeassistant_api: true
+```
+
+The default Home Assistant API endpoint inside the add-on is:
+
+```text
+http://supervisor/core/api
+```
+
+The runtime Supervisor token is used automatically when available. A manual token is only useful for non-standard setups.
+
+## MQTT
+
+MQTT support exists in the application but is **optional**. The main data source for the current add-on is the Home Assistant REST/Supervisor API.
+
+Do not configure MQTT unless you specifically need the publisher functionality.
+
+## Suitable loads
+
+NILM generally works best when a load has a clear and repeatable signature.
+
+Typical easier examples:
+
+- refrigerators and freezers
+- kettles
+- coffee machines
+- resistive heaters
+- pumps and motors with repeatable cycles
+
+More difficult examples:
+
+- inverter heat pumps
+- inverter air conditioners
+- induction cooktops
+- computers
+- variable-speed appliances
+- very small loads close to the household noise floor
+
+Simultaneous switching events can also reduce classification quality.
 
 ## Troubleshooting
 
-### Detailed logs for debugging
+### Add-on does not start
 
-Set `log_level` in the add-on options to get more detail in Home Assistant logs:
+Check that at least one phase entity is configured. The application intentionally rejects a configuration without a selected phase sensor.
 
-- `trace` or `debug`: maximum detail for startup/runtime troubleshooting
-- `info`: normal operational logs (default)
-- `warning`, `error`, `fatal`: reduced output
+### No live values
 
-When debugging startup issues, use `debug` first.
+1. Check the entity in Home Assistant Developer Tools.
+2. Confirm its state is numeric.
+3. Confirm the entity ID in the add-on options.
+4. Enable `debug` logging if necessary.
 
-### No devices detected
-- Ensure the learning phase has completed (24 hours)
-- Check power sensor data is being received
-- Verify MQTT connection
+### Events are detected but no stable patterns appear
 
-### Incorrect device classification
-- Power consumption patterns may vary by device model
-- Consider manual device configuration for specific cases
+Check the learning/debug views. Events can remain provisional when segmentation or waveform quality is too weak for stable learning.
 
-## Development
+### Too many duplicate patterns
 
-This add-on is written in Python and uses:
-- NumPy for data analysis
-- Paho-MQTT for Home Assistant communication
-- Modular detector system for different appliance types
+This can happen with variable loads or incomplete event windows. Version 0.6.44 includes fuzzy cluster merging and stricter segmentation handling, but duplicate reduction remains an active development area.
 
-## License
+## Diagnostics API
 
-MIT License
+The add-on exposes diagnostic endpoints used by the web UI, including:
+
+```text
+GET /api/training-log
+GET /api/debug/pipeline-buffer
+```
+
+These are intended for troubleshooting and development.
+
+## Privacy
+
+Processing and persistence are local by default.
+
+The optional export functions can create:
+
+- full exports
+- privacy-reduced shared pattern packs
+- LLM review bundles
+
+Exports happen only when explicitly requested by the user. Depending on the selected export type, an export can include detailed measurements and timestamps, so review the generated file before sharing it.
+
+
+## Built-in AI classification
+
+Version 0.7.0 keeps the complete recognition stack inside the add-on. No Ollama instance, external AI server or cloud API is required.
+
+The classifier combines deterministic event segmentation, waveform/shape matching, local RandomForest ML and an attention-style prototype classifier. The attention stage compares an event feature vector with learned patterns and aggregates similarities using softmax weighting.
+
+The system therefore remains fully offline and self-contained.
+
+## Version
+
+Current add-on version: **0.7.0**
+
+See [CHANGELOG.md](CHANGELOG.md) and [RELEASE.md](RELEASE.md) for detailed release history.

@@ -2,6 +2,31 @@
 
 > ⚠️ **Hinweis**: Dieses Projekt ist experimentell (BETA) - Breaking Changes und Bugs können auftreten.
 
+## 0.7.0 (BETA)
+
+### Learning Pipeline 2.0
+- Neuer zentraler `LearningFilterV2` blockiert schlechte Trainings-Events anhand von Segmentierung, Waveform-Vollständigkeit, Baseline, Sample-Anzahl, Truncation und Overlap.
+- Neuer `Feature Vector v2` mit 24 normalisierten NILM-Merkmalen für konsistente lokale ML-Modelle.
+- RandomForest nutzt jetzt **Champion/Challenger** mit lokaler Cross-Validation und guarded Promotion statt einer festen Parametrisierung.
+- Neuer `DriftMonitor` erkennt langfristige Profiländerungen und reduziert die Lernrate bei deutlicher Drift.
+- Neuer `EnsembleClassifier` fusioniert Pattern-, Shape-, ML-, Attention-, Temporal- und Rule-Signale.
+- Debug-Ausgabe zeigt Attention-Ergebnis, Ensemble-Ranking und Model-Lifecycle-Informationen.
+- Alle neuen Lerntechniken laufen vollständig lokal und ohne zusätzliche Dienste.
+
+
+### Added
+- Eingebauter **Attention-Klassifikator** für gewichtete Ähnlichkeitsentscheidungen zwischen gelernten NILM-Mustern.
+- Query/Key/Value-artige Feature-Bewertung mit Softmax-Gewichtung, vollständig ohne externen Modellserver.
+- Kombination aus Pattern-, Shape-, RandomForest-, Attention- und Temporal-Signalen.
+
+### Changed
+- Die komplette Erkennung läuft jetzt standalone im Add-on; Ollama, Cloud-API oder separater KI-Container sind nicht erforderlich.
+- Containerstart ist deterministisch; fehlende Python-Abhängigkeiten werden nicht mehr zur Laufzeit nachinstalliert.
+- `config.yaml` wird ins Image kopiert, damit die Web-UI zuverlässig die Release-Version statt `dev` anzeigt.
+- Docker-CI prüft Runtime-Imports und die eingebettete Versionsnummer.
+- Veraltete Entwicklungsdateien und ungenutzter `AutoDetector` entfernt.
+
+
 ## 0.6.44 (BETA)
 
 ### Fixes

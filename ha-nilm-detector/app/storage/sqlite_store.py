@@ -11,6 +11,10 @@ from datetime import datetime, timedelta, timezone
 from typing import Any, Dict, List, Optional, Tuple
 
 from app.learning.ml_classifier import LocalMLClassifier
+from app.learning.attention_reviewer import AttentionReviewer
+from app.learning.learning_filter_v2 import LearningFilterV2
+from app.learning.drift_monitor import DriftMonitor
+from app.learning.ensemble import EnsembleClassifier
 from app.learning.online_learning import build_pattern_dataset_rows
 from app.learning.pattern_matching import HybridPatternMatcher
 from app.learning.classification_pipeline import (
@@ -85,6 +89,10 @@ class SQLiteStore:
         self.pattern_match_threshold = 0.45
         self.ml_confidence_threshold = 0.60
         self._ml_classifier = LocalMLClassifier()
+        self._attention_reviewer = AttentionReviewer()
+        self._learning_filter_v2 = LearningFilterV2()
+        self._drift_monitor = DriftMonitor()
+        self._ensemble_classifier = EnsembleClassifier()
         self._pattern_matcher = HybridPatternMatcher(
             match_threshold=self.pattern_match_threshold,
             shape_matching_enabled=self.shape_matching_enabled,
@@ -139,12 +147,15 @@ class SQLiteStore:
         online_learning_enabled: bool = True,
         pattern_match_threshold: float = 0.45,
         ml_confidence_threshold: float = 0.60,
+        attention_enabled: bool = True,
     ) -> None:
-        """Configure hybrid AI scoring behavior at runtime."""
+        """Configure the fully self-contained hybrid scoring pipeline."""
         self.ai_enabled = bool(ai_enabled)
         self.ml_enabled = bool(ml_enabled)
         self.shape_matching_enabled = bool(shape_matching_enabled)
         self.online_learning_enabled = bool(online_learning_enabled)
+        self.attention_enabled = bool(attention_enabled)
+        self._attention_reviewer.enabled = self.attention_enabled
         self.pattern_match_threshold = max(0.05, min(float(pattern_match_threshold), 0.95))
         self.ml_confidence_threshold = max(0.05, min(float(ml_confidence_threshold), 0.99))
         self._pattern_matcher = HybridPatternMatcher(
@@ -6091,6 +6102,77 @@ class SQLiteStore:
 
         confidence = max(0.0, min(1.0, float(final_confidence)))
 
+        # The built-in attention reviewer is used only for ambiguous, already
+        # segmented events and may choose only from known candidate labels.
+        attention_result = None
+        if self._attention_reviewer.should_review(
+            current_label=str(final_label or ""),
+            current_confidence=confidence,
+        ):
+            attention_candidates = [
+                final_label,
+                staged_label,
+                best_label,
+                best_group,
+                fallback,
+                *list(cycle.get("candidate_labels", []) or []),
+            ]
+            attention_candidates.extend(
+                self._device_group_key(pattern)
+                for pattern in patterns[:40]
+            )
+            try:
+                attention_result = self._attention_reviewer.classify(
+                    cycle=cycle,
+                    candidate_labels=attention_candidates,
+                    similar_patterns=patterns[:40],
+                )
+            except Exception as attention_error:
+                logger.debug("Local attention review failed: %s", attention_error)
+                attention_result = None
+
+        if attention_result is not None and attention_result.confidence >= self._attention_reviewer.min_confidence:
+            attention_label = str(attention_result.label or "unknown")
+            if attention_label not in {"", "unknown", "unbekannt"}:
+                if attention_label == str(final_label):
+                    confidence = max(confidence, min(0.98, (confidence * 0.65) + (attention_result.confidence * 0.35)))
+                    source = "hybrid_attention_agreement"
+                    decision_reason = "attention_agrees"
+                elif attention_result.confidence >= max(0.78, confidence + 0.10):
+                    final_label = attention_label
+                    confidence = min(0.95, (confidence * 0.35) + (attention_result.confidence * 0.65))
+                    source = "hybrid_attention_override"
+                    decision_reason = "attention_strong_override"
+
+        ensemble_votes = {
+            "prototype": (best_label, prototype_confidence),
+            "shape": (best_label, shape_confidence),
+            "ml": (ml_label, ml_conf),
+            "attention": (
+                str(attention_result.label or "unknown") if attention_result else "unknown",
+                float(attention_result.confidence or 0.0) if attention_result else 0.0,
+            ),
+            "temporal": (
+                staged_label,
+                float(cycle.get("temporal_confidence", 0.0) or 0.0),
+            ),
+            "rule": (
+                staged_label,
+                float(cycle.get("rule_confidence", staged_confidence) or 0.0),
+            ),
+        }
+        ensemble_result = self._ensemble_classifier.combine(ensemble_votes)
+        if ensemble_result is not None:
+            if ensemble_result.label == str(final_label):
+                confidence = max(confidence, float(ensemble_result.confidence))
+                source = "ensemble_agreement"
+                decision_reason = "multi_model_agreement"
+            elif confidence < 0.78 and ensemble_result.confidence >= max(0.66, confidence + 0.05):
+                final_label = ensemble_result.label
+                confidence = float(ensemble_result.confidence)
+                source = "ensemble_override"
+                decision_reason = "multi_model_consensus_override"
+
         normalized_final_label = self._normalize_pattern_name(str(final_label or ""))
         label_lock_phase = str(phase_locks.get(normalized_final_label) or "")
         if label_lock_phase in {"L1", "L2", "L3"} and cycle_phase in {"L1", "L2", "L3"} and label_lock_phase != cycle_phase:
@@ -6215,6 +6297,26 @@ class SQLiteStore:
             "explain": {
                 **dict(matcher_result.explain),
                 "decision_reason": decision_reason,
+                "attention": (
+                    {
+                        "label": attention_result.label,
+                        "confidence": round(float(attention_result.confidence), 4),
+                        "device_family": attention_result.device_family,
+                        "evidence": attention_result.evidence,
+                    }
+                    if attention_result
+                    else None
+                ),
+                "ensemble": (
+                    {
+                        "label": ensemble_result.label,
+                        "confidence": round(float(ensemble_result.confidence), 4),
+                        "agreement": round(float(ensemble_result.agreement), 4),
+                        "ranking": ensemble_result.ranking,
+                    }
+                    if ensemble_result
+                    else None
+                ),
                 "candidate_labels": list(cycle.get("candidate_labels", [])),
                 "derived_features": dict(cycle.get("derived_features", {})),
                 "temporal_features": dict(cycle.get("temporal_features", {})),
@@ -6244,6 +6346,7 @@ class SQLiteStore:
                         "confidence": round(float(ml_result.confidence), 4),
                         "source": ml_result.source,
                         "top_n": ml_result.top_n,
+                        "model_info": ml_result.model_info,
                     }
                     if ml_result
                     else None
@@ -7089,9 +7192,44 @@ class SQLiteStore:
 
         now = datetime.now().isoformat()
         patterns = self.list_patterns(limit=500)
+        legacy_context_missing = not bool(
+            cycle.get("profile_points")
+            or cycle.get("waveform_points")
+            or cycle.get("sample_count")
+            or cycle.get("pre_roll_samples")
+            or cycle.get("post_roll_samples")
+        )
         cycle = self._enrich_cycle_for_learning(cycle, fallback=suggestion_seed, patterns=patterns)
         suggestion_seed = str(cycle.get("refined_label") or suggestion_seed or "unknown")
-        learning_tier = self._determine_learning_tier(cycle)
+        legacy_tier = self._determine_learning_tier(cycle)
+        filter_decision = self._learning_filter_v2.evaluate(cycle)
+        tier_rank = {"blocked": 0, "provisional": 1, "stable": 2}
+        hard_filter_reasons = {"probable_multi_device_overlap", "invalid_event_metrics"}
+        if not legacy_context_missing:
+            hard_filter_reasons.add("too_few_samples")
+
+        if (
+            legacy_tier == "blocked"
+            and legacy_context_missing
+            and float(cycle.get("duration_s", 0.0) or 0.0) >= float(self.learning_min_event_duration_s)
+            and float(cycle.get("avg_power_w", 0.0) or 0.0) > 0.0
+        ):
+            learning_tier = "provisional"
+            cycle["legacy_context_fallback"] = True
+        elif (
+            legacy_tier == "provisional"
+            and filter_decision.tier == "blocked"
+            and not hard_filter_reasons.intersection(filter_decision.reasons)
+        ):
+            learning_tier = "provisional"
+        else:
+            learning_tier = min(
+                (legacy_tier, filter_decision.tier),
+                key=lambda value: tier_rank.get(value, 0),
+            )
+
+        cycle["learning_filter_score"] = round(float(filter_decision.score), 4)
+        cycle["learning_filter_reasons"] = list(filter_decision.reasons)
         cycle["learning_tier"] = learning_tier
         cycle["learning_allowed"] = learning_tier != "blocked"
         learning_label = self._candidate_learning_label(cycle, suggestion_seed)
@@ -7281,6 +7419,12 @@ class SQLiteStore:
         best_distance = float(match_result.best_distance)
         best_similarity = float(match_result.best_similarity)
 
+        drift_result = self._drift_monitor.compare(best, cycle) if best else None
+        if drift_result is not None:
+            cycle["drift_score"] = round(float(drift_result.score), 4)
+            cycle["drift_level"] = str(drift_result.level)
+            cycle["drift_changed_features"] = list(drift_result.changed_features)
+
         dedup_decision = decide_dedup_action(
             best=best,
             cycle=cycle,
@@ -7305,6 +7449,10 @@ class SQLiteStore:
             if best and dedup_decision.force_match:
                 seen_count = int(best.get("seen_count", 1) or 1) + 1
                 alpha = 1.0 / max(seen_count, 1)
+                if drift_result is not None and drift_result.level == "warning":
+                    alpha = min(alpha, 0.12)
+                elif drift_result is not None and drift_result.level == "critical":
+                    alpha = min(alpha, 0.05)
                 self._learning_stats["patterns_merged"] = self._learning_stats.get("patterns_merged", 0.0) + 1.0
 
                 def blend(existing_key: str, cycle_key: str, default: float = 0.0) -> float:

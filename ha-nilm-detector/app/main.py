@@ -97,6 +97,7 @@ class NILMDetectionSystem:
                     online_learning_enabled=self.config.online_learning_enabled,
                     pattern_match_threshold=self.config.pattern_match_threshold,
                     ml_confidence_threshold=self.config.ml_confidence_threshold,
+                    attention_enabled=True,
                 )
                 self.storage.configure_learning_policy(
                     segmentation_threshold=self.config.learning_segmentation_threshold,
