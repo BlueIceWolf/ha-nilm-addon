@@ -5,13 +5,12 @@
 ## 0.7.0 (BETA)
 
 ### Added
-- Optionaler **lokaler LLM-Reviewer** über einen Ollama-kompatiblen `/api/chat`-Endpunkt.
-- Strukturierte JSON-Ausgabe mit festem Schema, `temperature: 0` und begrenzten Kandidatenlabels.
-- LLM bekommt nur kompakte NILM-Eventmerkmale und ähnliche gelernte Muster statt kompletter HA-Rohdaten.
-- Lokale Endpunkte werden auf private/Loopback/lokale Hostnamen beschränkt.
-- LLM greift nur bei unsicheren Klassifikationen ein und kann starke deterministische Matches nicht leicht überschreiben.
+- Eingebauter **Attention-Klassifikator** für gewichtete Ähnlichkeitsentscheidungen zwischen gelernten NILM-Mustern.
+- Query/Key/Value-artige Feature-Bewertung mit Softmax-Gewichtung, vollständig ohne externen Modellserver.
+- Kombination aus Pattern-, Shape-, RandomForest-, Attention- und Temporal-Signalen.
 
 ### Changed
+- Die komplette Erkennung läuft jetzt standalone im Add-on; Ollama, Cloud-API oder separater KI-Container sind nicht erforderlich.
 - Containerstart ist deterministisch; fehlende Python-Abhängigkeiten werden nicht mehr zur Laufzeit nachinstalliert.
 - `config.yaml` wird ins Image kopiert, damit die Web-UI zuverlässig die Release-Version statt `dev` anzeigt.
 - Docker-CI prüft Runtime-Imports und die eingebettete Versionsnummer.
