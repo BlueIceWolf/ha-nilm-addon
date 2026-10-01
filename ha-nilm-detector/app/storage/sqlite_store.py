@@ -414,6 +414,7 @@ class SQLiteStore:
             self._maybe_recluster_device_registry_v2()
             self._maybe_recluster_device_registry_v3()
             self._maybe_repair_device_registry_v4()
+        self._maybe_repair_device_registry_v5()
             self._maybe_repair_pattern_timestamps()
             self.cleanup_old_data()
             self._log_startup_diagnostics(stage="post-init")
@@ -894,6 +895,102 @@ class SQLiteStore:
             logger.info("Repaired device registry v4: %s", details)
         except Exception as e:
             logger.warning("Device registry v4 repair failed: %s", e)
+
+    def _maybe_repair_device_registry_v5(self) -> None:
+        """Remove invalid automatic prototypes recreated by the 0.7.8 replay path.
+
+        0.7.8 fixed the filter itself, but the legacy provisional fallback could
+        still override blocked delta events.  Events remain in the event log;
+        only unconfirmed/unlabelled learned prototypes below the configured
+        30 W activation floor are removed.
+        """
+        if not self._patterns_conn:
+            return
+        event_key = "physical_device_registry_repair:v5"
+        if self._migration_applied(self._patterns_conn, event_key):
+            return
+        try:
+            removed_patterns = 0
+            removed_devices = 0
+            repaired_ranges = 0
+            invalid_pattern_ids = []
+            with self._patterns_conn:
+                invalid_rows = self._patterns_conn.execute(
+                    """
+                    SELECT p.id
+                    FROM learned_patterns p
+                    LEFT JOIN devices d ON d.device_id = p.device_id
+                    WHERE p.delta_avg_power_w IS NOT NULL
+                      AND p.delta_avg_power_w < 30.0
+                      AND (p.user_label IS NULL OR TRIM(p.user_label) = '')
+                      AND COALESCE(p.is_confirmed, 0) = 0
+                      AND COALESCE(d.confirmed, 0) = 0
+                      AND (d.user_label IS NULL OR TRIM(d.user_label) = '')
+                    """
+                ).fetchall()
+                invalid_pattern_ids = [int(row[0]) for row in invalid_rows if int(row[0] or 0) > 0]
+
+                if invalid_pattern_ids:
+                    marks = ",".join(["?"] * len(invalid_pattern_ids))
+                    if self._table_exists(self._patterns_conn, "pattern_features"):
+                        self._patterns_conn.execute(
+                            f"DELETE FROM pattern_features WHERE pattern_id IN ({marks})",
+                            tuple(invalid_pattern_ids),
+                        )
+                    if self._table_exists(self._patterns_conn, "pattern_history"):
+                        self._patterns_conn.execute(
+                            f"DELETE FROM pattern_history WHERE pattern_id IN ({marks})",
+                            tuple(invalid_pattern_ids),
+                        )
+                    if self._table_exists(self._patterns_conn, "device_cycles"):
+                        self._patterns_conn.execute(
+                            f"DELETE FROM device_cycles WHERE pattern_id IN ({marks})",
+                            tuple(invalid_pattern_ids),
+                        )
+                    if self._table_exists(self._patterns_conn, "patterns"):
+                        self._patterns_conn.execute(
+                            f"DELETE FROM patterns WHERE pattern_id IN ({marks})",
+                            tuple(invalid_pattern_ids),
+                        )
+                    cur = self._patterns_conn.execute(
+                        f"DELETE FROM learned_patterns WHERE id IN ({marks})",
+                        tuple(invalid_pattern_ids),
+                    )
+                    removed_patterns = int(cur.rowcount or 0)
+
+                cur = self._patterns_conn.execute(
+                    """
+                    DELETE FROM devices
+                    WHERE confirmed = 0
+                      AND (user_label IS NULL OR TRIM(user_label) = '')
+                      AND NOT EXISTS (
+                          SELECT 1 FROM learned_patterns p WHERE p.device_id = devices.device_id
+                      )
+                    """
+                )
+                removed_devices = int(cur.rowcount or 0)
+
+                cur = self._patterns_conn.execute(
+                    """
+                    UPDATE devices
+                    SET baseline_range_min_w = MIN(baseline_range_min_w, baseline_range_max_w),
+                        baseline_range_max_w = MAX(baseline_range_min_w, baseline_range_max_w)
+                    WHERE baseline_range_min_w IS NOT NULL
+                      AND baseline_range_max_w IS NOT NULL
+                      AND baseline_range_min_w > baseline_range_max_w
+                    """
+                )
+                repaired_ranges = int(cur.rowcount or 0)
+
+            details = (
+                f"removed_delta_lt_30_patterns={removed_patterns} "
+                f"removed_orphan_devices={removed_devices} "
+                f"repaired_baseline_ranges={repaired_ranges}"
+            )
+            self._record_migration(self._patterns_conn, event_key, details)
+            logger.info("Repaired device registry v5: %s", details)
+        except Exception as e:
+            logger.warning("Device registry v5 repair failed: %s", e)
 
     def _maybe_backfill_patterns_mirror(self) -> None:
         if not self._patterns_conn:
@@ -8254,8 +8351,8 @@ class SQLiteStore:
                     """,
                     (
                         device_subclass,
-                        baseline_before_w_avg,
-                        baseline_after_w_avg,
+                        min(baseline_before_w_avg, baseline_after_w_avg),
+                        max(baseline_before_w_avg, baseline_after_w_avg),
                         now,
                         int(device_id),
                     ),
@@ -8444,7 +8541,7 @@ class SQLiteStore:
         legacy_tier = self._determine_learning_tier(cycle)
         filter_decision = self._learning_filter_v2.evaluate(cycle)
         tier_rank = {"blocked": 0, "provisional": 1, "stable": 2}
-        hard_filter_reasons = {"probable_multi_device_overlap", "invalid_event_metrics"}
+        hard_filter_reasons = {"probable_multi_device_overlap", "invalid_event_metrics", "non_positive_delta_power", "delta_power_too_small"}
         if not legacy_context_missing:
             hard_filter_reasons.add("too_few_samples")
 
@@ -8453,6 +8550,7 @@ class SQLiteStore:
             and legacy_context_missing
             and float(cycle.get("duration_s", 0.0) or 0.0) >= float(self.learning_min_event_duration_s)
             and float(cycle.get("avg_power_w", 0.0) or 0.0) > 0.0
+            and not hard_filter_reasons.intersection(filter_decision.reasons)
         ):
             learning_tier = "provisional"
             cycle["legacy_context_fallback"] = True
