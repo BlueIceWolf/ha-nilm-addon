@@ -414,7 +414,7 @@ class SQLiteStore:
             self._maybe_recluster_device_registry_v2()
             self._maybe_recluster_device_registry_v3()
             self._maybe_repair_device_registry_v4()
-        self._maybe_repair_device_registry_v5()
+            self._maybe_repair_device_registry_v5()
             self._maybe_repair_pattern_timestamps()
             self.cleanup_old_data()
             self._log_startup_diagnostics(stage="post-init")
