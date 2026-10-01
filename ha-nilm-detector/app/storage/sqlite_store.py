@@ -3115,7 +3115,7 @@ class SQLiteStore:
     def _candidate_learning_label(self, cycle: Dict[str, Any], fallback_label: str) -> str:
         preferred = str(cycle.get("refined_label") or fallback_label or "unknown").strip() or "unknown"
         if self._looks_like_low_power_non_motor(cycle):
-            return "electronics_cluster"
+            return "low_power_electronics"
         if preferred == "unknown_constant_load":
             return "constant_load_pattern"
         if self._is_candidate_only_label(preferred):
@@ -4303,6 +4303,20 @@ class SQLiteStore:
             "unknown_electronics",
             "always_on_low_power",
             "electronics_cluster",
+            "low_power_electronics",
+            "permanent_low_power_load",
+            "steady_on_off_load",
+            "variable_load",
+            "multistate_appliance",
+            "motor_load",
+            "variable_motor_load",
+            "motor_start_candidate",
+            "refrigeration_candidate",
+            "resistive_heater",
+            "heating_load",
+            "short_pulse_load",
+            "unknown_load",
+            "microwave_candidate",
             "psu_constant_load",
             "fan_small",
             "pump_small",

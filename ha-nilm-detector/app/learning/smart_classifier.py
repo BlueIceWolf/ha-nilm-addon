@@ -359,43 +359,99 @@ class SmartDeviceClassifier:
     
     @staticmethod
     def classify(cycle: LearnedCycle) -> Tuple[str, float, str]:
-        """
-        Classify a power cycle to device type.
-        
-        Returns: (device_id, confidence, device_name)
+        """Classify conservatively from low-rate aggregate power data.
+
+        Concrete appliance names are returned only for signatures that are
+        sufficiently distinctive at this sampling level. Ambiguous cases are
+        deliberately represented as electrical behaviour/family labels.
         """
         if not cycle:
             return ("unknown", 0.0, "Unbekannt")
-        
+
         features = cycle.features
-        d = cycle.duration_s
-        p = cycle.peak_power_w
-        avg = cycle.avg_power_w
-        energy = cycle.energy_wh
-        modes = cycle.operating_modes if hasattr(cycle, 'operating_modes') else []
-        
-        # Phase detection
+        duration = float(cycle.duration_s or 0.0)
+        peak = float(cycle.peak_power_w or 0.0)
+        avg = float(cycle.avg_power_w or 0.0)
+        energy = float(cycle.energy_wh or 0.0)
         phase_mode = SmartDeviceClassifier._detect_phase_mode(cycle)
-        
-        scores: List[Tuple[str, float]] = []
-        
-        # Score each device type
-        for dev_id, sig in SmartDeviceClassifier.DEVICE_DATABASE.items():
-            score = SmartDeviceClassifier._score_device(
-                sig, cycle, d, p, avg, energy, features, modes, phase_mode
-            )
-            if score > 0.3:  # Only consider candidates with score > 0.3
-                scores.append((dev_id, score))
-        
-        if not scores:
-            return ("unknown", 0.0, "Unbekannt")
-        
-        # Return best match
-        best_id, best_score = max(scores, key=lambda x: x[1])
-        best_sig = SmartDeviceClassifier.DEVICE_DATABASE[best_id]
-        
-        return (best_id, min(best_score, 0.99), best_sig.name)
-    
+
+        variance = float(features.power_variance) if features else 0.0
+        normalized_variance = variance / max(avg * avg, 1.0)
+        inrush_ratio = float(features.peak_to_avg_ratio) if features else (peak / max(avg, 1.0))
+        substates = int(features.num_substates) if features else 0
+        has_motor = bool(features.has_motor_pattern) if features else False
+        has_heating = bool(features.has_heating_pattern) if features else False
+        rise_rate = float(features.rise_rate_w_per_s) if features else 0.0
+        duty_cycle = float(features.duty_cycle) if features else 0.0
+        has_multiple_modes = bool(getattr(cycle, "has_multiple_modes", False))
+
+        # Only keep exact names for signatures that are distinctive with low-rate
+        # active-power measurements. Even here the confidence describes the
+        # appliance-family inference, not a guaranteed physical identity.
+        if (
+            has_heating
+            and 1400.0 <= peak <= 3500.0
+            and 20.0 <= duration <= 600.0
+            and normalized_variance <= 0.08
+            and rise_rate >= 80.0
+            and inrush_ratio <= 1.35
+        ):
+            return ("kettle", 0.90, "Wasserkocher")
+
+        # A short, stable high-power non-motor load is microwave-like, but active
+        # power alone cannot always distinguish it from other resistive loads.
+        if (
+            not has_motor
+            and not has_heating
+            and 700.0 <= peak <= 2200.0
+            and 20.0 <= duration <= 900.0
+            and normalized_variance <= 0.06
+            and inrush_ratio <= 1.35
+        ):
+            return ("microwave_candidate", 0.72, "Mikrowellen-ähnliche Last")
+
+        # Multi-state/FSM appliances: washer, dishwasher, dryer, ovens with
+        # thermostat stages, etc. Do not invent an exact appliance name without
+        # a learned/confirmed state sequence.
+        if has_multiple_modes or substates >= 2:
+            confidence = 0.72 if duration >= 600.0 else 0.62
+            return ("multistate_appliance", confidence, "Mehrstufiges Gerät")
+
+        # Repeating low-power motor cycles are refrigeration-like. Fridge vs.
+        # freezer cannot be reliably separated from one aggregate P(t) cycle.
+        if (
+            has_motor
+            and 40.0 <= avg <= 400.0
+            and 90.0 <= duration <= 5400.0
+            and inrush_ratio >= 1.15
+            and normalized_variance <= 0.18
+        ):
+            return ("refrigeration_candidate", 0.68, "Kühl-/Kompressorlast")
+
+        if has_motor:
+            if duration >= 300.0 and normalized_variance >= 0.08:
+                return ("variable_motor_load", 0.66, "Variable Motorlast")
+            return ("motor_load", 0.62, "Motorlast")
+
+        if has_heating:
+            if peak >= 700.0 and normalized_variance <= 0.10:
+                return ("resistive_heater", 0.70, "Widerstandsheizung")
+            return ("heating_load", 0.60, "Heizlast")
+
+        # Type IV / permanent-consumer-like low-power loads.
+        if avg <= 250.0 and duration >= 300.0 and normalized_variance <= 0.08:
+            return ("low_power_electronics", 0.58, "Stabile Kleinlast/Elektronik")
+
+        # Type I on/off load: clear, mostly flat operating state.
+        if normalized_variance <= 0.06 and duration >= 20.0:
+            return ("steady_on_off_load", 0.56, "Konstante Ein/Aus-Last")
+
+        # Type III continuously varying load.
+        if normalized_variance >= 0.12:
+            return ("variable_load", 0.52, "Variable Last")
+
+        return ("unknown", 0.25, "Unbekannte Last")
+
     @staticmethod
     def _detect_phase_mode(cycle: LearnedCycle) -> PhaseMode:
         """Detect if device operates on single-phase or three-phase power.
