@@ -1,8 +1,7 @@
 """Fully local attention reviewer for NILM reasoning.
 
-Despite the historic class name, this module performs no HTTP requests and has
-no external model dependency. It wraps the built-in attention classifier so
-older storage code can keep the same interface while remaining standalone.
+This module performs no HTTP requests and has no external model dependency.
+It wraps the built-in attention classifier and stays fully standalone.
 """
 
 from __future__ import annotations
@@ -29,9 +28,6 @@ class AttentionReviewer:
         self,
         *,
         enabled: bool = True,
-        base_url: str = "",
-        model: str = "",
-        timeout_seconds: int = 20,
         min_confidence: float = 0.65,
         review_below_confidence: float = 0.78,
     ) -> None:
