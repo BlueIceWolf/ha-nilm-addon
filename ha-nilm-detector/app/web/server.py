@@ -1,6 +1,7 @@
 """Simple embedded web server for NILM live status and statistics."""
 
 import json
+import os
 import threading
 from datetime import datetime
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
@@ -349,6 +350,8 @@ def _html_page(default_language: str = "de", build_info: Optional[Dict[str, str]
       <button id=\"exportDataBtn\" title=\"Muster + Messwerte als JSON exportieren\">📥 Daten exportieren</button>
       <button id=\"exportSharedBtn\" title=\"Datensparsamen Community-Pattern-Pack exportieren\">📦 Shared Pack</button>
       <button id=\"exportLlmBtn\" title=\"Kompaktes Analyse-Bundle für ChatGPT/LLM exportieren\">🧠 LLM Review</button>
+      <button id=\"downloadPatternsDbBtn\" title=\"Pattern-SQLite-Datenbank herunterladen\">🗄️ Pattern-DB</button>
+      <button id=\"downloadLiveDbBtn\" title=\"Live-SQLite-Datenbank herunterladen\">🗄️ Live-DB</button>
       <button id=\"importDataBtn\" title=\"JSON-Datei mit Mustern/Messwerten importieren\">📤 Daten importieren</button>
       <input type=\"file\" id=\"importDataFile\" accept=\".json\" style=\"display: none;\" />
       <button id=\"darkModeToggle\" title=\"Hell/Dunkel umschalten\">🌙 Nachtmodus</button>
@@ -710,6 +713,8 @@ const I18N = {
     exportDataBtn: '📥 Daten exportieren',
     exportSharedBtn: '📦 Shared Pack',
     exportLlmBtn: '🧠 LLM Review',
+    downloadPatternsDbBtn: '🗄️ Pattern-DB',
+    downloadLiveDbBtn: '🗄️ Live-DB',
     importDataBtn: '📤 Daten importieren',
     darkModeOn: '☀️ Tagmodus',
     darkModeOff: '🌙 Nachtmodus',
@@ -821,6 +826,7 @@ const I18N = {
     exportSharedFailed: 'Shared-Pack-Export fehlgeschlagen: {err}',
     exportLlmSuccess: 'LLM-Review exportiert: {patterns} Muster, {events} Events',
     exportLlmFailed: 'LLM-Review-Export fehlgeschlagen: {err}',
+    dbDownloadFailed: 'Datenbank-Download fehlgeschlagen: {err}',
     invalidRange: 'Ungültiger Zeitbereich ausgewählt.',
     patternModalTitle: 'Muster-Profil: {name} (ID: {id})',
     unknownPattern: 'Unbekannt',
@@ -863,6 +869,8 @@ const I18N = {
     ,titleImportHistory: 'Verlauf aus Home Assistant importieren'
     ,titleExportShared: 'Datensparsamen Community-Pattern-Pack exportieren'
     ,titleExportLlm: 'Kompaktes Analyse-Bundle fuer ChatGPT/LLM exportieren'
+    ,titleDownloadPatternsDb: 'Pattern-SQLite-Datenbank herunterladen'
+    ,titleDownloadLiveDb: 'Live-SQLite-Datenbank herunterladen'
     ,titleDarkMode: 'Hell/Dunkel umschalten'
     ,titleOlder: 'Ältere Messpunkte anzeigen'
     ,titleNewer: 'Neuere Messpunkte anzeigen'
@@ -881,6 +889,8 @@ const I18N = {
     exportDataBtn: '📥 Export data',
     exportSharedBtn: '📦 Shared pack',
     exportLlmBtn: '🧠 LLM review',
+    downloadPatternsDbBtn: '🗄️ Pattern DB',
+    downloadLiveDbBtn: '🗄️ Live DB',
     importDataBtn: '📤 Import data',
     darkModeOn: '☀️ Light mode',
     darkModeOff: '🌙 Dark mode',
@@ -992,6 +1002,7 @@ const I18N = {
     exportSharedFailed: 'Shared pack export failed: {err}',
     exportLlmSuccess: 'LLM review exported: {patterns} patterns, {events} events',
     exportLlmFailed: 'LLM review export failed: {err}',
+    dbDownloadFailed: 'Database download failed: {err}',
     invalidRange: 'Invalid time range selected.',
     patternModalTitle: 'Pattern profile: {name} (ID: {id})',
     unknownPattern: 'Unknown',
@@ -1034,6 +1045,8 @@ const I18N = {
     ,titleImportHistory: 'Import history from Home Assistant'
     ,titleExportShared: 'Export privacy-safe community pattern pack'
     ,titleExportLlm: 'Export compact ChatGPT/LLM review bundle'
+    ,titleDownloadPatternsDb: 'Download pattern SQLite database'
+    ,titleDownloadLiveDb: 'Download live SQLite database'
     ,titleDarkMode: 'Toggle light/dark mode'
     ,titleOlder: 'Show older measurement points'
     ,titleNewer: 'Show newer measurement points'
@@ -1081,6 +1094,8 @@ function applyLanguage() {
   assignText('exportDataBtn', 'exportDataBtn');
   assignText('exportSharedBtn', 'exportSharedBtn');
   assignText('exportLlmBtn', 'exportLlmBtn');
+  assignText('downloadPatternsDbBtn', 'downloadPatternsDbBtn');
+  assignText('downloadLiveDbBtn', 'downloadLiveDbBtn');
   assignText('devicesHeading', 'devicesHeading');
   assignText('cyclesHeading', 'cyclesHeading');
   assignText('eventPhasesHeading', 'eventPhasesHeading');
@@ -1160,6 +1175,8 @@ function applyLanguage() {
   assignTitle('importHistoryBtn', 'titleImportHistory');
   assignTitle('exportSharedBtn', 'titleExportShared');
   assignTitle('exportLlmBtn', 'titleExportLlm');
+  assignTitle('downloadPatternsDbBtn', 'titleDownloadPatternsDb');
+  assignTitle('downloadLiveDbBtn', 'titleDownloadLiveDb');
   assignTitle('darkModeToggle', 'titleDarkMode');
   assignTitle('olderBtn', 'titleOlder');
   assignTitle('newerBtn', 'titleNewer');
@@ -1380,7 +1397,13 @@ async function importHistoryFromHA() {
       throw new Error(payload.error || `HTTP ${response.status}`);
     }
 
-    alert(t('importSuccess', { imported: payload.imported || 0, skipped: payload.skipped_non_positive || 0 }));
+    const sources = payload.sources || {};
+    const sourceSummary = ['L1', 'L2', 'L3']
+      .filter(phase => Object.prototype.hasOwnProperty.call(sources, phase))
+      .map(phase => `${phase}: ${sources[phase] || 0}`)
+      .join(', ');
+    const baseMessage = t('importSuccess', { imported: payload.imported || 0, skipped: payload.skipped_non_positive || 0 });
+    alert(sourceSummary ? `${baseMessage}\nHA History: ${sourceSummary}` : baseMessage);
     await refresh();
   } catch (err) {
     alert(t('importFailed', { err }));
@@ -1448,6 +1471,18 @@ async function exportLlmReviewBundle() {
     alert(t('exportLlmFailed', { err }));
     setStatus(t('exportLlmFailed', { err }));
   }
+}
+
+function downloadDatabase(kind) {
+  const endpoint = kind === 'patterns'
+    ? 'api/debug/download-patterns-db'
+    : 'api/debug/download-live-db';
+  const link = document.createElement('a');
+  link.href = apiPath(endpoint);
+  link.download = '';
+  document.body.appendChild(link);
+  link.click();
+  document.body.removeChild(link);
 }
 
 function importData() {
@@ -2756,6 +2791,8 @@ document.getElementById('importHistoryBtn').addEventListener('click', importHist
 document.getElementById('exportDataBtn').addEventListener('click', exportData);
 document.getElementById('exportSharedBtn').addEventListener('click', exportSharedPatternPack);
 document.getElementById('exportLlmBtn').addEventListener('click', exportLlmReviewBundle);
+document.getElementById('downloadPatternsDbBtn').addEventListener('click', () => downloadDatabase('patterns'));
+document.getElementById('downloadLiveDbBtn').addEventListener('click', () => downloadDatabase('live'));
 document.getElementById('importDataBtn').addEventListener('click', importData);
 document.getElementById('importDataFile').addEventListener('change', handleImportDataFile);
 document.getElementById('darkModeToggle').addEventListener('click', toggleDarkMode);
@@ -3379,6 +3416,27 @@ class StatsWebServer:
                 except (BrokenPipeError, ConnectionResetError):
                     logger.debug("Client disconnected while sending HTML response")
 
+            def _send_file(self, path: str, filename: str) -> None:
+                if not path or not os.path.isfile(path):
+                    self._send_json({"error": "database file not found"}, status=404)
+                    return
+                size = os.path.getsize(path)
+                self.send_response(200)
+                self.send_header("Content-Type", "application/vnd.sqlite3")
+                self.send_header("Content-Disposition", f'attachment; filename="{filename}"')
+                self.send_header("Content-Length", str(size))
+                self.send_header("Cache-Control", "no-store")
+                self.end_headers()
+                try:
+                    with open(path, "rb") as handle:
+                        while True:
+                            chunk = handle.read(1024 * 1024)
+                            if not chunk:
+                                break
+                            self.wfile.write(chunk)
+                except (BrokenPipeError, ConnectionResetError):
+                    logger.debug("Client disconnected while downloading %s", filename)
+
             def do_GET(self):
                 parsed = urlparse(self.path)
                 if parsed.path == "/":
@@ -3532,6 +3590,18 @@ class StatsWebServer:
                   except ValueError:
                     limit = 500
                   self._send_json(parent.storage.list_user_labels(limit=limit))
+                  return
+
+                if parsed.path in {"/api/debug/download-patterns-db", "/api/debug/download-live-db"}:
+                  if not parent.storage or not hasattr(parent.storage, "prepare_database_download"):
+                    self._send_json({"error": "storage not enabled"}, status=400)
+                    return
+                  kind = "patterns" if parsed.path.endswith("patterns-db") else "live"
+                  info = parent.storage.prepare_database_download(kind)
+                  if not info.get("ok"):
+                    self._send_json(info, status=500)
+                    return
+                  self._send_file(str(info.get("path") or ""), str(info.get("filename") or "nilm.sqlite3"))
                   return
 
                 if parsed.path == "/api/debug/export-training-jsonl":
