@@ -44,9 +44,9 @@ def test_provisional_pattern_in_learned_patterns():
                 min_event_duration_s=5.0,
                 min_samples_for_learning=4,
                 segmentation_threshold=0.30,
-                stable_segmentation_threshold=0.70,
+                stable_segmentation_threshold=0.95,
                 min_waveform_score_for_provisional=0.15,
-                min_waveform_score_for_final=0.45,
+                min_waveform_score_for_final=0.99,
                 merge_similarity_threshold=0.86,
             )
             
