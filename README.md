@@ -11,7 +11,7 @@
 
 <p align="center">
   <img src="https://img.shields.io/badge/status-beta-orange" alt="Beta">
-  <img src="https://img.shields.io/badge/version-0.7.6-blue" alt="Version 0.6.44">
+  <img src="https://img.shields.io/badge/version-0.7.8-blue" alt="Version 0.7.8">
   <img src="https://img.shields.io/badge/Home%20Assistant-Add--on-41BDF5" alt="Home Assistant Add-on">
   <img src="https://img.shields.io/badge/license-MIT-green" alt="MIT">
 </p>
@@ -25,16 +25,19 @@ HA NILM Detector beobachtet einen oder mehrere Leistungssensoren aus Home Assist
 
 Du brauchst dafür **keinen separaten Sensor an jedem Gerät**. Für den Einstieg reicht ein Leistungssensor auf einer Phase. Mit getrennten Sensoren für L1, L2 und L3 kann die Erkennung zusätzlich phasenbezogen arbeiten.
 
-### Aktueller Stand in v0.7.6
+### Aktueller Stand in v0.7.8
 
 - lokale Verarbeitung ohne Cloud-Zwang
 - L1/L2/L3 einzeln nutzbar
 - Event- und Zykluserkennung mit Pre-/Post-Roll
 - per-Phase Pattern Learning
 - stabile und provisorische Lernmuster
-- Pattern-Matching nach Leistung, Dauer und Kurvenform
-- fuzzy Merge ähnlicher Muster
-- Confidence- und Segmentierungsbewertung
+- Pattern-Matching nach Leistung, Dauer, Peak, Inrush und Kurvenform
+- prototype-basiertes Matching physischer Geräte statt starrer Fingerprints
+- fuzzy Merge ähnlicher Muster und Betriebsarten
+- Schutz vor Switch-off-/negativen Delta-Artefakten beim Lernen
+- automatische Reparatur alter fehlerhafter Geräte-/Pattern-Zuordnungen
+- Confidence-, Segmentierungs- und Baseline-Qualitätsbewertung
 - Web-UI über Home Assistant Ingress
 - manuelle Labels und Korrekturen
 - Debug-/Training-Log
@@ -110,6 +113,8 @@ Home Assistant Leistungssensoren
 ```
 
 Muster mit schwächerer Segmentierung können zunächst als **provisional** gesammelt werden. Wiederholt sich ein plausibles Muster oft genug, kann es zu einem stabilen Pattern hochgestuft werden.
+
+Seit **0.7.7/0.7.8** wird beim Lernen bevorzugt die baseline-korrigierte Leistungsänderung (`delta_avg_power_w`) verwendet. Ausschaltflanken und nicht-positive Delta-Ereignisse werden nicht als neue Verbraucher gelernt. Dadurch soll die Geräte-Registry stärker auf wiederkehrende physische Lasten konvergieren statt auf kurzzeitige Baseline-Artefakte.
 
 ## Welche Geräte funktionieren gut?
 
@@ -265,7 +270,9 @@ storage:
 
 ### Zu viele ähnliche Patterns
 
-Das kann bei variablen Lasten oder unvollständig erfassten Zyklen passieren. v0.7.0 enthält bereits verbessertes fuzzy Merging und strengere Segmentierungsbewertung, trotzdem bleibt das ein aktiver Entwicklungsbereich.
+Das kann bei variablen Lasten oder unvollständig erfassten Zyklen passieren. Ab **0.7.6** werden neue Muster gegen bestehende Geräte-Prototypen derselben Phase verglichen, statt eine physische Geräteidentität nur aus einem exakten Fingerprint abzuleiten. **0.7.7/0.7.8** filtern zusätzlich negative Delta-/Ausschalt-Artefakte und reparieren betroffene automatische Registry-Einträge beim Start.
+
+Wenn trotzdem viele Einmal-Patterns entstehen, sind besonders **Events**, **Lernen** und der Debug-/Training-Log interessant.
 
 ### Web-UI wirkt nach Update alt
 
@@ -314,7 +321,9 @@ Unter Windows:
 
 ## Projektstatus
 
-Version **0.7.0** wurde laut Release-Dokumentation mit dem vollständigen `ha-nilm-detector`-Testlauf validiert (`35 passed`). Das Projekt bleibt trotzdem Beta, weil reale Häuser und Lastprofile deutlich vielfältiger sind als synthetische Tests.
+Aktuelle Version: **0.7.8 (BETA)**.
+
+Die aktuelle Test-Suite umfasst **65 Tests**. Die letzten Änderungen härten insbesondere den Lernpfad gegen instabile Baselines, negative Delta-/Ausschalt-Artefakte und fehlerhafte Provisional-Testfälle ab. Das Projekt bleibt trotzdem Beta, weil reale Häuser, überlagerte Verbraucher und variable Lastprofile deutlich vielfältiger sind als synthetische Tests.
 
 ## Mitmachen
 
