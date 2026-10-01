@@ -7,13 +7,13 @@
 # Release 0.7.0 (BETA)
 
 ## Store Kurztext
-- **Lokale LLM-gestützte NILM-Bewertung**: unsichere, technisch sauber segmentierte Events können optional von einem lokal laufenden Ollama-Modell geprüft werden. Klassische Pattern-/Shape-/ML-Logik bleibt der primäre Pfad.
+- **Standalone KI-Erkennung**: die komplette NILM-Klassifikation läuft im Add-on selbst – mit Pattern-/Shape-Matching, lokalem RandomForest und neuem Attention-Klassifikator.
 
 ## Highlights
-- Strukturierte LLM-Ausgabe über JSON Schema
-- nur lokale/private Modell-Endpunkte zulässig
-- kompakte Eventmerkmale statt vollständiger Home-Assistant-Rohdaten
-- konservatives Override-Gating gegen Fehlklassifikationen
+- kein Ollama, kein externer KI-Server und keine Cloud-API erforderlich
+- Attention-artige Query/Key/Value-Bewertung gelernter Muster
+- Softmax-Gewichtung mehrerer ähnlicher Kandidaten
+- konservative Fusion mit bestehenden Pattern-, Shape- und ML-Scores
 - reproduzierbarer Containerstart ohne Runtime-Paketinstallation
 - korrekte Release-Version im Container
 - Repository-Cleanup alter Entwicklungshelfer
