@@ -413,6 +413,7 @@ class SQLiteStore:
             self._maybe_backfill_inrush_runtime_schema()
             self._maybe_recluster_device_registry_v2()
             self._maybe_recluster_device_registry_v3()
+            self._maybe_repair_device_registry_v4()
             self._maybe_repair_pattern_timestamps()
             self.cleanup_old_data()
             self._log_startup_diagnostics(stage="post-init")
@@ -800,6 +801,99 @@ class SQLiteStore:
             logger.info("Reclustered automatic device registry with prototype similarity: %s", details)
         except Exception as e:
             logger.warning("Device registry v3 recluster failed: %s", e)
+
+    def _maybe_repair_device_registry_v4(self) -> None:
+        """Repair invalid automatic device prototypes found in real-world data.
+
+        Early registry versions could train falling edges because the training
+        guard looked at aggregate phase power before baseline-corrected delta.
+        Those patterns are useful as historical events, but they must not act as
+        physical-device prototypes.  User-labelled patterns/devices are never
+        touched by this repair.
+        """
+        if not self._patterns_conn:
+            return
+        event_key = "physical_device_registry_repair:v4"
+        if self._migration_applied(self._patterns_conn, event_key):
+            return
+        try:
+            detached = 0
+            removed_devices = 0
+            repaired_ranges = 0
+            with self._patterns_conn:
+                # Repair min/max ranges atomically. SQLite evaluates both MIN/MAX
+                # expressions from the old row, so no temporary column is needed.
+                cur = self._patterns_conn.execute(
+                    """
+                    UPDATE devices
+                    SET baseline_range_min_w = MIN(baseline_range_min_w, baseline_range_max_w),
+                        baseline_range_max_w = MAX(baseline_range_min_w, baseline_range_max_w)
+                    WHERE baseline_range_min_w IS NOT NULL
+                      AND baseline_range_max_w IS NOT NULL
+                      AND baseline_range_min_w > baseline_range_max_w
+                    """
+                )
+                repaired_ranges = int(cur.rowcount or 0)
+
+                invalid_rows = self._patterns_conn.execute(
+                    """
+                    SELECT p.id, p.device_id
+                    FROM learned_patterns p
+                    LEFT JOIN devices d ON d.device_id = p.device_id
+                    WHERE p.device_id IS NOT NULL
+                      AND p.delta_avg_power_w IS NOT NULL
+                      AND p.delta_avg_power_w <= 0.0
+                      AND (p.user_label IS NULL OR TRIM(p.user_label) = '')
+                      AND COALESCE(d.confirmed, 0) = 0
+                      AND (d.user_label IS NULL OR TRIM(d.user_label) = '')
+                    """
+                ).fetchall()
+                invalid_pattern_ids = [int(row[0]) for row in invalid_rows if int(row[0] or 0) > 0]
+
+                if invalid_pattern_ids:
+                    marks = ",".join(["?"] * len(invalid_pattern_ids))
+                    cur = self._patterns_conn.execute(
+                        f"""
+                        UPDATE learned_patterns
+                        SET device_id = NULL,
+                            status = CASE WHEN status = 'active' THEN 'provisional' ELSE status END,
+                            updated_at = ?
+                        WHERE id IN ({marks})
+                        """,
+                        (datetime.now().isoformat(), *invalid_pattern_ids),
+                    )
+                    detached = int(cur.rowcount or 0)
+                    if self._table_exists(self._patterns_conn, "patterns"):
+                        self._patterns_conn.execute(
+                            f"UPDATE patterns SET device_id = NULL, status = CASE WHEN status = 'active' THEN 'provisional' ELSE status END WHERE pattern_id IN ({marks})",
+                            tuple(invalid_pattern_ids),
+                        )
+                    if self._table_exists(self._patterns_conn, "device_cycles"):
+                        self._patterns_conn.execute(
+                            f"DELETE FROM device_cycles WHERE pattern_id IN ({marks})",
+                            tuple(invalid_pattern_ids),
+                        )
+
+                cur = self._patterns_conn.execute(
+                    """
+                    DELETE FROM devices
+                    WHERE confirmed = 0
+                      AND (user_label IS NULL OR TRIM(user_label) = '')
+                      AND NOT EXISTS (
+                          SELECT 1 FROM learned_patterns p WHERE p.device_id = devices.device_id
+                      )
+                    """
+                )
+                removed_devices = int(cur.rowcount or 0)
+
+            details = (
+                f"detached_non_positive_delta={detached} "
+                f"removed_orphan_devices={removed_devices} repaired_baseline_ranges={repaired_ranges}"
+            )
+            self._record_migration(self._patterns_conn, event_key, details)
+            logger.info("Repaired device registry v4: %s", details)
+        except Exception as e:
+            logger.warning("Device registry v4 repair failed: %s", e)
 
     def _maybe_backfill_patterns_mirror(self) -> None:
         if not self._patterns_conn:
@@ -3916,8 +4010,8 @@ class SQLiteStore:
                     """,
                     (
                         device_subclass,
-                        baseline_before_w_avg,
-                        baseline_after_w_avg,
+                        min(baseline_before_w_avg, baseline_after_w_avg),
+                        max(baseline_before_w_avg, baseline_after_w_avg),
                         now,
                         int(device_id),
                     ),
@@ -5096,6 +5190,12 @@ class SQLiteStore:
         if not self._patterns_conn or not self._table_exists(self._patterns_conn, "learned_patterns"):
             return (None, 0.0)
 
+        # Falling edges / baseline contamination are not physical ON-cycle
+        # prototypes and must never pull a new event into an existing device.
+        candidate_delta = cycle.get("delta_avg_power_w")
+        if candidate_delta is not None and self._safe_float(candidate_delta, 0.0) <= 0.0:
+            return (None, 0.0)
+
         rows = self._patterns_conn.execute(
             """
             SELECT p.device_id, p.phase,
@@ -5114,6 +5214,7 @@ class SQLiteStore:
               AND d.active = 1
               AND d.confirmed = 0
               AND (d.user_label IS NULL OR TRIM(d.user_label) = '')
+              AND (p.delta_avg_power_w IS NULL OR p.delta_avg_power_w > 0.0)
             ORDER BY COALESCE(p.seen_count, 1) DESC, p.id ASC
             LIMIT 1500
             """,
@@ -8890,10 +8991,22 @@ class SQLiteStore:
                             """,
                             (
                                 device_subclass,
-                                float(cycle.get("baseline_before_w", 0.0) or 0.0),
-                                float(cycle.get("baseline_before_w", 0.0) or 0.0),
-                                float(cycle.get("baseline_after_w", cycle.get("baseline_before_w", 0.0)) or 0.0),
-                                float(cycle.get("baseline_after_w", cycle.get("baseline_before_w", 0.0)) or 0.0),
+                                min(
+                                    float(cycle.get("baseline_before_w", 0.0) or 0.0),
+                                    float(cycle.get("baseline_after_w", cycle.get("baseline_before_w", 0.0)) or 0.0),
+                                ),
+                                min(
+                                    float(cycle.get("baseline_before_w", 0.0) or 0.0),
+                                    float(cycle.get("baseline_after_w", cycle.get("baseline_before_w", 0.0)) or 0.0),
+                                ),
+                                max(
+                                    float(cycle.get("baseline_before_w", 0.0) or 0.0),
+                                    float(cycle.get("baseline_after_w", cycle.get("baseline_before_w", 0.0)) or 0.0),
+                                ),
+                                max(
+                                    float(cycle.get("baseline_before_w", 0.0) or 0.0),
+                                    float(cycle.get("baseline_after_w", cycle.get("baseline_before_w", 0.0)) or 0.0),
+                                ),
                                 now,
                                 int(device_id),
                             ),
