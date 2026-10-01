@@ -370,65 +370,62 @@ def build_waveform_summary(cycle: Dict[str, Any]) -> Dict[str, Any]:
 
 
 def infer_unknown_subclass(cycle: Dict[str, Any]) -> Tuple[str, List[str]]:
+    """Classify ambiguous events by electrical behaviour before appliance identity."""
     features = dict(cycle.get("derived_features") or {})
     duration_s = safe_float(cycle.get("duration_s"))
     avg_power = safe_float(cycle.get("avg_power_w"))
-    inrush_ratio = safe_float(features.get("inrush_ratio", cycle.get("inrush_ratio", 0.0)))
+    inrush_ratio = safe_float(features.get("inrush_ratio", cycle.get("inrush_ratio", cycle.get("peak_to_avg_ratio", 0.0))))
     normalized_variance = safe_float(features.get("normalized_variance"))
+    has_motor = bool(cycle.get("has_motor_pattern", False))
+    has_heating = bool(cycle.get("has_heating_pattern", False))
     reasons: List[str] = []
 
+    # Behaviour class first. A multistage profile is useful information, but not
+    # enough by itself to call the device a washer/dishwasher/etc.
     if bool(features.get("has_multi_stage_shape")):
         reasons.append("multiple_plateaus_detected")
-        return ("unknown_multistage", reasons)
-    if avg_power < 70.0 and duration_s >= 300.0 and normalized_variance <= 3.5 and inrush_ratio < 1.15:
-        reasons.append("always_on_very_low_power")
-        return ("always_on_low_power", reasons)
-    if avg_power < 180.0 and duration_s >= 120.0 and normalized_variance <= 5.0 and inrush_ratio < 1.20:
-        reasons.append("stable_low_power_psu_like")
-        return ("psu_constant_load", reasons)
-    if avg_power < 240.0 and duration_s >= 90.0 and normalized_variance <= 7.0 and inrush_ratio < 1.25:
-        reasons.append("stable_low_power_cluster")
-        return ("electronics_cluster", reasons)
-    if avg_power < 120.0 and duration_s >= 120.0 and normalized_variance <= 6.0:
-        reasons.append("stable_low_power")
-        return ("constant_low_power", reasons)
-    if 120.0 <= avg_power < 450.0 and duration_s >= 90.0 and normalized_variance <= 8.0:
-        reasons.append("stable_medium_power")
-        return ("constant_medium_power", reasons)
-    if inrush_ratio >= 1.7:
-        reasons.append("high_inrush_ratio")
-        if avg_power <= 400.0:
-            return ("compressor_low_power", reasons)
-        return ("compressor_high_power", reasons)
-    if bool(cycle.get("has_motor_pattern", False)):
+        return ("multistate_appliance", reasons)
+
+    # Motor evidence must be evaluated before low-power electronics. Previously
+    # a stable low-power compressor could be swallowed by electronics_cluster.
+    if has_motor:
+        if (
+            40.0 <= avg_power <= 400.0
+            and 90.0 <= duration_s <= 5400.0
+            and inrush_ratio >= 1.15
+            and normalized_variance <= 0.18
+        ):
+            reasons.append("cyclic_low_power_motor_signature")
+            return ("refrigeration_candidate", reasons)
         reasons.append("motor_like_shape")
-        if avg_power <= 220.0 and inrush_ratio < 1.6:
-            return ("fan_small", reasons)
-        if avg_power <= 450.0 and inrush_ratio < 1.7:
-            return ("pump_small", reasons)
-        if normalized_variance <= 9.0:
-            return ("pump_constant", reasons)
-        return ("pump_variable", reasons)
-    if bool(cycle.get("has_heating_pattern", False)) and normalized_variance <= 6.0:
-        reasons.append("resistive_heating_profile")
-        return ("heater_resistive", reasons)
-    if bool(cycle.get("has_heating_pattern", False)) and bool(features.get("has_multi_stage_shape")):
-        reasons.append("multistage_heating_profile")
-        return ("multi_stage_heating", reasons)
+        if normalized_variance >= 0.12:
+            return ("variable_motor_load", reasons)
+        return ("motor_load", reasons)
+
+    if has_heating:
+        reasons.append("heating_signature")
+        if normalized_variance <= 0.10:
+            return ("resistive_heater", reasons)
+        return ("heating_load", reasons)
+
+    if avg_power < 70.0 and duration_s >= 300.0 and normalized_variance <= 0.035 and inrush_ratio < 1.15:
+        reasons.append("permanent_very_low_power")
+        return ("permanent_low_power_load", reasons)
+    if avg_power < 250.0 and duration_s >= 300.0 and normalized_variance <= 0.08 and inrush_ratio < 1.25:
+        reasons.append("stable_low_power_non_motor")
+        return ("low_power_electronics", reasons)
+    if normalized_variance <= 0.06 and duration_s >= 20.0:
+        reasons.append("stable_on_off_state")
+        return ("steady_on_off_load", reasons)
     if duration_s <= 20.0:
         reasons.append("short_runtime")
-        return ("unknown_short_pulse", reasons)
-    if duration_s >= 1800.0 and avg_power <= 160.0:
-        reasons.append("long_low_power_runtime")
-        return ("unknown_low_power_long", reasons)
-    if normalized_variance >= 12.0 or not bool(features.get("has_flat_plateau", False)):
-        reasons.append("variable_power_shape")
-        return ("unknown_variable_load", reasons)
-    if bool(features.get("has_flat_plateau", False)):
-        reasons.append("stable_plateau_without_device_match")
-        return ("unknown_cluster", reasons)
-    reasons.append("fallback_unknown")
-    return ("unknown_cluster", reasons)
+        return ("short_pulse_load", reasons)
+    if normalized_variance >= 0.12:
+        reasons.append("continuously_variable_shape")
+        return ("variable_load", reasons)
+
+    reasons.append("insufficient_device_specific_evidence")
+    return ("unknown_load", reasons)
 
 
 def score_shape_match(cycle: Dict[str, Any], patterns: Sequence[Dict[str, Any]]) -> ShapeMatchScore:
