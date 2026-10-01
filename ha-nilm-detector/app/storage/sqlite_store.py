@@ -1477,7 +1477,7 @@ class SQLiteStore:
                            COALESCE(shape_confidence, 0.0),
                            COALESCE(temporal_confidence, 0.0),
                            COALESCE(final_confidence, 0.0),
-                           COALESCE(segmentation_confidence, 0.0),
+                           COALESCE(derived_features_json, '{}'),
                            COALESCE(reason_text, ''),
                            COALESCE(last_seen, updated_at)
                     FROM learned_patterns
@@ -1542,7 +1542,20 @@ class SQLiteStore:
                 shape_conf = weighted(10)
                 recurrence_conf = weighted(11)
                 class_conf = weighted(12) if patterns else float(r[8] or 0.0)
-                segmentation_conf = weighted(13)
+                segmentation_conf = 0.0
+                if patterns:
+                    seg_sum = 0.0
+                    seg_weight = 0
+                    for p in patterns:
+                        weight = max(int(p[6] or 1), 1)
+                        try:
+                            derived = json.loads(str(p[13] or "{}"))
+                            seg_value = float(derived.get("segmentation_confidence", 0.0) or 0.0)
+                        except Exception:
+                            seg_value = 0.0
+                        seg_sum += seg_value * weight
+                        seg_weight += weight
+                    segmentation_conf = seg_sum / float(max(seg_weight, 1))
 
                 seen_total = sum(max(int(p[6] or 0), 0) for p in patterns)
                 if seen_total <= 0:
