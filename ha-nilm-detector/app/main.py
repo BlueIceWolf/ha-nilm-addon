@@ -1,4 +1,5 @@
 """Entry point wiring together the modular NILM detection stack."""
+import math
 import os
 import signal
 import sys
