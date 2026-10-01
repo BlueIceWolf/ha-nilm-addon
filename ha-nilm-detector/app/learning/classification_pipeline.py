@@ -216,7 +216,7 @@ def build_waveform_summary(cycle: Dict[str, Any]) -> Dict[str, Any]:
     rise_rate = safe_float(cycle.get("rise_rate_w_per_s"))
     fall_rate = safe_float(cycle.get("fall_rate_w_per_s"))
     inrush_ratio = peak_power / max(avg_power, EPSILON)
-    normalized_variance = variance / max(avg_power, EPSILON)
+    normalized_variance = variance / max(avg_power * avg_power, EPSILON)
     plateau_stability = _plateau_stability(delta_points or waveform)
     startup_sharpness = rise_rate / max(avg_power, EPSILON)
     shutdown_sharpness = fall_rate / max(avg_power, EPSILON)
@@ -584,109 +584,97 @@ def score_temporal_context(cycle: Dict[str, Any], patterns: Sequence[Dict[str, A
 
 
 def generate_heuristic_candidates(cycle: Dict[str, Any], temporal: TemporalContextScore) -> List[Dict[str, Any]]:
+    """Generate conservative behaviour-first candidates.
+
+    Low-rate active-power data is strong at identifying operating behaviour and
+    recurring signatures, but often insufficient for a unique appliance name.
+    """
     features = dict(cycle.get("derived_features") or {})
     duration_s = safe_float(cycle.get("duration_s"))
     avg_power = safe_float(cycle.get("avg_power_w"))
-    peak_power = safe_float(cycle.get("peak_power_w"))
     inrush_ratio = safe_float(features.get("inrush_ratio", cycle.get("inrush_ratio", 0.0)))
-    plateau_stability = safe_float(features.get("plateau_stability"))
     has_flat_plateau = bool(features.get("has_flat_plateau", False))
+    has_multi_stage = bool(features.get("has_multi_stage_shape", False))
     truncated = bool(cycle.get("truncated_start", False) or cycle.get("truncated_end", False))
     segmentation_confidence = safe_float(cycle.get("segmentation_confidence", features.get("segmentation_confidence", 0.0)))
     waveform_completeness = safe_float(cycle.get("waveform_completeness_score", features.get("waveform_completeness_score", 0.0)))
     normalized_variance = safe_float(features.get("normalized_variance", cycle.get("normalized_variance", 0.0)))
     has_motor_pattern = bool(cycle.get("has_motor_pattern", False))
+    has_heating_pattern = bool(cycle.get("has_heating_pattern", False))
     motor_evidence = has_motor_pattern or inrush_ratio >= 1.25
     candidates: List[Dict[str, Any]] = []
 
-    if has_flat_plateau and normalized_variance <= 8.0 and duration_s >= 180.0 and not motor_evidence:
+    if has_multi_stage:
         candidates.append({
-            "label": "electronics_cluster" if avg_power <= 220.0 else "constant_load_pattern",
-            "score": 0.62 if segmentation_confidence >= 0.4 else 0.52,
+            "label": "multistate_appliance",
+            "score": 0.68 if duration_s >= 600.0 else 0.58,
             "source": "heuristic",
-            "reasons": ["stable_plateau_detected", f"normalized_variance={normalized_variance:.2f}", f"duration_s={duration_s:.1f}"],
+            "reasons": ["multiple_operating_states_detected"],
         })
 
-    if truncated and motor_evidence and duration_s <= 90.0:
+    if has_heating_pattern:
         candidates.append({
-            "label": "compressor_candidate" if avg_power <= 700.0 else "motor_candidate",
-            "score": 0.66,
+            "label": "resistive_heater" if normalized_variance <= 0.10 else "heating_load",
+            "score": 0.70 if normalized_variance <= 0.10 else 0.58,
             "source": "heuristic",
-            "reasons": ["startup-only event", "full-cycle evidence missing", "segmentation incomplete"],
+            "reasons": ["heating_signature", f"relative_variance={normalized_variance:.3f}"],
         })
 
-    if segmentation_confidence < 0.55 and motor_evidence and avg_power <= 900.0:
-        candidates.append({
-            "label": "pump_candidate" if has_flat_plateau else "motor_candidate",
-            "score": 0.58,
-            "source": "heuristic",
-            "reasons": ["segmentation quality gate", f"segmentation_confidence={segmentation_confidence:.2f}"],
-        })
-
-    if motor_evidence and duration_s <= 45.0 and not has_flat_plateau:
-        candidates.append({
-            "label": "compressor_candidate",
-            "score": 0.54,
-            "source": "heuristic",
-            "reasons": ["short_high_inrush_startup_without_plateau"],
-        })
-
-    if motor_evidence and has_flat_plateau and duration_s >= 90.0 and segmentation_confidence >= 0.55 and waveform_completeness >= 0.50:
-        if avg_power <= 550.0:
-            if inrush_ratio < 1.30:
-                label = "fan_small" if avg_power <= 180.0 else "pump_small"
-            else:
-                label = "compressor_small" if temporal.occurrence_count >= 4 else "small_pump_motor"
+    if motor_evidence:
+        if truncated and duration_s <= 90.0:
+            candidates.append({
+                "label": "motor_start_candidate",
+                "score": 0.58,
+                "source": "heuristic",
+                "reasons": ["motor_start_visible", "full_cycle_missing"],
+            })
+        elif (
+            40.0 <= avg_power <= 400.0
+            and 90.0 <= duration_s <= 5400.0
+            and temporal.occurrence_count >= 3
+            and temporal.score >= 0.40
+            and has_flat_plateau
+        ):
+            candidates.append({
+                "label": "refrigeration_candidate",
+                "score": min(0.76, 0.58 + min(temporal.occurrence_count, 9) * 0.02),
+                "source": "temporal_match",
+                "reasons": [
+                    "recurring_low_power_motor_cycle",
+                    f"occurrence_count={temporal.occurrence_count}",
+                    f"inrush_ratio={inrush_ratio:.2f}",
+                ],
+            })
         else:
-            label = "compressor_large" if temporal.occurrence_count >= 3 else "large_pump_motor"
-        candidates.append({
-            "label": label,
-            "score": 0.60 if "compressor" in label else 0.57,
-            "source": "heuristic",
-            "reasons": ["motor_like_plateau", f"inrush_ratio={inrush_ratio:.2f}", f"plateau_stability={plateau_stability:.2f}"],
-        })
+            candidates.append({
+                "label": "variable_motor_load" if normalized_variance >= 0.12 else "motor_load",
+                "score": 0.62 if has_motor_pattern else 0.54,
+                "source": "heuristic",
+                "reasons": ["motor_evidence", f"relative_variance={normalized_variance:.3f}"],
+            })
 
-    if (
-        avg_power >= 80.0
-        and avg_power <= 420.0
-        and duration_s >= 240.0
-        and duration_s <= 3600.0
-        and has_flat_plateau
-        and temporal.occurrence_count >= 5
-        and temporal.score >= 0.55
-        and not truncated
-        and segmentation_confidence >= 0.7
-    ):
-        candidates.append({
-            "label": "fridge",
-            "score": 0.72,
-            "source": "temporal_match",
-            "reasons": ["recurring_compressor_plateau", f"occurrence_count={temporal.occurrence_count}"],
-        })
-
-    if (
-        avg_power >= 80.0
-        and avg_power <= 420.0
-        and has_flat_plateau
-        and temporal.occurrence_count >= 3
-        and temporal.score >= 0.45
-        and segmentation_confidence < 0.7
-    ):
-        candidates.append({
-            "label": "fridge_candidate",
-            "score": 0.60,
-            "source": "temporal_match",
-            "reasons": ["full-cycle evidence missing", "segmentation incomplete"],
-        })
-
-    if truncated and any(item["label"] == "fridge" for item in candidates):
-        candidates = [item for item in candidates if item["label"] != "fridge"]
-        candidates.append({
-            "label": "compressor_candidate",
-            "score": 0.48,
-            "source": "heuristic",
-            "reasons": ["downgraded_from_fridge_due_to_truncated_window"],
-        })
+    if not motor_evidence and not has_heating_pattern:
+        if avg_power <= 250.0 and duration_s >= 300.0 and normalized_variance <= 0.08:
+            candidates.append({
+                "label": "low_power_electronics",
+                "score": 0.58,
+                "source": "heuristic",
+                "reasons": ["stable_low_power_non_motor"],
+            })
+        elif has_flat_plateau and normalized_variance <= 0.06 and duration_s >= 20.0:
+            candidates.append({
+                "label": "steady_on_off_load",
+                "score": 0.56,
+                "source": "heuristic",
+                "reasons": ["stable_on_off_state"],
+            })
+        elif normalized_variance >= 0.12:
+            candidates.append({
+                "label": "variable_load",
+                "score": 0.52,
+                "source": "heuristic",
+                "reasons": ["continuously_variable_shape"],
+            })
 
     unknown_label, unknown_reasons = infer_unknown_subclass(cycle)
     candidates.append({
@@ -750,23 +738,28 @@ def resolve_final_decision(
 
     if learning_tier != "stable" or waveform_completeness < 0.5:
         label_source = "heuristic"
-        if label in {"fridge", "compressor_small", "compressor_large", "small_pump_motor", "large_pump_motor", "constant_load_pattern"}:
-            if "fridge" in label:
-                label = "fridge_candidate"
-            elif "pump" in label:
-                label = "pump_candidate"
-            elif label == "constant_load_pattern" and learning_tier == "blocked":
-                label = "unknown_cluster"
-            else:
-                label = "compressor_candidate" if motor_evidence else "unknown_cluster"
-            reasons.append("full-cycle evidence missing")
-            reasons.append("segmentation incomplete")
+        # Weak segmentation may reduce identity confidence, but must not invent a
+        # more specific appliance. Fall back to electrical behaviour instead.
+        specific_to_generic = {
+            "fridge": "refrigeration_candidate",
+            "freezer": "refrigeration_candidate",
+            "compressor_small": "motor_load",
+            "compressor_large": "motor_load",
+            "small_pump_motor": "motor_load",
+            "large_pump_motor": "motor_load",
+            "pump_candidate": "motor_load",
+            "compressor_candidate": "motor_start_candidate",
+            "constant_load_pattern": "steady_on_off_load",
+        }
+        if label in specific_to_generic:
+            label = specific_to_generic[label]
+            reasons.append("device_identity_downgraded_due_to_incomplete_cycle")
 
-    if label == "fridge" and temporal.occurrence_count < 5:
-        label = "fridge_candidate"
+    if label in {"fridge", "freezer"} and temporal.occurrence_count < 5:
+        label = "refrigeration_candidate"
         final_confidence = min(final_confidence, 0.58)
         label_source = "hybrid"
-        reasons.append("downgraded_from_fridge_due_to_weak_recurrence")
+        reasons.append("exact_refrigeration_identity_requires_more_recurrence")
 
     if bool(cycle.get("truncated_start", False) or cycle.get("truncated_end", False)):
         final_confidence = max(0.2, final_confidence * 0.78)
