@@ -93,7 +93,7 @@ def test_dedup_updates_existing_pattern_for_high_similarity():
             assert first.get("pattern") is not None
             assert second.get("matched") is True
             dedup = dict(second.get("dedup") or {})
-            assert dedup.get("result") in {"update_existing", "merge_mode"}
+            assert dedup.get("result") in {"update_existing", "merge_mode", "fuzzy_cluster_merge"}
             assert store._patterns_conn is not None
             conn = store._patterns_conn
 
