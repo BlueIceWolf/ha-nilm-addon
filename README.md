@@ -133,6 +133,52 @@ Muster mit schwächerer Segmentierung können zunächst als **provisional** gesa
 NILM ist keine direkte Gerätemessung. Zwei Geräte mit sehr ähnlichen Lastprofilen können deshalb verwechselt werden.
 
 
+## Lernpipeline 2.0
+
+Ab **0.7.0** arbeitet das Add-on nicht mehr nur mit einzelnen Heuristiken, sondern mit einer mehrstufigen lokalen Lernpipeline:
+
+```text
+Leistungssensor
+      ↓
+Adaptive Segmentierung
+      ↓
+Learning Filter v2
+      ↓
+Feature Vector v2
+      ↓
+Pattern + Shape + Temporal
+      ↓
+RandomForest Champion/Challenger
+      ↓
+Attention-Klassifikator
+      ↓
+Explainable Ensemble
+      ↓
+Drift Monitor
+      ↓
+Pattern Update / Provisional Learning
+```
+
+### Learning Filter v2
+
+Nur technisch brauchbare Events dürfen das Modell verändern. Unvollständige Start-/Endbereiche, zu wenige Samples, instabile Baselines, schwache Segmentierung und wahrscheinliche Mehrgeräte-Überlagerungen werden blockiert oder nur provisorisch gelernt.
+
+### Feature Vector v2
+
+Jedes Event wird in einen einheitlichen Merkmalsvektor überführt. Darin stecken unter anderem Leistung, Peak, Laufzeit, Energie, Inrush, Varianz, Rampen, Substates, Lastfaktor, Baseline-Delta, Segmentierungsqualität, Waveform-Vollständigkeit, Overlap, Formmerkmale, Wiederholungszeit, Tageszeit und Phase.
+
+### Champion / Challenger
+
+Das lokale RandomForest-Modell testet mehrere Kandidaten per Cross-Validation. Ein Challenger wird nur übernommen, wenn seine Balanced Accuracy messbar besser ist als die des aktuellen Standardmodells.
+
+### Drift Monitor
+
+Wenn ein bekanntes Gerät sein Profil langsam verändert, wird es nicht sofort als neues Gerät behandelt. Bei Drift wird das bestehende Pattern vorsichtiger aktualisiert, damit Alterung, saisonale Änderungen oder veränderte Betriebsbedingungen nicht zu Pattern-Wildwuchs führen.
+
+### Explainable Ensemble
+
+Pattern-, Shape-, RandomForest-, Attention-, Temporal- und Rule-Scores werden gemeinsam bewertet. Starke Übereinstimmung erhöht das Vertrauen; widersprüchliche Modelle führen eher zu `unknown` oder einer vorsichtigen Entscheidung.
+
 ## Eingebaute KI-Klassifikation
 
 Ab **0.7.0** läuft die zusätzliche KI-Bewertung vollständig im Add-on. Es wird **kein Ollama, kein externer KI-Server und keine Cloud-API** benötigt.
