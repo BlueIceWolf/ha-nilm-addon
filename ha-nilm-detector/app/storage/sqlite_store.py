@@ -6296,7 +6296,7 @@ class SQLiteStore:
             "explain": {
                 **dict(matcher_result.explain),
                 "decision_reason": decision_reason,
-                "local_llm": (
+                "attention": (
                     {
                         "label": llm_result.label,
                         "confidence": round(float(llm_result.confidence), 4),
@@ -6304,6 +6304,16 @@ class SQLiteStore:
                         "evidence": llm_result.evidence,
                     }
                     if llm_result
+                    else None
+                ),
+                "ensemble": (
+                    {
+                        "label": ensemble_result.label,
+                        "confidence": round(float(ensemble_result.confidence), 4),
+                        "agreement": round(float(ensemble_result.agreement), 4),
+                        "ranking": ensemble_result.ranking,
+                    }
+                    if ensemble_result
                     else None
                 ),
                 "candidate_labels": list(cycle.get("candidate_labels", [])),
@@ -6335,6 +6345,7 @@ class SQLiteStore:
                         "confidence": round(float(ml_result.confidence), 4),
                         "source": ml_result.source,
                         "top_n": ml_result.top_n,
+                        "model_info": ml_result.model_info,
                     }
                     if ml_result
                     else None
