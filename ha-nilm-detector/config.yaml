@@ -39,6 +39,13 @@ options:
     max_gap_s: 6.0
     pattern_match_threshold: 0.45
     ml_confidence_threshold: 0.60
+    local_llm:
+      enabled: false
+      url: ""
+      model: ""
+      timeout_seconds: 20
+      min_confidence: 0.65
+      review_below_confidence: 0.78
     segmentation_threshold: 0.40
     stable_segmentation_threshold: 0.70
     min_samples_for_learning: 4
@@ -92,6 +99,13 @@ schema:
     max_gap_s: float(1,120)?
     pattern_match_threshold: float(0.1,0.95)?
     ml_confidence_threshold: float(0.1,0.99)?
+    local_llm:
+      enabled: bool?
+      url: str?
+      model: str?
+      timeout_seconds: int(2,120)?
+      min_confidence: float(0.0,1.0)?
+      review_below_confidence: float(0.0,1.0)?
     segmentation_threshold: float(0.1,0.95)?
     stable_segmentation_threshold: float(0.1,0.99)?
     min_samples_for_learning: int(3,120)?
