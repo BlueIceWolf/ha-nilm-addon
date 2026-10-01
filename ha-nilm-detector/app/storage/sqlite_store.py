@@ -6160,6 +6160,62 @@ class SQLiteStore:
                             """
                         )
 
+                    # Garbage-collect one-off, unconfirmed learning noise. A pattern
+                    # must be both stale and seen only once; confirmed/user-named
+                    # knowledge is never removed automatically.
+                    stale_pattern_cutoff = (datetime.now() - timedelta(days=14)).isoformat()
+                    if self._table_exists(self._patterns_conn, "learned_patterns"):
+                        stale_ids = [
+                            int(row[0])
+                            for row in self._patterns_conn.execute(
+                                """
+                                SELECT id
+                                FROM learned_patterns
+                                WHERE status = 'provisional'
+                                  AND COALESCE(is_confirmed, 0) = 0
+                                  AND (user_label IS NULL OR TRIM(user_label) = '')
+                                  AND COALESCE(seen_count, 0) <= 1
+                                  AND COALESCE(last_seen, updated_at, created_at) < ?
+                                LIMIT 2000
+                                """,
+                                (stale_pattern_cutoff,),
+                            ).fetchall()
+                        ]
+                        if stale_ids:
+                            marks = ",".join(["?"] * len(stale_ids))
+                            for child_table, child_col in (
+                                ("pattern_history", "pattern_id"),
+                                ("pattern_features", "pattern_id"),
+                                ("device_cycles", "pattern_id"),
+                            ):
+                                if self._table_exists(self._patterns_conn, child_table):
+                                    self._patterns_conn.execute(
+                                        f"DELETE FROM {child_table} WHERE {child_col} IN ({marks})",
+                                        tuple(stale_ids),
+                                    )
+                            self._patterns_conn.execute(
+                                f"DELETE FROM learned_patterns WHERE id IN ({marks})",
+                                tuple(stale_ids),
+                            )
+                            logger.info("Garbage-collected %s stale one-off provisional patterns", len(stale_ids))
+
+                    # Remove orphan auto-created device rows after the same grace
+                    # period. User-confirmed devices remain as stable registry entries.
+                    if self._table_exists(self._patterns_conn, "devices") and self._table_exists(self._patterns_conn, "learned_patterns"):
+                        self._patterns_conn.execute(
+                            """
+                            DELETE FROM devices
+                            WHERE confirmed = 0
+                              AND (user_label IS NULL OR TRIM(user_label) = '')
+                              AND updated_at < ?
+                              AND NOT EXISTS (
+                                  SELECT 1 FROM learned_patterns p
+                                  WHERE p.device_id = devices.device_id
+                              )
+                            """,
+                            (stale_pattern_cutoff,),
+                        )
+
                 # Checkpoint stale WAL pages and let incremental-auto-vacuum databases
                 # return free pages without a blocking full VACUUM.
                 try:
