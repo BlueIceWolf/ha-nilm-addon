@@ -1,5 +1,5 @@
 from app.learning.attention_classifier import LocalAttentionClassifier
-from app.learning.local_llm import LocalLLMClassifier
+from app.learning.attention_reviewer import AttentionReviewer
 
 
 def _pattern(label, avg, peak, duration, phase="L1", seen=5):
@@ -69,8 +69,8 @@ def test_attention_respects_phase():
     assert result.label == "right_phase"
 
 
-def test_compatibility_reviewer_needs_no_endpoint():
-    reviewer = LocalLLMClassifier(enabled=True)
+def test_attention_reviewer_needs_no_endpoint():
+    reviewer = AttentionReviewer(enabled=True)
 
     assert reviewer.ready is True
     assert reviewer.should_review(current_label="unknown", current_confidence=0.2) is True
