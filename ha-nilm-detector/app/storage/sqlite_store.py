@@ -4432,7 +4432,7 @@ class SQLiteStore:
     @staticmethod
     def _device_behavior_family(label: str) -> str:
         """Collapse classifier labels into broad electrical behaviour families."""
-        clean = SQLiteStore._normalize_pattern_name(label)
+        clean = SQLiteStore._normalize_pattern_name(label).replace(" ", "_")
         motor = {
             "motor_load", "variable_motor_load", "motor_start_candidate",
             "refrigeration_candidate", "pump_candidate", "motor_candidate",
