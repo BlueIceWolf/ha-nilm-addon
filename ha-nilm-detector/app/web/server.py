@@ -1467,37 +1467,16 @@ async function exportLlmReviewBundle() {
   }
 }
 
-async function downloadDatabase(kind) {
-  try {
-    const endpoint = kind === 'patterns'
-      ? 'api/debug/download-patterns-db'
-      : 'api/debug/download-live-db';
-    const response = await fetch(apiPath(endpoint));
-    if (!response.ok) {
-      let detail = `HTTP ${response.status}`;
-      try {
-        const payload = await response.json();
-        detail = payload.error || detail;
-      } catch (_) {}
-      throw new Error(detail);
-    }
-
-    const blob = await response.blob();
-    const disposition = response.headers.get('Content-Disposition') || '';
-    const match = disposition.match(/filename=\"?([^\";]+)\"?/i);
-    const filename = match ? match[1] : (kind === 'patterns' ? 'nilm_patterns.sqlite3' : 'nilm_live.sqlite3');
-    const url = URL.createObjectURL(blob);
-    const link = document.createElement('a');
-    link.href = url;
-    link.download = filename;
-    document.body.appendChild(link);
-    link.click();
-    document.body.removeChild(link);
-    setTimeout(() => URL.revokeObjectURL(url), 1000);
-  } catch (err) {
-    alert(t('dbDownloadFailed', { err }));
-    setStatus(t('dbDownloadFailed', { err }));
-  }
+function downloadDatabase(kind) {
+  const endpoint = kind === 'patterns'
+    ? 'api/debug/download-patterns-db'
+    : 'api/debug/download-live-db';
+  const link = document.createElement('a');
+  link.href = apiPath(endpoint);
+  link.download = '';
+  document.body.appendChild(link);
+  link.click();
+  document.body.removeChild(link);
 }
 
 function importData() {
