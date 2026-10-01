@@ -4,6 +4,18 @@
 
 ---
 
+# Release 0.7.6 (BETA)
+
+## Prototype-based Device Matching
+- physische Geräte werden nicht mehr über einen exakten Fingerprint identifiziert
+- kontinuierlicher Similarity-Vergleich über Shape, Leistung, Laufzeit, Peak, Inrush und Zustände
+- natürliche Zyklusabweichungen bleiben im selben Gerätecluster
+- klar unterschiedliche Verbraucher werden weiterhin getrennt
+- bestehende automatische Geräte werden einmalig neu geclustert
+- bestätigte Benutzergeräte bleiben geschützt
+
+---
+
 # Release 0.7.5 (BETA)
 
 ## Electrical Device Clustering

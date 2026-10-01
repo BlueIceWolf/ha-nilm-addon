@@ -300,3 +300,86 @@ def test_device_recluster_migration_preserves_user_named_identity():
             assert int(device_row[1] or 0) == 1
         finally:
             store.close()
+
+
+
+def test_prototype_device_matching_merges_natural_cycle_drift_but_not_large_load():
+    with TemporaryDirectory() as tmpdir:
+        live_db = os.path.join(tmpdir, "live.sqlite3")
+        patterns_db = os.path.join(tmpdir, "patterns.sqlite3")
+        store = SQLiteStore(db_path=live_db, patterns_db_path=patterns_db)
+        try:
+            assert store.connect() is True
+
+            first = _build_cycle()
+            first["phase"] = "L3"
+            first["avg_power_w"] = 98.0
+            first["peak_power_w"] = 142.0
+            first["duration_s"] = 900.0
+            first["delta_avg_power_w"] = 58.0
+            first["delta_peak_power_w"] = 100.0
+            first["num_substates"] = 1
+            first["profile_points"] = [
+                {"t_s": 0.0, "t_norm": 0.0, "power_w": 35.0},
+                {"t_s": 15.0, "t_norm": 0.02, "power_w": 142.0},
+                {"t_s": 120.0, "t_norm": 0.13, "power_w": 106.0},
+                {"t_s": 450.0, "t_norm": 0.50, "power_w": 101.0},
+                {"t_s": 780.0, "t_norm": 0.87, "power_w": 99.0},
+                {"t_s": 900.0, "t_norm": 1.0, "power_w": 36.0},
+            ]
+            first["delta_profile_points"] = first["profile_points"]
+
+            second = dict(first)
+            second["avg_power_w"] = 105.0
+            second["peak_power_w"] = 150.0
+            second["duration_s"] = 1010.0
+            second["delta_avg_power_w"] = 62.0
+            second["delta_peak_power_w"] = 108.0
+            second["profile_points"] = [
+                {"t_s": 0.0, "t_norm": 0.0, "power_w": 38.0},
+                {"t_s": 18.0, "t_norm": 0.02, "power_w": 150.0},
+                {"t_s": 130.0, "t_norm": 0.13, "power_w": 112.0},
+                {"t_s": 505.0, "t_norm": 0.50, "power_w": 106.0},
+                {"t_s": 880.0, "t_norm": 0.87, "power_w": 103.0},
+                {"t_s": 1010.0, "t_norm": 1.0, "power_w": 39.0},
+            ]
+            second["delta_profile_points"] = second["profile_points"]
+
+            large = dict(first)
+            large["avg_power_w"] = 1250.0
+            large["peak_power_w"] = 1900.0
+            large["duration_s"] = 7200.0
+            large["delta_avg_power_w"] = 1180.0
+            large["delta_peak_power_w"] = 1800.0
+
+            d1 = store._get_or_create_device(
+                label="refrigeration_candidate",
+                phase="L3",
+                confidence=0.7,
+                group_key=store._device_group_id("refrigeration_candidate", first),
+                cycle=first,
+            )
+            # Intentionally use a different exact v2 fingerprint; prototype matching
+            # should still recover the same physical device.
+            d2 = store._get_or_create_device(
+                label="refrigeration_candidate",
+                phase="L3",
+                confidence=0.7,
+                group_key=store._device_group_id("refrigeration_candidate", second),
+                cycle=second,
+            )
+            d3 = store._get_or_create_device(
+                label="motor_load",
+                phase="L3",
+                confidence=0.7,
+                group_key=store._device_group_id("motor_load", large),
+                cycle=large,
+            )
+
+            assert d1
+            assert d2
+            assert d3
+            assert int(d1) == int(d2)
+            assert int(d3) != int(d1)
+        finally:
+            store.close()

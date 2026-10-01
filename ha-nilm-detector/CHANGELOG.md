@@ -2,6 +2,18 @@
 
 > ⚠️ **Hinweis**: Dieses Projekt ist experimentell (BETA) - Breaking Changes und Bugs können auftreten.
 
+## 0.7.6 (BETA)
+
+### Prototype-based Physical Device Matching
+- Exacte v2-Fingerprints sind nicht länger die physische Geräteidentität; sie dienen nur noch als Start-/Seed-Merkmal.
+- Neue Pattern werden gegen vorhandene Geräte-Prototypen auf derselben Phase verglichen.
+- Device-Matching kombiniert Kurvenform, Delta-/Wirkleistung, Peak, Laufzeit, Inrush und Zustandsstruktur.
+- Natürliche Drift eines Geräts (z. B. 95–110 W und leicht unterschiedliche Laufzeit) bleibt im selben Gerätecluster.
+- Harte Guards verhindern das Zusammenführen deutlich unterschiedlicher Leistungen oder Laufzeiten.
+- Automatische Geräte-Registry wird einmalig mit der neuen Similarity-Logik neu gruppiert.
+- Benutzerbenannte/confirmte Geräte bleiben bei der Migration geschützt.
+- Regressionstest deckt reale ~100-W-Kühlzyklen gegen eine klar andere ~1,2-kW-Last ab.
+
 ## 0.7.5 (BETA)
 
 ### Electrical Device Clustering
