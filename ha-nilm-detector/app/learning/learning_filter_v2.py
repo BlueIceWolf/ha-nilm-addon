@@ -62,8 +62,7 @@ class LearningFilterV2:
             if delta <= 0.0:
                 return LearningDecision("blocked", 0.0, False, reasons + ["non_positive_delta_power"])
             if delta < 30.0:
-                score -= 0.35
-                reasons.append("delta_power_too_small")
+                return LearningDecision("blocked", 0.0, False, reasons + ["delta_power_too_small"])
 
         score = max(0.0, min(score, 1.0))
         if score >= self.stable_threshold:
