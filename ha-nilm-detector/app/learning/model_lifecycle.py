@@ -39,7 +39,12 @@ class RandomForestLifecycle:
         except Exception:
             return None
 
-        usable = [r for r in rows if self._label(r) not in {"", "unknown", "unbekannt"} and int(r.get("seen_count", 0) or 0) >= 2]
+        usable = [
+            r for r in rows
+            if self._label(r) not in {"", "unknown", "unbekannt"}
+            and int(r.get("seen_count", 0) or 0) >= 2
+            and (bool(r.get("user_label")) or bool(r.get("is_confirmed")))
+        ]
         labels = [self._label(r) for r in usable]
         if len(usable) < 10 or len(set(labels)) < 2:
             return None
