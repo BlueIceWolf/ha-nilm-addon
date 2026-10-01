@@ -1269,6 +1269,46 @@ function pct(value) {
   return Number.isFinite(n) ? `${Math.round(Math.max(0, Math.min(1, n)) * 100)}%` : '-';
 }
 
+function behaviorLabel(value) {
+  const key = String(value || 'unknown_load');
+  const de = {
+    multistate_appliance: 'Mehrstufiges Gerät',
+    refrigeration_candidate: 'Kühl-/Kompressorlast',
+    motor_load: 'Motorlast',
+    variable_motor_load: 'Variable Motorlast',
+    motor_start_candidate: 'Motorstart / Teilzyklus',
+    resistive_heater: 'Widerstandsheizung',
+    heating_load: 'Heizlast',
+    low_power_electronics: 'Stabile Kleinlast / Elektronik',
+    permanent_low_power_load: 'Dauerhafte Kleinlast',
+    steady_on_off_load: 'Konstante Ein/Aus-Last',
+    variable_load: 'Variable Last',
+    short_pulse_load: 'Kurze Impulslast',
+    microwave_candidate: 'Mikrowellen-ähnliche Last',
+    unknown_load: 'Unbekannte Last',
+    unknown: 'Unbekannte Last'
+  };
+  const en = {
+    multistate_appliance: 'Multi-state appliance',
+    refrigeration_candidate: 'Refrigeration / compressor load',
+    motor_load: 'Motor load',
+    variable_motor_load: 'Variable motor load',
+    motor_start_candidate: 'Motor start / partial cycle',
+    resistive_heater: 'Resistive heater',
+    heating_load: 'Heating load',
+    low_power_electronics: 'Stable low-power electronics',
+    permanent_low_power_load: 'Permanent low-power load',
+    steady_on_off_load: 'Steady on/off load',
+    variable_load: 'Variable load',
+    short_pulse_load: 'Short pulse load',
+    microwave_candidate: 'Microwave-like load',
+    unknown_load: 'Unknown load',
+    unknown: 'Unknown load'
+  };
+  const map = currentLanguage === 'en' ? en : de;
+  return map[key] || key.replace(/_/g, ' ');
+}
+
 function setStatus(message) {
   statusEl.textContent = message;
 }
@@ -1738,7 +1778,8 @@ function renderDevices(devices) {
   names.forEach(name => {
     const d = devices[name];
     const tr = document.createElement('tr');
-    tr.innerHTML = `<td>${name}</td><td>${d.state || '-'}</td><td>${fmt(d.estimated_power_w)}</td><td>${fmt(d.confidence)}</td><td>${d.daily_cycles ?? '-'}</td><td>${fmt(d.daily_runtime_seconds)}</td>`;
+    const displayName = behaviorLabel(name);
+    tr.innerHTML = `<td>${escapeHtml(displayName)}</td><td>${escapeHtml(d.state || '-')}</td><td>${fmt(d.estimated_power_w)}</td><td>${pct(d.confidence)}</td><td>${d.daily_cycles ?? '-'}</td><td>${fmt(d.daily_runtime_seconds)}</td>`;
     tbody.appendChild(tr);
   });
 }
@@ -3165,7 +3206,7 @@ async function loadGeraeteTab() {
       const explanations = Array.isArray(d.explanation) ? d.explanation : [];
 
       const name = escapeHtml(d.display_name || `Unbekanntes Gerät ${d.device_id ?? '-'}`);
-      const behavior = escapeHtml(d.behavior_class || d.predicted_label || 'unknown_load');
+      const behavior = escapeHtml(behaviorLabel(d.behavior_class || d.predicted_label || 'unknown_load'));
       const phase = escapeHtml(d.phase || '-');
       const typicalPower = Number(d.avg_power_w) > 0 ? fmt(d.avg_power_w, ' W') : '-';
       const typicalDuration = Number(d.avg_duration_s) > 0
