@@ -2,6 +2,17 @@
 
 > ⚠️ **Hinweis**: Dieses Projekt ist experimentell (BETA) - Breaking Changes und Bugs können auftreten.
 
+## 0.7.2 (BETA)
+
+### Efficiency & Replay Dedup
+- Historische Replay-Zyklen werden persistent anhand von Phase + Start-/Endzeit erkannt und nicht erneut gelernt.
+- Wiederholte manuelle/periodische Lernläufe erzeugen dadurch keine doppelten Events oder Pattern-Zähler mehr.
+- Der automatische Lernlauf verarbeitet nur noch ein kleines überlappendes Zeitfenster statt bei jedem 30-Minuten-Lauf erneut 24 Stunden Historie.
+- Replay-Statistiken zählen nur noch Zyklen, die tatsächlich neu gelernt oder aktualisiert wurden.
+- Der Konsolidierungslauf nutzt zusätzlich konservatives Shape-/Power-/Duration-Fuzzy-Merging für stark ähnliche aktive Patterns.
+- Unterschiedliche explizite Benutzerlabels werden dabei niemals automatisch zusammengeführt.
+- Neuer Index auf Event-Zeitfenster beschleunigt die persistente Replay-Deduplizierung.
+
 ## 0.7.0 (BETA)
 
 ### Learning Pipeline 2.0
